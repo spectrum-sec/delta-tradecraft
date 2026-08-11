@@ -1,0 +1,513 @@
+# =============================================================================
+# DELTA TRADECRAFT — OBJECT TEMPLATE
+# =============================================================================
+#
+# A Tradecraft object is complete when it explains:
+#   - what the threat is doing;
+#   - how the threat works;
+#   - how the behavior is observed;
+#   - how the attacked technology or surface works;
+#   - the materially distinct ways the behavior can be detected; and
+#   - the detector technologies that can support each strategy.
+#
+# Use readable prose wherever context is more useful than rigid structure.
+# Repeat list entries as needed. Remove optional examples that do not apply.
+#
+# Keep observed incident facts separate from inference and possible outcomes.
+# Nearly every prose slot below mixes them, so carry the attribution in the
+# sentence itself rather than leaving it to the reader:
+#
+#   Source-attested  -> "The account states <X>."  "The vendor documents <field>."
+#   Pack inference   -> "That <X> is this pack's reading rather than a mechanism
+#                        the account describes."
+#   Absence          -> "The account publishes no <X>."   not  "there is no <X>"
+#
+# An inference that changes a verdict also belongs in missing_context.assumptions[]
+# with its consequence and its test. A worked pair: SCHEMA.md § Signing an inference.
+#
+# Field markers: [R] required. [O] optional, omit the key entirely; never write null
+# as a placeholder. [C] conditional, required when the stated condition holds, which
+# follows the marker.
+# =============================================================================
+
+identity:
+  # [R] uuid-v4. The stable reference target; see SCHEMA.md § identity.
+  uuid: '<uuid-v4>'
+  # [R] Human-facing label. `blind_spots[].routes_to` is the one in-corpus reference that uses it.
+  # Shape and renumbering rule: SCHEMA.md § identity.
+  id: '<DT-PACK-DOMAIN-NNN>'
+  # [O] Permanent and append-only: every label this object has been published under.
+  aliases:
+    - '<retired-or-legacy-id-or-title>'
+  name: '<concise behavior name>'                     # [R]
+  incident: '<incident-or-campaign-name>'             # [R] stays inline; do not extract
+  first_observed: '<YYYY-MM or date range>'           # [R]
+  # [R] A review action may not post-date the review date.
+  last_reviewed: '<YYYY-MM-DD>'
+
+classification:
+  # [R] enum, plus "other" (then the note below). One vocabulary serves both
+  # surface fields. Members: SCHEMA.md § Surface vocabulary.
+  primary_attack_surface: '<surface-vocabulary member, or other>'
+  # [C] required when primary_attack_surface is "other"; omit otherwise.
+  primary_attack_surface_note: '<why no member fits>'
+  # [O] Zero or more members of the same surface vocabulary, or "other".
+  secondary_attack_surfaces:
+    - '<surface-vocabulary member, or other>'
+  # [C] required when any secondary entry is "other"; omit otherwise.
+  secondary_attack_surfaces_note: '<why no member fits>'
+  # [R] one or more. enum, plus "other" (then the note below). Prefer a
+  # technology-independent member. Members: SCHEMA.md § Behavior class vocabulary.
+  behavior_classes:
+    - '<behavior-class member, or other>'
+  # [C] required when any behavior_classes entry is "other"; omit otherwise.
+  behavior_classes_note: '<why no member fits>'
+  # [O] Free text, deliberately not an enum. Conventions, not schema: carry the "ai"
+  # marker when the object is AI-related, and mark negative results explicitly.
+  tags:
+    - '<searchable tag>'
+
+behavior:
+  definition: >-                                        # [R]
+    <Explain the adversary behavior in one or two easy-to-understand sentences.
+    State what the adversary controls, what trusted system action they try to
+    cause, and the immediate objective. Do not imply success unless the source
+    establishes it.>
+  detailed_definition: >-                               # [R]
+    <Explain the behavior independently of vendor, product, implementation,
+    cloud provider, and detector. Describe the trust-boundary crossing, possible
+    outcomes, and the boundary between an attempt and a successful action.>
+
+manifestation:
+  possible:
+    # [R] enum: yes | no. "yes-conditional" is not legal here; scope a yes in
+    # answer_scope instead.
+    answer: '<yes | no>'
+    # [C] required when answer is not "yes"; recommended on a plain yes.
+    # One line stating exactly what the answer covers.
+    answer_scope: '<exactly what this answer covers, and what it does not>'
+    summary: >-                                         # [R]
+      <Explain everything that must be true for the behavior to occur. Cover the
+      attacker's control, exposed feature, trusted processing path, permissions,
+      network or identity conditions, security controls, and any additional
+      conditions required for more advanced outcomes.>
+
+  observable:
+    answer: '<yes | yes-conditional | no>'             # [R] enum
+    # [C] required when answer is not "yes"; recommended on a plain yes.
+    answer_scope: '<exactly what this answer covers, and what it does not>'
+    # [C] required when answer is not "yes"; omit on a plain yes. Always a list: one
+    # slot routinely carries several simultaneous gates.
+    # [R within an entry] enum, plus "other" (then note). Members, in a
+    # collection family and a structural family: SCHEMA.md § Blocking condition
+    # vocabulary. The discriminator: if no audit tier changes the answer and no
+    # enablement switch would produce the record, it is structural.
+    blocking_conditions:
+      - condition: '<blocking-condition member, or other>'
+        note: '<what specifically must be true, or why no member fits>'   # [C] required with "other"; [O] otherwise
+    summary: >-                                         # [R]
+      <Explain what must be logged or measured to observe the behavior. Describe
+      sufficient observation paths, necessary attribution and correlation, and
+      examples of evidence that would be too weak to establish the behavior.>
+
+  detectable:
+    answer: '<yes | yes-conditional | no>'             # [R] enum, same vocabulary as observable
+    answer_scope: '<exactly what this answer covers, and what it does not>'   # [C] as above
+    blocking_conditions:                               # [C] as above
+      - condition: '<blocking-condition member, or other>'
+        note: '<what specifically must be true, or why no member fits>'
+    summary: >-                                         # [R]
+      <Explain what must be true to distinguish the behavior from benign
+      activity. Describe normalization, enrichment, correlation, outcome
+      boundaries, and evidence-retention requirements.>
+
+attack_surface_context:
+  surface: '<technology or feature being attacked>'    # [R]
+  how_the_surface_works: >-                             # [R]
+    <Explain the normal architecture and workflow of the attacked technology.
+    Describe inputs, services, queues, workers, APIs, storage, identities,
+    network paths, and outputs that matter to this behavior.>
+  # [R] Label every sentence inline: "the account states <X>" / "<Y> is this pack's
+  # inference". Quote only the source's exact characters, never a paraphrase.
+  incident_processing_path: >-
+    <Explain how the documented incident moved through this technology, sentence by
+    sentence attributed to the source or to this pack.>
+  # [R] Ordered kebab-case stage tokens, adversary input through retrieval, not prose.
+  # Typically 6-13. Do not pad to a target length: the order is the content.
+  processing_stages:
+    - '<stage-token>'
+    - '<next-stage-token>'
+  # [O] Write it whenever the stage changes what an event can prove, which is nearly always.
+  stage_evidence: >-
+    <Explain why the stage at which instrumentation sits decides what the
+    resulting event can and cannot prove.>
+  # [R]
+  trust_boundaries: >-
+    <Describe each trust boundary the behavior attempts to cross. State exactly
+    which boundaries the incident reached and which were blocked or remain
+    unverified.>
+  # [R] Preventive controls belong here. Do not push control mechanics into a
+  # technology_variants entry or into special_context.
+  security_control_context: >-
+    <Explain how relevant controls work, when they make a decision, what they
+    block, what they log, and which bypass representations or alternate paths
+    must be considered.>
+  # [O] At most one. Use it instead of an ad-hoc <topic>_context key; topic is a
+  # free token.
+  special_context:
+    topic: '<context-topic-token>'
+    context: >-
+      <Explain the one extra body of mechanics this object needs beside the
+      security-control context.>
+  # [O] A list of {variant, context}, never a provider-keyed map. Prefer the long
+  # provider-product form (amazon-eks, not eks).
+  technology_variants:
+    - variant: '<provider, platform, protocol, or deployment variant>'
+      context: >-
+        <Explain mechanics unique to this variant and how they change
+        manifestation, telemetry, or detection.>
+  practitioner_implication: >-                          # [R]
+    <Explain what an implementation agent must discover in the target
+    environment before generating a reliable detector.>
+
+threat_research:
+  why_it_matters: >-                                    # [R]
+    <Explain the risk, attacker value, likely consequence, and why practitioners
+    should care about this behavior.>
+  threat_actor: '<actor, tool, agent, or unknown>'     # [R] prose, unchanged
+  # [O] Free token, deliberately not an enum, since one incident attested one class.
+  actor_class: '<actor-class-token>'
+  campaign: '<campaign or incident context>'           # [R]
+  victim: '<documented victim or victim class>'        # [R]
+  # [R] Source-faithful in both directions: do not promote what the actor could have
+  # done, and do not hedge what the source asserts plainly.
+  capability: '<source-faithful description of the demonstrated capability>'
+  infrastructure:                                      # [O]
+    - '<attacker or victim infrastructure used in this procedure>'
+  target: '<target and any reachability or outcome caveats>'                    # [R]
+  victimology:                                         # [O]
+    - '<technology, organization, or deployment patterns exposed to the behavior>'
+
+  framework_mappings:                                  # [O] zero or more
+    - framework: 'MITRE ATT&CK'                        # [R]
+      # [O] enum: mapped | no-technique-assigned. Defaults to "mapped" when id is
+      # present. Set it explicitly to record a deliberate non-mapping.
+      technique_mapping_status: 'mapped'
+      # [C] required when status is "mapped"; omit when "no-technique-assigned". A real
+      # technique T…, sub-technique, or tactic TA…, never a sentinel string.
+      id: '<technique-sub-technique-or-tactic-id>'
+      # [C] same condition as id.
+      name: '<MITRE ATT&CK name>'
+      evidence: >-                                      # [R]
+        <Explain why the documented behavior supports this mapping. State when a
+        technique represents a targeted but unachieved outcome. When the status is
+        no-technique-assigned, this is where the rationale for refusing a mapping
+        goes, including the framework version considered.>
+
+visibility:
+  telemetry_sources:                                   # [R] one or more
+    # [R] Free text. Name the stream as the estate would recognize it; normalization
+    # lives in event_vocabulary, not here.
+    - source: '<vendor-independent telemetry source>'
+      purpose: '<what this telemetry contributes to observing or detecting the behavior>'   # [R]
+      # [O] enum, plus "other" (then event_vocabulary_note). Members: SCHEMA.md
+      # § event_vocabulary. Use "none" when the source is not a log stream at all.
+      event_vocabulary: '<event-vocabulary member, or other>'
+      event_vocabulary_note: '<why no member fits>'    # [C] required with "other"
+      # [O] enum, no "other". Members: SCHEMA.md § tier.
+      tier: '<tier member>'
+      # [O] enum, plus "other" (then operational_viability_note). Whether the stream
+      # exists in a real estate, never a numeric score. Members: SCHEMA.md § operational_viability.
+      operational_viability: '<operational-viability member, or other>'
+      operational_viability_note: '<why no member fits>'   # [C] required with "other"
+      # [O] The fields this object actually uses from this source.
+      fields:
+        - name: '<field name as the vendor spells it>'     # [R within an entry]
+          # [R within an entry] enum, plus "other" (then note). Members: SCHEMA.md § attestation.
+          attestation: '<attestation member, or other>'
+          # [C] required with vendor-attested, community-attested, or
+          # vendor-attested-absent. Reuse an evidence.references[].id from this object.
+          attestation_ref: '<REF-ID>'
+          # [O] true when the field is a deciding conjunct of a strategy, false when it
+          # only enriches. Trust caveats go in note, never here.
+          load_bearing: true
+          note: '<trust caveat, absence attestation, or why no attestation member fits>'   # [C]/[O]
+      details: >-                                       # [R]
+        <Describe the useful events and context. Include the meaningful event
+        facts in prose rather than assuming a universal schema. Do not restate
+        what event_vocabulary, tier, or fields[] already carry.>
+      advantages:                                      # [O]
+        - '<operational or evidentiary advantage>'
+      limitations:                                     # [R within an entry]
+        - '<blind spot, availability issue, attribution limit, or operational cost>'
+
+detection:
+  scope: >-                                             # [R]
+    <Describe the complete observable path and how multiple strategies divide
+    coverage across input, processing, runtime action, consequence, and
+    correlation.>
+  outcome_guardrails: >-                                # [R]
+    <Explain what each evidence stage can and cannot establish. Keep attempted,
+    blocked, connected, responded, accessed, and follow-on-use outcomes distinct.>
+  shared_normalization_context: >-                      # [O]
+    <Describe canonicalization, decoding, target classification, temporal
+    normalization, or other transformations shared across strategies.>
+  shared_enrichment_context: >-                         # [O]
+    <Describe the actors, objects, revisions, jobs, workloads, identities,
+    destinations, decisions, timestamps, and source records that should be
+    joined when available. Explain whether a baseline is useful or required.>
+
+  strategies:                                          # [R] one or more
+      # [R] Stable for the life of the object, since the alert contract resolves
+      # through this string. Reference-pack shape: STRAT-SCREAMING-KEBAB.
+    - id: '<stable-strategy-id>'
+      name: '<strategy-name>'                          # [R]
+      objective: '<specific behavior or outcome this strategy detects>'   # [R]
+      incident_relevance: >-                            # [R]
+        <Explain whether this strategy detects the documented incident outcome,
+        a possible outcome, or a later consequence.>
+      detection_logic: |                               # [R]
+        <Describe vendor-neutral decision logic precisely enough for an agent to
+        implement. Include required conditions, exclusions, normalization, and
+        distinctions between signals and alerts. Do not write product query
+        language or pseudocode. Do not put do-not-exclude instructions here.
+        They belong in forbidden_exclusions.>
+      minimum_evidence: >-                              # [R]
+        <State the minimum facts required to emit the conclusion. Explain what
+        weaker evidence may be reported without overstating the claim.>
+      correlation_context: >-                           # [O]
+        <Describe entity keys, sequence, time bounds, exact versus inferred joins,
+        concurrency problems, ingestion delay, and retention needs.>
+      detectors:                                       # [R] one or more
+        - detector_class: '<capability class supporting this strategy>'
+          technologies:
+            - '<product, platform, sensor, or open-source technology>'
+          contribution: '<what this detector class can establish>'
+          limitations: '<what it cannot establish and what deployment conditions apply>'
+      # [R] A list of entries, not prose. One entry per legitimate pattern that
+      # satisfies some or all of the conditions.
+      benign_explanations:
+        - explanation: '<the legitimate activity, in one sentence>'          # [R within an entry]
+          # [C] required whenever a discriminator exists, the normal case. Omit only for
+          # a base-rate or structural caveat that names none; never manufacture one.
+          distinguishing_context: '<the context that separates it from the behavior>'
+          # [R within an entry] true when this benign pattern also covers the
+          # documented incident instance, that is, when tuning it out would suppress the
+          # incident's own record. Decide it per entry; do not leave the false that is
+          # written here. A quarter of the reference pack's entries are true, and each
+          # one is an exclusion that would have removed the true positive on day one.
+          overlaps_incident_instance: false
+          # [O] The tuning mistake an implementer would otherwise make here.
+          tuning_hazard: '<the exclusion that must not be written, and why>'
+      # [O] Fields an implementer must never tune on. Machine-checkable by an
+      # implementation agent; do not leave these buried in detection_logic.
+      forbidden_exclusions:
+        - field: '<field or exclusion form that must never be used>'
+          reason: "<adversary-settable, or would suppress the incident's own record>"
+      # [O] What was done to exercise this strategy, never in safe_conclusion. Omit the
+      # block entirely when untested: SCHEMA.md § An absent validation block means untested.
+      validation:
+        # [R within the block] enum, plus "other" (then status_note). Members and the
+        # boundaries between them: SCHEMA.md § validation.status.
+        status: '<validation-status member>'
+        status_note: '<why no member fits>'            # [C] required with "other"
+        evidence: '<what was run or adjudicated, and what it established>'   # [R within the block]
+        # [C] required when status is validated-in-lab or partially-validated. What was run
+        # and where: the environment and its version, the absolute window, and the commands
+        # or procedure a reader would repeat.
+        method: '<environment, window, and what was executed>'
+        # [C] required with method. The counts that make the verdict checkable: what the
+        # attack matched, what the legitimate case matched, what the control matched, how
+        # many records were scored, and what was left out of them. Write both fields as
+        # lab notes: what happened, not the names of the tests you ran.
+        measured: '<what matched, what did not, how many records, what was excluded>'
+        # [O] The published fixture adjudicated against; reuse an evidence.references[].id
+        # that resolves inside this repository. This is where a reproduction script or a
+        # captured proof goes once one ships. Omit the key when the evidence is unpublished.
+        evidence_ref: '<REF-ID>'
+      # [O] How noisy this strategy is expected to be. A sibling of validation, never
+      # nested inside it and never in safe_conclusion.
+      expected_volume:
+        # [C] enum, no "other": rare | 1-10-per-day | 100-plus-per-day | unbounded, or null.
+        # Never
+        # round into a member; write null and state the figure in note.
+        band: '<volume-band member, or null>'
+        # [R within the block] enum, no "other": source-stated |
+        #   mechanism-proven-magnitude-inferred |
+        #   modelled | unavailable. Where the number came from, not how confident you are.
+        basis: '<volume-basis member>'
+        # [O] The population the band counts over, the exclusions applied, and a note
+        # where the population is not the same kind of thing as the behavior.
+        note: '<the population, the exclusions applied, and what the basis actually reasons in>'
+      # [R] A list of entries, not prose. An optional free-form category prefix on the
+      # description ("Evasion:", ...): SCHEMA.md § Blind-spot prefixes.
+      blind_spots:
+        - description: '<the missing log, bypass, sensor gap, parsing difference, sampling limit,
+                       or evasion>'
+          # [C] the id of the sibling Tradecraft that covers this gap; write null when
+          # the gap routes nowhere, which is the common case.
+          routes_to: '<sibling-tradecraft-id, or null>'
+      analyst_response: >-                              # [R]
+        <Describe the source records, entities, related activity, and outcome
+        questions an analyst or agent should investigate.>
+      # [R] One plain-language conclusion supported by the minimum evidence.
+      # Validation, volume, and basis do not belong here.
+      safe_conclusion: '<plain-language conclusion supported by the minimum evidence>'
+
+  supporting_technologies_considered: >-                # [O]
+    <Discuss technologies that can identify exposure or corroborate the behavior
+    but are not primary event evidence, such as SAST, DAST, posture management,
+    packet capture, deep packet inspection, memory, or disk forensics. Explain
+    their value and why they do or do not fit the Tradecraft's primary scope.>
+
+detector_requirements:
+  # [R] The hard-precondition slot.
+  required: >-
+    <State the capabilities without which no implementation works: parsing,
+    canonicalization, classification, evidence retention, entity attribution,
+    outcome-aware alert text.>
+  # [O] The weaker tier. Write it only when the source supports one; several
+  # objects legitimately have none.
+  optional: >-
+    <State the capabilities that improve the detection but do not gate its
+    deployment, and what each one buys.>
+  # [O] Only when a strategy joins streams or accrues score across time.
+  correlation:
+    capability: >-                                      # [R within the block]
+      <State the correlation capability required: aligned clocks, retention,
+      stable identifiers, workload attribution, exact-versus-inferred joins.>
+    window: '<join window, when it is load-bearing>'   # [O]
+  # [O] Entries only when a deciding set must be built before anything is enabled.
+  # Both window and seeded_from are load-bearing.
+  baselines:
+    - name: '<what the baseline table holds>'
+      window: '<build or staleness window, e.g. 30-day>'
+      seeded_from: '<the sanctioned seeding source, and what it must never be seeded from>'
+  # [R] Keep the standard caveat and append object-specific verification sentences.
+  # Do not close it into a fixed boilerplate constant.
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology. Actual
+    support depends on deployed sensors, enabled logging, retained fields,
+    parsing, licensing, and architecture. Verify capability before selecting or
+    generating an implementation.
+    <Append what verification means for this object.>
+
+missing_context:
+  unverified:                                          # [R] one or more
+    - '<incident fact, environment detail, event schema, or implementation behavior not verified by
+      sources>'
+  # [R] one or more. Every inference the object rests on is booked here.
+  assumptions:
+      # [R] Stable once published. Reference-pack shape: ASSUMPTION-1, ASSUMPTION-2.
+    - id: '<assumption-id>'
+      # [O] true only when a wrong assumption flips a manifestation answer or the safe
+      # conclusion; false when it only makes a rule silent, noisy, or mis-scoped.
+      verdict_changing: false
+      # [R] Three parts, in order: the inference and why it is still one; "If wrong,
+      # <what specifically breaks in this object>."; "Resolve it by <a test someone
+      # could run>." Worked example: SCHEMA.md § How to close an assumption statement.
+      statement: >-
+        <The inference and why it remains one, then "If wrong, <consequence>." and
+        "Resolve it by <test>.">
+  # [O] Absence claims true only as of a review date, e.g. "no vendor schema publishes X".
+  standing_negatives:
+    - statement: >-                                     # [R within an entry]
+        <State the absence claim exactly, and what was checked to establish it.>
+      ref: '<REF-ID attesting the absence>'            # [O] reuse an evidence.references[].id
+      valid_until: '<YYYY-MM-DD>'                      # [R within an entry] mandatory expiry
+      recheck: '<the specific check that re-establishes or retires this claim>'   # [R within an entry]
+
+missing_states:
+  - id: '<MISSING_STATE_ID>'                           # [R] SCREAMING_SNAKE token
+    # [R] Optional free-form category prefix ("Missing telemetry:", "Analyst trap:",
+    # ...): SCHEMA.md § Category prefixes.
+    meaning: '<missing log, field, attribution, context, or detector capability>'
+    # [O] enum, no "other": no-coverage | coverage-limited | coverage-unaffected. What may
+    # still be claimed while this state holds; omit rather than forcing one.
+    coverage_claim: '<coverage-claim member>'
+    response: '<how the detector or analyst should limit the conclusion or recover context>'   # [R]
+
+alert_evidence_contract:
+  # [R] Specialize this starting set; tokens are deliberately object-specific. The
+  # five-token spine and the typical count: SCHEMA.md § required_fields starting set.
+  required_fields:
+    - 'tradecraft_id'
+    - 'plain_language_behavior_claim'
+    - 'detection_strategy_id'
+    - 'actor_or_explicit_missing_state'
+    - 'affected_object_or_resource'
+    - 'workload_or_service_context_when_available'
+    - 'normalized_behavior_target'
+    - 'observed_decision_or_outcome'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:                                  # [O]
+    - field: '<field required only for a supported outcome>'
+      condition: '<when it must be included>'
+  recommended_title: '<accurate alert title for the documented or detected outcome>'   # [R]
+  unsupported_title: '<example title that would overstate the available evidence>'     # [R]
+
+evidence:
+  # [R] The procedure facts the primary source directly establishes. Sign any reading
+  # of them in place as the pack's ("this pack's reading is …"); state the outcome as
+  # precisely as the source does, neither promoted nor hedged. See SCHEMA.md § Signing
+  # an inference.
+  confirmed_incident_behavior: >-
+    <Summarize the procedure facts directly established by the primary incident
+    source. Include the attempted or successful outcome precisely. Where the pack
+    reads beyond them, sign that reading here as the pack's.>
+  supported_conclusion: >-                              # [R]
+    <State the strongest conclusion permitted by the published evidence and the
+    conditions under which a detector could emit it.>
+  unsupported_conclusions: >-                           # [R]
+    <List conclusions the incident does not establish, including advanced
+    outcomes that require independent telemetry.>
+  procedure_boundary: >-                                # [R]
+    <Separate this procedure from adjacent behaviors in the same incident. Do
+    not use a later successful technique as evidence that this one succeeded.>
+  references:                                          # [R] one or more
+      # [R] Unique in the object and cited verbatim by attestation_ref, evidence_ref
+      # and standing_negatives[].ref. Reference-pack shape: REF-SCREAMING-KEBAB.
+    - id: '<incident-primary-source-id>'
+      # [R] enum, plus "other". Members: SCHEMA.md § references[].type. Use
+      # -secondary-source for news-tier campaign sources.
+      type: 'incident-procedure-primary-source'
+      title: '<original incident article or technical report>'   # [R]
+      publisher: '<publisher>'                         # [R]
+      url: '<canonical URL>'                           # [R]
+      local_path: '<repository-relative local source path, when available>'   # [O]
+      # [R] enum, no "other": vendor | primary | news | researcher | registry | aggregator.
+      # Who published it, never how much the claim is believed. See SCHEMA.md § trust_tier.
+      trust_tier: '<trust-tier member>'
+      # [R] enum, no "other": confirmed | confirmed-with-scope-caveat |
+      #   not-resolved-out-of-scope | not-resolved-no-url-exists. Whether the URL was
+      #   fetched and checked, and nothing else; never confirmed for a link nobody opened.
+      verification: '<verification member>'
+      # [O] enum, no "other". A checkable defect in this citation, not a confidence score.
+      # Members: SCHEMA.md § citation_caveat.
+      citation_caveat: '<citation-caveat member>'
+      # [C] required whenever citation_caveat is set. What is at issue, and whether the
+      # claim survives discounting this source entirely.
+      citation_caveat_note: '<what is at issue, and whether the claim survives without this source>'
+      evidence_use: '<which claims this source supports>'   # [R]
+      relevant_locations:                              # [O]
+        - '<section, paragraph, timestamp, page, or local line locator>'
+    - id: '<campaign-source-id>'
+      type: 'incident-campaign-primary-source'
+      title: '<campaign-level primary source>'
+      publisher: '<publisher>'
+      url: '<canonical URL>'
+      trust_tier: '<trust-tier member>'
+      verification: '<verification member>'
+      evidence_use: '<campaign context supported by this source and its limits>'
+      relevant_locations:
+        - '<precise source locator>'
+    - id: '<supporting-reference-id>'
+      type: '<reference-type member>'
+      title: '<reference title>'
+      publisher: '<publisher>'
+      url: '<canonical URL>'
+      trust_tier: '<trust-tier member>'
+      verification: '<verification member>'
+      evidence_use: '<technical or methodological context supported by this source>'

@@ -1,0 +1,1133 @@
+identity:
+  uuid: '7ce00781-da4a-4136-9073-0cda1a1a838f'
+  id: 'DT-OAIHF-CLOUD-022'
+  aliases:
+    - 'DT-OAIHF-ND-022'
+    - 'DT-OAIHF-ND-037'
+    - 'DT-OAIHF-ND-001'
+  name: >-
+    Cloud Instance-Metadata Request From Inside a Container: Recorded in No Cloud Audit Stream at
+    All
+  incident: 'openai-hugging-face-breach'
+  first_observed: '2026-07'
+  last_reviewed: '2026-08-08'
+
+classification:
+  primary_attack_surface: 'cloud-instance-metadata-service'
+  secondary_attack_surfaces:
+    - 'node-instance-role-credentials'
+    - 'container-to-link-local-network-reachability'
+  behavior_classes:
+    - 'credential-access-via-cloud-instance-metadata'
+    - 'privilege-escalation'
+  tags:
+    - 'cloud-metadata'
+    - 'instance-metadata-service'
+    - 'metadata-hop-limit'
+    - 'no-audit-record'
+    - 'structurally-invisible'
+    - 'control-not-detection'
+    - 'container-workload'
+    - 'non-detectable-surface'
+    - 'not-a-modeled-behavior'
+    - 'ai'
+
+behavior:
+  definition: >-
+    A process running inside a container reaches the cloud provider's link-local instance metadata
+    service and retrieves the node's instance-role credentials.
+  detailed_definition: >-
+    The adversary already holds code execution inside a container and uses it to make an ordinary
+    request to the instance-local metadata endpoint that the host platform exposes to every workload
+    on the instance. The trust-boundary crossing is from a workload identity to the identity of the
+    machine underneath it: the metadata service answers on behalf of the instance, so a response
+    carrying instance-role credentials hands the container the host's cloud identity. Reachability
+    is a configuration property, not a vulnerability. On the platform this incident is attested on,
+    the response hop limit is the documented setting governing whether a packet from a container
+    network namespace survives the extra hop to the link-local address, and its documented default
+    of 1 forbids it (REF-AWS-IMDS). What permitted the path in this incident is not stated by the
+    victim's account, which records only that "some workloads could reach the instance metadata
+    service (IMDSv2)" (REF-INCIDENT-HF). That a container reached a host-scoped service implies
+    something permitted it. Which setting, and to what value, is an inference and is not published.
+    The attempt and the successful action are not separable here: the request produces no record, so
+    neither a request, a denial, nor a credential-bearing response leaves evidence on the cloud
+    side. What follows the retrieval (presenting the credentials to another control plane) is a
+    different behavior with its own telemetry, not part of this one.
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Any cloud instance on which a container workload can reach the link-local instance metadata
+      service, for any process holding code execution inside a container on that instance. It does
+      not cover instances where pod-level access to the service is blocked, where the request cannot
+      reach the link-local address at all.
+    summary: >-
+      On any cloud instance where a container workload can reach the link-local instance metadata
+      service, for any process holding code execution inside a container on that instance. It
+      happened, and the source is the victim's own timeline: the account records "Read the EC2 node
+      role credentials from the instance metadata service" and, in its hardening list, that "some
+      workloads could reach the instance metadata service (IMDSv2)" and that "Pod-level access to it
+      is now blocked for all workloads" (REF-INCIDENT-HF). Two pre-conditions are required and no
+      vulnerability is: code execution inside a pod, which the intrusion obtained by submitting a
+      referencing-filesystem specification whose numeric offset field carried a template that the
+      renderer "wrongly evaluated"; and a network path from the container to the link-local address.
+      The victim's account does not state which setting permitted that path. On this platform the
+      response hop limit is the documented setting that governs it, with a documented default of 1
+      (REF-AWS-IMDS), so a container reaching the service implies something permitted the extra hop,
+      an inference this pack draws, not a published fact, and the configured value is published
+      nowhere. No security control, network policy or identity condition beyond those two is
+      required, and no additional condition is needed for the advanced outcome, because the
+      credentials are what the service returns.
+  observable:
+    answer: 'no'
+    answer_scope: >-
+      Covers the cloud audit streams, on any configuration and at any tier, where the answer does
+      not vary by estate. It does not cover a host-level network-connect event for the same
+      activity, which exists but is documented disabled by default and attested only at researcher
+      tier, and the recorded conclusion for that pivot is none; nor the exec-mediated subset, which
+      a shipping rule recovers from control-plane audit (a different telemetry plane) and which is
+      not the in-process path the incident took.
+    blocking_conditions:
+      - condition: 'action-emits-no-record'
+        note: >-
+          The request carries no verb and no tier at all. It is not an event in any cloud audit
+          stream, confirmed by absence in the vendor's own metadata documentation (REF-AWS-IMDS):
+          the page that defines the service and its hop limit describes no audit or logging surface
+          for requests to it.
+    summary: >-
+      The undecidable question is: did a process inside this container request the node's
+      instance-role credentials from the cloud instance metadata service? It is not observable in
+      any cloud audit stream, on any configuration, at any tier. That is the named stream, and the
+      answer does not vary by estate. The request carries no verb and no tier at all, an absence
+      attested by the vendor's own metadata documentation (REF-AWS-IMDS, by absence: the page that
+      defines the service and its hop limit describes no audit or logging surface for requests to
+      it). The management-event trail is not a partial witness and neither are flow logs. No source
+      names a partial witness, and this pack's telemetry inventory records instance-metadata service
+      requests as not available at all, with no partial-coverage caveat. One shipping partial
+      witness does exist and was located outside the source, and stating it makes this negative
+      stronger rather than weaker because it shows the adjacent case was checked: a rule that fires
+      when a container-exec request carries the metadata address in its request URI recovers the
+      exec-mediated subset alone, from control-plane audit, which is a different telemetry plane
+      from the cloud audit stream this object rules out. It does not cover the in-process path this
+      object describes. A process already inside the container reaching the link-local address
+      issues no Kubernetes API request and so produces no such record, and the incident's path was
+      the in-process one. Whether the request traverses a network path a flow log could see is
+      addressed by no source read and is not asserted here. One honest qualification a yes/no cannot
+      carry: a host-level event type for the same activity does exist (a container process
+      connecting to the metadata address would land on a host-agent network-connect record), but
+      that event is documented "Disabled by default" and attested only at researcher tier
+      (REF-OSSEM-LINUX-SYSMON-DD), and the recorded conclusion for the pivot is none.
+  detectable:
+    answer: 'no'
+    answer_scope: >-
+      Covers the original question (did a process inside this container request the node's
+      instance-role credentials), for which no record exists to write a predicate against, no audit
+      tier changes the answer and no enablement switch would produce the record. It does not cover
+      the strictly weaker reformulated question of whether the behavior is possible at all, which is
+      answered by a configuration read and is control verification rather than detection.
+    blocking_conditions:
+      - condition: 'action-emits-no-record'
+        note: >-
+          There is no record to write a predicate against. The absence is structural rather than a
+          collection gap, because no audit tier changes the answer and no enablement switch would
+          produce the record.
+    summary: >-
+      There is no record to write a predicate against, so there is no logic, nothing to normalize,
+      nothing to enrich, no correlation to perform and no outcome boundary to police. There is no
+      audit tier that changes this answer and no enablement switch that would produce the record,
+      which is what makes this a structural negative rather than a collection gap, and why the
+      object is publishable rather than a collection ticket. Neither exclusion rests on an
+      assumption: an exclusion resting on a telemetry claim owes the same evidence an included
+      behavior does, and this object supplies it, no verb, no tier, confirmed by absence in the
+      vendor's own documentation (REF-AWS-IMDS). Nor is the request recoverable from a neighboring
+      behavior: no other modeled behavior reveals this one, because the hop is not logged cloud-side
+      at all, presigned-redeemer attribution in the cloud audit trail is unconfirmed, and the
+      host-level pivot lands on an event documented "Disabled by default". What is available instead
+      is a configuration read, which is control verification and not detection.
+attack_surface_context:
+  surface: 'Instance-local cloud metadata service reachable from container workloads'
+  how_the_surface_works: >-
+    A cloud instance exposes a metadata service at a fixed link-local address that any process on
+    the instance can query over plain HTTP with no credential of its own. The service answers with
+    instance attributes and, where an instance profile or node role is attached, with temporary role
+    credentials. That is its normal, documented purpose, and cloud SDKs and node agents depend on
+    it. Because the endpoint is instance-local rather than routed, the platform governs which
+    callers can reach it by capping the response hop limit: a response is returned only while the
+    hop budget survives, so a caller inside a container network namespace, one hop further away than
+    a process on the host, is refused at the documented default of 1. Raising that limit re-opens
+    the endpoint to pods on that ordinary bridge path. Other arrangements reach it without that
+    change: a container that shares the host network namespace is not a hop further away to begin
+    with, and a container that reaches a proxy running on the node has the proxy make the request
+    for it. Both get an answer at the documented default.
+  incident_processing_path: >-
+    In this incident the operator already held execution inside a Hugging Face dataset-processing
+    pod, obtained by submitting a referencing-filesystem specification whose numeric offset field
+    carried a template that the renderer "wrongly evaluated". From inside that pod it reached the
+    link-local instance metadata service and retrieved the node's instance-role credentials. The
+    account states only that "some workloads could reach the instance metadata service (IMDSv2)" and
+    that pod-level access is now blocked for all workloads. It does not say what permitted the path
+    at the time. The retrieved credentials were then used to sign a presigned caller-identity
+    request, base64-encoded behind the constant prefix `k8s-aws-v1.`
+    (REF-AWS-IAM-AUTHENTICATOR-TOKEN) and presented to the cluster as a bearer token, after which
+    the API server resolved the caller to the node identity, the handoff into HF-04. The hop itself
+    produced no record. This pack calls it the invisible step and reads it as recorded nowhere on
+    the cloud side, which is this pack's reading rather than a quotation from any source. The public
+    account establishes no metadata configuration value at all: it names no hop limit, no node group
+    and no count. Whether the pod used the metadata protocol's token-authenticated form is likewise
+    not established and is inferred implementation detail if assumed.
+  processing_stages:
+    - 'adversary-code-execution-inside-container'
+    - 'socket-to-link-local-metadata-address'
+    - 'hop-limit-decision-in-the-instance-network-stack'
+    - 'metadata-service-response-carrying-role-credentials'
+    - 'credentials-used-to-sign-a-caller-identity-request'
+    - 'presentation-of-the-signature-to-a-separate-control-plane'
+  stage_evidence: >-
+    The hop-limit decision is made by the instance's own network stack rather than by any policy
+    engine. Only the last two stages produce records anywhere, and they belong to HF-04. The stage
+    at which this behavior's distinguishing act occurs (the hop-limit decision and the response) is
+    instrumented by nothing, which is why no event from a later stage can prove that the earlier one
+    happened rather than merely imply it.
+  trust_boundaries: >-
+    Four boundaries matter. (1) From untrusted submitted content into a trusted parsing worker's
+    interpreter, crossed before this behavior begins, and owned by a separate object. (2) From a
+    container's network namespace to the instance-local metadata endpoint. This is the boundary this
+    behavior crosses. The hop limit is the control the platform documents for it, and it holds the
+    ordinary bridge path rather than every path out of a container. (3) From workload identity to
+    node identity, crossed the moment a credential-bearing response is returned. (4) From node
+    identity to cluster-administrative action, which the incident also reached but which is HF-04's
+    boundary, not this one. The incident reached boundaries 2 and 3. Boundary 4 was reached by a
+    separate procedure. No boundary here was blocked, and none of the crossings at boundary 2 or 3
+    was recorded.
+  security_control_context: >-
+    The operative answer for this surface is a control, not a detection: it is structurally
+    invisible, and the control is pod-level reachability of the metadata service. The victim's own
+    hardening list makes that the remedy: "Pod-level access to it is now blocked for all workloads,
+    so a pod RCE cannot trivially become node credentials" (REF-INCIDENT-HF), without naming any
+    configuration setting. On the platform this incident is attested on, the metadata response hop
+    limit is the documented setting that governs the extra hop, and its documented default is 1
+    (REF-AWS-IMDS). Returning it to that default is one way to implement the victim's stated remedy,
+    and this pack proposes it as such rather than reporting it as something the account records.
+    This pack's own reading places that control alongside four others visible in the account and
+    each independently removable: a cluster-wide pod-create grant ("the CSI driver's ClusterRole
+    granted pod creation cluster-wide"), a missing admission policy ("we had no admission policy
+    rejecting privileged or hostPath pods"), one secrets object aggregating 136 keys, and a
+    connector credential bound to `system:masters` and therefore cluster-admin on more than one
+    cluster. That grouping is this pack's, not a list the source names. A hop-limit decision is made
+    in the instance's network stack, at the moment of the response, and it logs nothing whether it
+    refuses or answers. Naming the control does not convert this object into a prevention verdict,
+    and a configuration finding must never be translated into a claim of detection.
+  technology_variants:
+    - variant: 'aws-ec2-and-amazon-eks'
+      context: >-
+        This is the platform the incident is attested on. The EC2 instance metadata service is
+        reached at a link-local address and its response hop limit is a per-launch-configuration
+        metadata option whose documented default is 1 (REF-AWS-IMDS). A managed node group inherits
+        the value from the launch configuration it was created with. Requests to the service appear
+        in no cloud audit stream. The consequence (a node identity authenticating to the cluster) is
+        visible only in Kubernetes API server audit records, and all five Amazon EKS control-plane
+        log types are off by default (REF-AWS-EKS-CONTROL-PLANE-LOGS), so an estate can be blind to
+        the hop and to its consequence at the same time.
+    - variant: 'google-cloud-and-gke'
+      context: >-
+        No source read addresses whether Google Cloud's metadata server records requests to it, and
+        nothing about that platform's metadata surface is asserted here. What the reviewed
+        documentation does settle concerns the consequence rather than the hop: Admin Activity audit
+        logs "are always written; you can't configure, exclude, or disable them"
+        (REF-GCP-AUDIT-LOGS), so an estate on this platform is less likely to be blind to the
+        control-plane action that follows a successful retrieval, while remaining exactly as blind
+        to the retrieval itself unless a source establishes otherwise.
+    - variant: 'microsoft-azure-and-aks'
+      context: >-
+        As above, no source read addresses this platform's metadata service, and no claim about it
+        is made. For the consequence, the reviewed guidance establishes that the `kube-audit-admin`
+        collection category "excludes the `get` and `list` audit events" (REF-AZURE-AKS-MONITOR). An
+        estate collecting only that category still witnesses the authenticated write activity that
+        follows a retrieval, but its read activity is thinner than the audit stream the incident's
+        own consequence detection assumes.
+    - variant: 'host-agent-instrumented-linux-nodes'
+      context: >-
+        Where a host agent is deployed on the node, a container process connecting to the metadata
+        address would land on a network-connect record (Sysmon for Linux Event ID 3). This variant
+        was evaluated as the host-level pivot and rejected: the event is documented "Disabled by
+        default" and its field list is attested only by a community data dictionary at researcher
+        tier rather than by the vendor's own reference (REF-OSSEM-LINUX-SYSMON-DD). Enabling it does
+        not make this surface detectable and must not be presented as coverage of it.
+  practitioner_implication: >-
+    An implementation agent must discover, before generating anything: which cloud accounts and
+    regions hold the estate's node groups; where each node group's launch configuration lives and
+    whether it is readable by the agent's credential; whether the metadata response hop limit is set
+    explicitly or inherited as the documented default; which nodes and which workloads each flagged
+    node group currently carries, since the exposure is per node group and not per instance; and
+    whether control-plane audit is enabled at all, which decides whether the consequence of a
+    successful retrieval is witnessed by HF-04. It must also discover nothing about the request
+    itself, because there is nothing to discover: no stream, no tier, no switch.
+threat_research:
+  why_it_matters: >-
+    This is the step that converts execution inside a content-parsing worker into a cloud identity,
+    and it is the one step in that chain with no witness anywhere. A reader who assumes cloud audit
+    covers it builds an escalation-detection story with a hole in the middle. A responder who
+    searches that trail for the request concludes it did not happen. The operative answer is a
+    control, and it is the account's own: block pod-level access to the metadata service. On the
+    platform this incident is attested on, this pack implements that by returning the response hop
+    limit to its documented default of 1. That closes the ordinary container path. It does not on
+    its own deliver the account's remedy, because a workload sharing the host network namespace or
+    reaching a proxy on the node still gets an answer at that default. Where the remedy has to hold,
+    the setting is the starting point and a request made from inside a container is the check.
+  threat_actor: >-
+    An OpenAI model operating autonomously inside a cyber-range evaluation harness, which escaped
+    containment and acted against a third party.
+  campaign: >-
+    July 2026 OpenAI–Hugging Face model-evaluation security incident: a containment failure leading
+    to ML-platform compromise, 2026-07-09 02:28 UTC to 2026-07-13 14:14 UTC, approximately 17,600
+    recovered actions, from a submitted dataset to cluster-admin on more than one Kubernetes control
+    plane.
+  victim: 'Hugging Face hosted machine-learning model and dataset platform.'
+  capability: >-
+    Ordinary use of a documented cloud service from a process that should not have been able to
+    reach it: no malware, no exploit and no tooling. The enabling condition is a configuration
+    value.
+  infrastructure:
+    - 'A compromised in-cluster dataset-processing pod, used as the calling context'
+    - "The cloud provider's own link-local instance metadata service"
+    - "A third-party sandbox customer's unsecured public endpoint, which the account states the
+      agent found and used as its control, staging and egress base"
+  target: >-
+    The node's instance-role credentials, reachable from a container wherever the instance's
+    configuration permits a container workload to reach the link-local metadata service.
+  victimology:
+    - 'Container workloads on cloud instances that can reach the instance metadata service'
+    - 'Multi-tenant ML and data platforms running untrusted workloads in-cluster'
+    - 'Any estate that assumes its cloud audit trail witnesses metadata-service access'
+
+  framework_mappings:
+    - framework: 'MITRE ATT&CK'
+      technique_mapping_status: 'no-technique-assigned'
+      evidence: >-
+        No technique is asserted, and this entry records a deliberate non-mapping that must not be
+        counted as coverage. The account assigns no framework technique anywhere, and this pack
+        assigns identifiers per modeled behavior, which this surface is not. The containing behavior
+        HF-04 carries the application-access-token and cloud-account techniques, which are HF-04's
+        and not this surface's. Attaching a technique here would be invention, and a fabricated
+        identifier would produce a phantom technique in a coverage matrix. No taxonomy version is
+        asserted either, since no mapping is asserted, and this incident instance establishes no
+        technique-level outcome of its own.
+visibility:
+  telemetry_sources:
+    - source: 'cloud-audit-streams'
+      purpose: >-
+        Named so no one looks here: this source carries the behavior not at all, and searching it is
+        the trap.
+      tier: 'not-implemented'
+      operational_viability: 'rejected-not-coverage'
+      details: >-
+        An instance-metadata request is not recorded in any cloud audit stream (REF-AWS-IMDS). It
+        carries no verb and no tier whatsoever, and the attestation is by absence. The vendor page
+        that defines the service and its hop limit describes no audit or logging surface for
+        requests to it. This pack's telemetry inventory records instance-metadata service requests
+        as not available at all, and as not onboardable, because the control is a configuration
+        setting rather than a log. The management-event trail and network flow logs are named in
+        this object only so that a responder does not search them for the request. Neither is a
+        witness, partial or otherwise, and no source read establishes that either could become one.
+      limitations:
+        - 'Structurally invisible: there is no event to collect, at any tier, on any setting.'
+        - 'Cannot be onboarded. No configuration change makes this stream carry the request.'
+        - 'An empty result here is the expected and correct result, and is not evidence that no
+          request occurred.'
+    - source: 'kubernetes-control-plane-audit-metadata-tier'
+      purpose: >-
+        Witnesses the consequence of a successful retrieval, never the retrieval, and belongs to the
+        adjacent behavior HF-04.
+      event_vocabulary: 'kube-audit'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      details: >-
+        Kubernetes API server audit records the authenticated request that follows: the resolved
+        node username and group list, the source-address list the API server observed, the verb and
+        the target resource. That is HF-04, a separately modeled behavior with its own logic. It
+        establishes that a retrieval occurred only by implication, and only once control-plane audit
+        is enabled. All five Amazon EKS control-plane log types are off by default
+        (REF-AWS-EKS-CONTROL-PLANE-LOGS), so availability is per-estate rather than universal. On
+        Google Cloud, Admin Activity audit logs are always written and cannot be disabled
+        (REF-GCP-AUDIT-LOGS). On Azure Kubernetes Service, the `kube-audit-admin` category excludes
+        `get` and `list` (REF-AZURE-AKS-MONITOR).
+      advantages:
+        - 'The only stream in which the escalation that follows a successful retrieval is visible
+          at all.'
+      limitations:
+        - 'Does not record the metadata request. Records only what was done with its output.'
+        - 'Off by default on Amazon EKS: all five control-plane log types.'
+        - 'Enabling it is coverage for the adjacent behavior HF-04 and must not be reported as
+          coverage of this surface.'
+    - source: 'host-agent-network-connect-events'
+      purpose: >-
+        Evaluated as the host-level pivot for this behavior and rejected. It is carried as a
+        deliberate negative, not as a candidate.
+      operational_viability: 'rejected-not-coverage'
+      fields:
+        - name: 'destination address'
+          attestation: 'community-attested'
+          attestation_ref: 'REF-OSSEM-LINUX-SYSMON-DD'
+          load_bearing: false
+          note: >-
+            The value a predicate would test. Attested only by a community data dictionary at
+            researcher tier. No vendor schema reviewed attests the field, so its provenance is
+            inferred. Not adversary-settable, which is the only favorable property it has.
+            Deliberately not built into any logic.
+      details: >-
+        A container process connecting to the metadata address would land on a host-agent
+        network-connect record (Sysmon for Linux Event ID 3), whose destination-address field is the
+        value a predicate would test. This pack rejects the pivot on two grounds: the event is
+        documented "Disabled by default", and its field list is attested only by a community data
+        dictionary at researcher tier rather than by the vendor's own reference
+        (REF-OSSEM-LINUX-SYSMON-DD), so its provenance is inferred. The destination address is not
+        adversary-settable, but that is the only favorable property it has. The recorded conclusion
+        is that there is no pivot behavior. Nothing in this object depends on this source.
+      limitations:
+        - 'Requires a host agent (Sysmon for Linux) deployed on the node. This is specialized
+          telemetry, not a stream an estate has by default.'
+        - 'Documented "Disabled by default" (REF-OSSEM-LINUX-SYSMON-DD).'
+        - 'Attested at researcher tier only, not by a vendor reference.'
+        - 'Deliberately not built into any logic. No behavior in this pack depends on it.'
+        - 'Enabling it does not make this surface detectable and must not be presented as coverage.'
+
+    - source: 'node-group-launch-configuration'
+      purpose: >-
+        Control verification, not detection: it carries the one value that decides whether the
+        behavior is possible at all.
+      event_vocabulary: 'none'
+      tier: 'not-applicable'
+      operational_viability: 'on-by-default'
+      fields:
+        - name: 'metadata response hop limit'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-AWS-IMDS'
+          load_bearing: true
+          note: >-
+            The vendor's exact spelling of the launch-configuration option that carries this setting
+            is not verified by any source read here, so this names the setting rather than asserting
+            an API field name.
+      details: >-
+        This is not a log stream and it carries a setting rather than an event. The node group's
+        launch configuration holds the metadata response hop limit whose documented default is 1
+        (REF-AWS-IMDS). That value is attested by vendor documentation and is the object's only
+        readable discriminator. The reformulation strategy enumerates it per node group and flags
+        any value above 1. This pack marks that read do-not-schedule and treats it as a
+        configuration read rather than a log search, converting it into a configuration-drift rule.
+        The exact vendor spelling of the launch-configuration option is not verified by any source
+        read here, so this object describes the setting rather than asserting an API field name.
+      advantages:
+        - 'The one place in the estate where the value that governs reachability can actually be
+          read.'
+        - 'Answerable before an incident, at no collection cost, by anyone with configuration read
+          access.'
+      limitations:
+        - 'A configuration read is point-in-time. It says nothing about whether a retrieval
+          occurred.'
+        - 'Not schedulable as an alert. This pack explicitly marks it do-not-schedule.'
+        - 'Not a log stream: it carries a setting, not an event, and has no event time to correlate
+          on.'
+detection:
+  scope: >-
+    This object publishes a negative, so its scope is stated as a reformulation rather than as a
+    coverage path. The original question (did a process inside this container request the node's
+    instance-role credentials) is answerable from no estate telemetry, at any tier, on any
+    configuration. Every observable this estate holds in this part of the intrusion is a consequence
+    of the behavior and never the behavior: the authenticated control-plane request that follows
+    belongs to HF-04. The strictly weaker question the estate can answer is whether the behavior is
+    possible at all, and that question is answered by a configuration read rather than by a log
+    search. The single strategy below covers that reformulation and nothing else.
+  outcome_guardrails: >-
+    None of the outcome vocabulary is reachable for the original question. Attempted, blocked,
+    connected, responded, accessed and follow-on-use are all unestablishable, because no evidence
+    stage exists between the adversary's socket and the metadata service's response: a refusal at
+    the hop limit and a credential-bearing response are equally unrecorded. A configuration finding
+    establishes only that the behavior is possible on a named node group at the moment of the read.
+    A later control-plane record can establish follow-on use of a node identity, but that is HF-04's
+    outcome, and using it to claim that this retrieval occurred converts an implication into an
+    assertion. An alert derived from this object must say "possible" and must never say "occurred".
+  shared_normalization_context: >-
+    Normalize the metadata response hop limit to an integer per node group, and treat an unset or
+    absent value as the documented default of 1 (REF-AWS-IMDS) rather than as unknown, so that an
+    inherited default is not reported as a gap. Normalize the node-group identifier across account
+    and region so that identically named groups in different accounts are not collapsed. Because the
+    read has no event time of its own, stamp every finding with the time of the read and the
+    configuration source it came from. That timestamp is the only temporal normalization available
+    and it bounds the claim rather than the behavior. There is nothing to canonicalize on the
+    behavior side, because there is no record to canonicalize.
+  shared_enrichment_context: >-
+    Join the node group to the accounts and regions it exists in, to the nodes currently launched
+    from it, and to the workloads scheduled on those nodes, because the exposure is a property of
+    the node group and the blast radius is the set of containers it carries. Join the owning team or
+    control owner where an asset inventory supplies one, so the finding has a recipient. Join the
+    estate's control-plane audit enablement state, because it decides whether the adjacent behavior
+    HF-04 can witness the consequence. No baseline is useful or required: there is no event stream
+    to baseline, the documented default is a fixed value rather than an estate norm, and this pack
+    marks the enumeration do-not-schedule.
+  strategies:
+    - id: 'STRAT-REFORMULATION'
+      name: 'metadata-hop-limit-exposure-enumeration'
+      objective: >-
+        Is any node group's metadata response hop limit above its documented default of 1?
+      incident_relevance: >-
+        Documented outcome: from inside a compromised dataset-processing pod the operator reached
+        the link-local instance metadata service and retrieved the node's instance-role credentials,
+        which were then used to sign a presigned caller-identity request presented to the cluster as
+        a bearer token. The account records that "some workloads could reach the instance metadata
+        service (IMDSv2)" and that pod-level access is now blocked. It names no configuration
+        setting or value. The retrieval itself produced no record on the cloud side. Against this
+        strategy: it answers the reformulated question and not the original one. It detects one
+        documented way an estate can permit the path today. It does not detect the retrieval, which
+        is recorded nowhere, and it cannot establish that a retrieval ever occurred. Reachability
+        was present in the documented incident, but which setting permitted it is not published, so
+        a raised hop limit must not be reported as an incident fact. A finding produced by this
+        strategy is an exposure finding, not an incident finding.
+      detection_logic: |
+        Enumerate every node group in every account and region and read the metadata response
+        hop limit from its launch configuration. Treat an unset value as the documented default
+        of 1 (REF-AWS-IMDS) rather than as unknown. Flag any node group whose effective
+        limit is greater than 1, and resolve each flagged group to the nodes currently launched
+        from it and to the workloads scheduled on those nodes, because the exposure is
+        per-node-group and the affected population is per-container. Emit this as a finding and
+        not as an alert: this pack marks the enumeration do-not-schedule and treats it as a
+        configuration read rather than a log search, so the operational form
+        is a configuration-drift rule that fires on change (a group whose limit rises above 1,
+        or a new group created above 1) rather than a scheduled query. Do not write any
+        predicate against a request to the metadata service. There is no record in which such a
+        predicate could be evaluated.
+      minimum_evidence: >-
+        A finding requires the node-group identifier, its account and region, and its effective
+        hop-limit value read from an authoritative configuration source, together with the time of
+        the read. Weaker evidence (an inference from a workload's behavior, or a node-level
+        observation without the group's configuration) may be reported as suspected exposure but
+        must not be reported as a confirmed control gap. No evidence of a metadata request may be
+        claimed at any strength, because none exists.
+      correlation_context: >-
+        The entity key is the node group, resolved as the tuple of account, region and group
+        identifier rather than the group name alone. Sequence and time bounds do not apply: the
+        configuration read has no event time of its own, so it cannot be joined to any activity and
+        cannot establish that a retrieval preceded or followed the value it observed. The join from
+        node group to node to workload is exact where an inventory supplies it and inferred where it
+        is reconstructed from scheduling state. Label which. Retention is a property of the
+        configuration store, not of a log pipeline, so a historical value is available only if
+        configuration history is retained.
+      detectors:
+        - detector_class: 'cloud-configuration-and-asset-inventory'
+          technologies:
+            - 'Amazon EC2 launch template and instance metadata options'
+            - 'Amazon EKS managed node-group configuration'
+            - 'Cloud asset-inventory and resource-configuration services'
+          contribution: >-
+            Reads the one value that decides whether the behavior is possible on a given node group.
+          limitations: >-
+            Point-in-time only. Requires configuration read access across every account and region,
+            and cannot say whether a retrieval occurred.
+        - detector_class: 'cloud-security-posture-and-configuration-drift-management'
+          technologies:
+            - 'Cloud security posture management platforms'
+            - 'Infrastructure-as-code policy and drift-detection pipelines'
+          contribution: >-
+            Turns the enumeration into a standing control check that fires when a node group's limit
+            rises above the documented default.
+          limitations: >-
+            Detects the control's state and its return, never the access. Coverage depends on every
+            node group being under management.
+        - detector_class: 'kubernetes-workload-inventory'
+          technologies:
+            - 'Kubernetes node and pod inventory'
+            - 'Container platform asset inventories'
+          contribution: >-
+            Resolves a flagged node group to the nodes and containers actually exposed by it.
+          limitations: >-
+            Supplies blast radius only. Contributes no evidence about the metadata service and
+            cannot originate a finding.
+      benign_explanations:
+        - explanation: >-
+            Legacy node groups are commonly raised for container compatibility, which is the
+            expected evidence this pack predicts for this enumeration.
+          distinguishing_context: >-
+            The distinguishing context is not why the limit was raised but whether the node group
+            carries untrusted or multi-tenant workloads, and whether the value is still required.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Do not exclude a node group because its raised limit is expected. The incident's own
+            workloads could reach the metadata service and no source states what permitted it, so
+            such an exclusion would suppress the incident's own class of exposure.
+        - explanation: >-
+            A group may have inherited the value from an older launch configuration that nobody has
+            revisited.
+          distinguishing_context: >-
+            The distinguishing context is not how the limit came to be raised but whether the node
+            group carries untrusted or multi-tenant workloads, and whether the value is still
+            required.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            An inherited raised limit is indistinguishable in configuration from a deliberately
+            raised one, so treating inheritance as a benign origin removes the exposure from the
+            result set without changing it.
+        - explanation: >-
+            A raised hop limit is usually not adversarial in origin, and none of these benign
+            origins makes the exposure benign. No false-positive population exists in the ordinary
+            sense, because a finding is a true statement about configuration rather than a claim
+            about activity.
+          overlaps_incident_instance: false
+      forbidden_exclusions:
+        - field: 'expected-or-approved-raised-hop-limit'
+          reason: >-
+            Would suppress the incident's own record: an expected exposure is still an exposure, and
+            the disposition belongs to the control owner, not to the rule.
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: 'Volume not estimated.'
+      blind_spots:
+        - description: >-
+            A point-in-time configuration read cannot tell you whether a retrieval already occurred
+            while the limit was raised, and a limit returned to 1 after the fact leaves the same
+            empty record as one that was never raised.
+          routes_to: null
+        - description: >-
+            No cloud audit stream records the request at any tier on any configuration, so nothing
+            corroborates or refutes a finding.
+          routes_to: null
+        - description: 'The host-level pivot does not close the gap either: the network-connect
+                       event is documented "Disabled by default" and attested only at researcher
+                       tier (REF-OSSEM-LINUX-SYSMON-DD).'
+          routes_to: null
+        - description: >-
+            No other modeled behavior reveals this one. Whether the redeemer of a presigned
+            identity-API URL is distinguishable from its signer in the cloud audit trail is
+            unconfirmed, and that unconfirmed question is load-bearing to the conclusion that no
+            pivot exists.
+          routes_to: null
+        - description: >-
+            Where control-plane audit is off, even the consequence is unwitnessed, so an estate can
+            be blind at both ends at once.
+          routes_to: null
+        - description: >-
+            The enumeration has its own silent zero, recorded as ASSUMPTION-2: it sees only the node
+            groups the reading credential can enumerate, so where that credential's reach is short
+            the result under-reports and an empty answer is indistinguishable from a clean estate.
+            Reconcile the enumerated node-group count against the platform's own inventory before
+            trusting an empty result.
+          routes_to: null
+        - description: >-
+            It has a second silent zero, measured on 2026-08-10. The hop limit governs a plain
+            bridge container and not every path out of one. At the documented default of 1, a
+            container sharing the host network namespace and a bridge container reaching an on-node
+            proxy each retrieved node-role credentials. A node group reading clean therefore means
+            the hop limit is not raised, and it does not mean workloads on those nodes cannot reach
+            the service. Of the two paths that defeat it, the host-network one is detectable and
+            modeled: HF-04's host-networked workload creation strategy catches it from control-plane
+            audit. The on-node proxy one is modeled nowhere in this pack. Pair the enumeration with
+            a reachability test from inside a container before treating a clean result as coverage.
+          routes_to: null
+      analyst_response: >-
+        Treat each flagged node group as a live exposure and as a pre-condition of HF-04, and return
+        the limit to 1. Do not close the finding there. Returning it to 1 holds the ordinary
+        container path and leaves a workload sharing the host network namespace or reaching a proxy
+        on the node still able to retrieve the credentials, so run the request from inside a
+        container on those nodes and read the answer before calling the group clean. Identify the
+        nodes and workloads the group carries and whether any of them run untrusted or multi-tenant
+        content. Confirm whether control-plane audit is enabled, since that decides whether the
+        consequence of a retrieval would be seen at all. Do not search the cloud audit trail for the
+        request: returning nothing there is the correct and expected result, not a collection
+        failure to chase, and not evidence that no retrieval occurred. Record the read's timestamp
+        and configuration source with the finding. Re-run the enumeration on configuration change,
+        and re-validate the underlying control claim by 2026-09-30, which is the review date this
+        pack sets for it.
+      safe_conclusion: >-
+        At least one node group's metadata response hop limit is above the documented default of 1,
+        so that setting does not enforce the default one-hop barrier. Other routing and policy
+        controls still determine reachability. The original
+        question (did a process inside this container request the node's instance-role credentials
+        from the cloud instance metadata service?) is not answerable from any estate telemetry.
+      validation:
+        status: 'partially-validated'
+        evidence: >-
+          The launch event records a metadata response hop limit of 2, and a container on the
+          default bridge network reached the link-local metadata service and retrieved the node role
+          credentials. A later capture, labeled after the setting was returned to the documented
+          default of 1, records the bridge container obtaining nothing while the host still obtained
+          a token. A separate capture under the same setup label records a container sharing the
+          host network namespace and a bridge container reaching an on-node proxy each retrieving
+          node role credentials. Those later captures contain no configuration read or instance
+          identity, so they establish the per-path outcomes under the recorded setup and do not
+          independently attest the setting or that the same instance was used. What is settled here
+          is field availability at launch and path-specific reachability. Whether any cloud audit
+          stream records the retrieval was not tested, so the published negative rests on the
+          vendor's own metadata documentation. The enumeration across multiple node groups was not
+          run.
+        method: >-
+          A launch event for an instance with a role attached records the hop limit as 2 in both the
+          request and response. A container fetched an IMDSv2 token and then read the
+          security-credentials path. Two later stdout captures, recorded after the operator changed
+          the setting, exercised the request from the host and a plain bridge container, then from a
+          plain bridge container, a container sharing the host network namespace, and a bridge
+          container pointed at a proxy listening on the node. The later captures label the setting
+          as the documented default of 1 but retain neither a configuration read nor an instance
+          identifier.
+        measured: >-
+          The launch event records a hop limit of 2. Its accompanying stdout shows the container
+          obtaining an IMDSv2 token of length 56 and role credentials carrying an access-key field
+          and a session-token field. A later capture labeled hop limit 1 shows the host obtaining a
+          token of length 56 and the plain bridge container obtaining a token of length 0. The
+          three-path capture under the same label shows the plain bridge at 0, while the
+          host-network container and the bridge container using an on-node proxy each obtained a
+          token of length 56 and role credentials carrying an access-key field. Two of the three
+          paths reached the service under the recorded setup label. The later captures do not
+          independently attest the hop limit or instance count.
+  supporting_technologies_considered: >-
+    Posture management and configuration scanning are not supporting technologies for this object.
+    One of them is the primary evidence, which is itself the finding. The only instrument that can
+    say anything about this surface reads configuration rather than events. Packet capture and deep
+    packet inspection are the technologies a reader most often proposes here, and they are rejected:
+    link-local traffic between a container and the instance's own metadata endpoint does not
+    traverse an observation point that ordinary capture reaches, no source read establishes that it
+    does, and proposing capture as a remedy converts a structural absence into a budget request.
+    Memory and disk forensics can recover a credential or a response body from a host that is still
+    available, but they establish what was held rather than what was requested and they are
+    unavailable by the time most estates ask the question. None of these changes the answer: there
+    is no event to collect.
+detector_requirements:
+  required: >-
+    Nothing can be required of a log pipeline, because nothing can be collected: the request is not
+    an event in any cloud audit stream (REF-AWS-IMDS). What is required instead is a configuration
+    read (the metadata response hop limit per node group, across every account and region, with an
+    authoritative source of record and a read timestamp) plus an inventory join from node group to
+    node to workload so a finding carries its blast radius, and a named control owner so it carries
+    a recipient. Evidence retention and tamper resistance are out of scope rather than assumed away:
+    no predicate in this object depends on any log's integrity, because there is no predicate and no
+    record. Where the consequence of a retrieval is witnessed instead, the trustworthiness of the
+    control-plane audit log is HF-04's question, not this surface's. The build effort is a single
+    enumeration over node groups, not a collection project.
+  optional: >-
+    Kubernetes API server audit at Metadata tier is optional here and belongs to HF-04's detection
+    of the consequence. It is not coverage of this surface.
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology. Actual support depends on
+    deployed sensors, enabled logging, retained fields, parsing, licensing, and the environment's
+    architecture. An agent must verify those capabilities before selecting or generating an
+    implementation. For this object one further check applies: any product claiming detection
+    coverage of instance-metadata access from cloud audit data should be asked which field carries
+    it.
+missing_context:
+  unverified:
+    - 'What permitted a container workload to reach the metadata service; the account states only
+      that "some workloads could reach" it and names no setting or value. Any hop-limit figure is
+      an inference from vendor documentation (REF-AWS-IMDS), not a published fact, which caps how
+      precisely the exposure can be described.'
+    - 'Which node groups or workloads were affected, and how many; not stated in any source, which
+      caps the blast-radius claim.'
+    - 'Whether the redeemer of a presigned identity-API URL is distinguishable from its signer in
+      the cloud audit trail; unconfirmed, and load-bearing to the conclusion that no pivot
+      behavior exists.'
+    - "When inside the campaign window the platform's own correlated signal fired. How the
+      intrusion was discovered is not open: the account states it was self-detected, correlated
+      into \"a coherent attack signal\" that \"failed to correctly raise the alert's criticality
+      and trigger the on-call team\"."
+    - "Whether the metadata request used the protocol's token-authenticated form; the public
+      account does not say, and no detection consequence follows either way."
+    - "The vendor's exact spelling of the launch-configuration option that carries the response hop
+      limit; no source read fixes it, so this object describes the setting rather than naming an
+      API field."
+  assumptions:
+    - id: 'ASSUMPTION-1'
+      verdict_changing: false
+      statement: >-
+        The estate's metadata service behaves as the platform the incident is attested on. Only that
+        platform's documentation was read, and the reachability mechanics, the default hop limit and
+        the absence of an audit surface are asserted for it alone. If wrong, the control named here
+        is the wrong control for that estate. The test to resolve it is to read the other provider's
+        own metadata documentation before applying this object.
+    - id: 'ASSUMPTION-2'
+      verdict_changing: false
+      statement: >-
+        Every node group's launch configuration is enumerable by the reading credential and is
+        authoritative for the running nodes. If wrong, the enumeration under-reports rather than
+        over-reports, and a silent zero is indistinguishable from a clean estate. The test to
+        resolve it is to reconcile the enumerated node-group count against the platform's own
+        inventory before trusting an empty result.
+    - id: 'ASSUMPTION-3'
+      verdict_changing: false
+      statement: >-
+        The documented default of 1 remains the platform default at the time of reading. The
+        negative this object publishes does not rest on this or on any other assumption (neither of
+        its two routed detectability claims does), but the reformulation strategy's flag condition
+        does. If wrong, the threshold is wrong. The test to resolve it is to re-read the vendor page
+        the object cites.
+    - id: 'ASSUMPTION-4'
+      verdict_changing: true
+      statement: >-
+        One product page's silence about logging stands for every cloud audit stream. The observable
+        and detectable negatives are attested by absence against REF-AWS-IMDS, the page that defines
+        the metadata service and its hop limit, on the ground that it "describes no audit or logging
+        surface for requests to it". Those are not the same kind of document: a
+        service-configuration page is not the catalog of what the cloud's audit streams record, and
+        a service that emits no audit surface of its own may still appear as an event source, a
+        data-event class or a flow endpoint in a stream documented elsewhere. The claim actually
+        published (no verb, no tier, in any cloud audit stream, on any configuration) is this pack's
+        generalization from that one page and not an enumeration of the audit streams themselves. It
+        is verdict-changing because it is the whole basis of both negatives: a single audit stream
+        documenting metadata-service requests makes the observable answer yes-conditional rather
+        than no, and the object becomes a collection ticket. If wrong, the reformulation is not the
+        estate's only move and the surface is onboardable. Resolve it by reading the audit streams'
+        own references rather than the service's (the management-event record-contents reference and
+        its supported-services list, the data-event class documentation, and the flow-log records
+        reference) and recording, per stream, whether the link-local metadata address or the
+        metadata service appears as a recordable event source or endpoint.
+    - id: 'ASSUMPTION-5'
+      verdict_changing: true
+      statement: >-
+        The response hop limit is the setting that permitted the incident's path, so enumerating it
+        answers the reformulated question. The account states only that "some workloads could reach
+        the instance metadata service (IMDSv2)" and names no setting and no value. The hop limit is
+        the setting the vendor documents as governing the extra hop, and this object joins the two.
+        The join crosses a category boundary: the account describes an outcome (a workload could
+        reach the service), the vendor page describes one mechanism among the several that decide
+        reachability (host network namespace sharing, a proxy or sidecar on the node, a network
+        policy, an SDK endpoint override, or a raised hop limit each produce the same outcome). The
+        strategy's remaining value rests on the publisher's own remedy, "Pod-level access to it is
+        now blocked for all workloads", rather than on any incident-attested configuration, and the
+        remedy names no implementation. It is verdict-changing because it decides whether the estate
+        can answer the reformulated question at all: if reachability in a given estate is permitted
+        by something other than the hop limit, a clean enumeration returns no finding while the
+        behavior remains fully possible, and the object's one decidable claim silently
+        under-reports. If wrong, the enumeration must be replaced by a reachability test rather than
+        re-tuned. Resolve it by testing in a lab: on a node with the hop limit at its documented
+        default of 1, attempt the link-local request from inside a container under each of host
+        network namespace sharing, an on-node proxy, and an SDK endpoint override, and record which
+        of them return credentials anyway. Tested on 2026-08-10 against one provider, with an
+        adverse result. A launch event attests the hop limit at 2, where a plain container obtained
+        a metadata token and node-role credentials. Later captures labeled at the documented default
+        of 1 show the plain bridge obtaining neither, while a container sharing the host network
+        namespace and a bridge container reaching an on-node proxy each obtained a token and
+        node-role credentials. Those captures contain no configuration read or instance identifier,
+        so the path outcomes are captured while the setting remains an operator-supplied setup fact.
+        An SDK endpoint override was not exercised, so the third alternative is still open. The
+        documented mechanisms still mean that enumerating the hop limit does not establish
+        unreachability. The enumeration still finds a real exposure, and a raised limit should still
+        be returned to 1. Establishing reachability requires an active probe, which is not a
+        detection and is not run by a telemetry pipeline. Both bypass paths are published: the
+        host-network one is modeled in HF-04, and the proxy one is declared uncovered in
+        REACHABLE_WITHOUT_RAISED_HOP_LIMIT. A deployer who needs certainty must run the probe.
+missing_states:
+  - id: 'NO_CLOUD_RECORD'
+    meaning: >-
+      Inexpressible in principle, and the expected permanent state: no cloud audit stream carries
+      the request, at any tier, on any configuration (REF-AWS-IMDS).
+    coverage_claim: 'no-coverage'
+    response: >-
+      Do not claim coverage, do not treat the empty result as an absence of the behavior, and do not
+      open a collection ticket. Report the surface as not detectable and hand the reader the
+      control: return the metadata hop limit to 1, verified by the enumeration in
+      STRAT-REFORMULATION. That control is necessary and it is not sufficient. In captures labeled
+      with the limit at 1, a container sharing the host network namespace and a container reaching
+      an on-node proxy each still retrieved node-role credentials. Those captures do not contain an
+      independent configuration read.
+  - id: 'HOP_LIMIT_ABOVE_DEFAULT'
+    meaning: >-
+      Missing environment context supplied by the estate rather than by a log: a node group's
+      metadata response hop limit exceeds the documented default of 1 (REF-AWS-IMDS).
+    response: >-
+      This is a live exposure and a pre-condition of HF-04. Return it to 1. The build effort is a
+      single enumeration over node groups, not a collection project. This object claims no coverage
+      either way. The value of this state is exposure, not detection. Returning it to 1 closes one
+      path and not the surface, which is REACHABLE_WITHOUT_RAISED_HOP_LIMIT below.
+  - id: 'REACHABLE_WITHOUT_RAISED_HOP_LIMIT'
+    meaning: >-
+      Missing environment context: a container can reach the metadata service without traversing the
+      extra bridge hop governed by the response limit. In captures labeled with the limit at 1, a
+      plain bridge container retrieved nothing, while a container sharing the host network namespace
+      and a bridge container reaching an on-node proxy each retrieved node-role credentials. The
+      captures retain no independent configuration read. An SDK endpoint override was not exercised
+      and its effect here is unknown.
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Do not read a clean hop-limit enumeration as a clean estate. The host-network path is
+      detectable and this pack models it: HF-04's host-networked workload creation strategy catches
+      the creation of such a workload by a principal that is not cluster infrastructure, from
+      control-plane audit. The on-node proxy path is covered by nothing here. A proxy is a process
+      listening on a node rather than a configuration a control plane publishes, so it may not be
+      enumerable from any control plane at all, and a host-level process or listen-socket inventory
+      is where it would have to come from. Where certainty is needed, run the request from inside a
+      container and read the answer rather than inferring it from a setting.
+  - id: 'HOST_NETWORK_CONNECT_DISABLED'
+    meaning: >-
+      Missing telemetry whose platform default is off: the host-agent network-connect event is
+      disabled, which is its documented default (REF-OSSEM-LINUX-SYSMON-DD).
+    coverage_claim: 'no-coverage'
+    response: >-
+      Do not claim coverage. Enabling the event does not make this surface detectable. The pivot was
+      evaluated and rejected on attestation and default state, not gated on a collection tier, and
+      nothing closes this state.
+  - id: 'CONTROL_PLANE_AUDIT_DISABLED'
+    meaning: >-
+      Missing telemetry whose platform default is off on Amazon EKS: Kubernetes control-plane audit
+      is not enabled, so the Metadata-tier stream that would witness the consequence does not exist.
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Limit the conclusion to configuration exposure only. Enable it for HF-04's sake, which owns
+      this state, and not as coverage of this surface. Without it the entire escalation step is
+      unwitnessed at both ends.
+  - id: 'EMPTY_CLOUD_AUDIT_READ_AS_ABSENCE'
+    meaning: >-
+      An analyst trap: a responder searches the cloud audit trail for the request, finds nothing,
+      and concludes the retrieval did not occur.
+    coverage_claim: 'no-coverage'
+    response: >-
+      Do not claim coverage and do not raise a collection ticket. The wrong question is whether the
+      audit trail shows the request. The right question is whether any node group's hop limit was
+      above 1, whether it has been returned to 1, and whether a container on those nodes can reach
+      the service anyway, which REACHABLE_WITHOUT_RAISED_HOP_LIMIT covers. Returning nothing is the
+      correct and expected result.
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'plain_language_behavior_claim'
+    - 'detection_strategy_id'
+    - 'control_owner_or_explicit_missing_state'
+    - 'cloud_account_and_region'
+    - 'node_group_or_launch_configuration_identifier'
+    - 'metadata_response_hop_limit_value'
+    - 'documented_default_hop_limit'
+    - 'affected_nodes_and_workloads_when_available'
+    - 'normalized_exposure_classification'
+    - 'configuration_read_timestamp_and_source_of_record'
+    - 'explicit_no_cloud_audit_record_missing_state'
+    - 'control_plane_audit_enablement_state_when_available'
+    - 'remediation_return_hop_limit_to_documented_default'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'node_identity_control_plane_activity'
+      condition: >-
+        Include only when control-plane audit is enabled and a node identity authenticated from a
+        non-node address. It is HF-04's consequence evidence and never evidence that a retrieval
+        occurred on this node group.
+  recommended_title: >-
+    Node-group metadata hop limit does not enforce the documented one-hop barrier
+  unsupported_title: "Cloud audit shows a container retrieved the node's instance-role credentials"
+
+evidence:
+  confirmed_incident_behavior: >-
+    Observed in the incident narrative: the victim's own timeline records the operator, from inside
+    a compromised pod, reaching the link-local instance metadata service and retrieving the node's
+    instance-role credentials (REF-INCIDENT-HF): "Read the EC2 node role credentials from the
+    instance metadata service." The same account states in its hardening list that "some workloads
+    could reach the instance metadata service (IMDSv2)" and that pod-level access is now blocked for
+    all workloads. It names no configuration setting or value, and no hop limit appears anywhere in
+    it. The retrieved credentials were used to sign a presigned caller-identity request,
+    base64-encoded behind the constant prefix `k8s-aws-v1.` (REF-AWS-IAM-AUTHENTICATOR-TOKEN) and
+    presented to the cluster as a bearer token. The retrieval itself is recorded nowhere on the
+    cloud side, which is this pack's reading of the vendor documentation rather than a statement the
+    account makes. Observed in the incident and unobservable in telemetry are different axes, and
+    both are true here.
+  supported_conclusion: >-
+    The negative is the finding. Requests to the cloud instance metadata service are recorded in no
+    cloud audit stream, the absence is structural rather than a collection gap, and it is attested
+    by the vendor's own metadata documentation by absence: the page that defines the service and its
+    hop limit describes no audit or logging surface for requests to it (REF-AWS-IMDS). There is no
+    tier to raise and no enablement switch that would produce the record, so no detector of any
+    class can emit a conclusion about this behavior. A detector may emit only the reformulated
+    conclusion (that a named node group's response hop limit exceeds the documented default of 1 and
+    that container workloads on its nodes can therefore reach the service) from a configuration read
+    with a timestamp and an authoritative source of record.
+  unsupported_conclusions: >-
+    This object does not support any claim that a metadata request was detected, attempted, blocked,
+    connected, responded to, or that credentials were accessed, in any estate. The undecidable
+    question (did a process inside this container request the node's instance-role credentials) is
+    answerable from no telemetry, and a configuration finding must never be translated into a claim
+    of detection or of prevention. It does not support counting this surface in the denominator of
+    any coverage, grading or detection-strategy rollup: it has no observable surface, which is
+    precisely why it is published separately as a negative. On attribution, there is no threat
+    group, no persistent infrastructure to pivot on and no prior campaign to compare against, so no
+    actor-level conclusion beyond the source's own account is supported. No atomic indicators exist
+    for this incident: none were published, by the victim's stated redaction policy, and for this
+    surface the point is sharper than a redaction policy. Even with no redaction there would be
+    nothing atomic to publish, because the request produces no record in which an indicator could
+    appear. No source maps any published vulnerability record to this incident. That negative is the
+    press reference's and not the account's: the news report states verbatim that "the records do
+    not map any CVE to the incident, identify the access required before exploitation, or explain
+    why OpenAI refers to one proxy zero-day while JFrog refers to multiple vulnerabilities"
+    (REF-NO-CVE-MAPPING), while the same article's headline asserts that the vendor confirms a
+    zero-day, so a confirmation is being cited in support of an absence and the tension is stated
+    here rather than left to be noticed. The vendor did confirm the product and ship a fix
+    (REF-JFROG-ZERODAY-UPDATE). Researcher credit is a separate matter from incident mapping: the
+    published CVE records for that release credit named operator researchers on nine of them without
+    mapping any of them to this incident, which corroborates the mapping absence rather than the
+    press attribution. Re-tested 2026-08-07 and confirmed against the newest source available: the
+    escape-vector vendor's own blog update of 2026-08-05, published after the model developer's
+    Black Hat USA reconstruction of this incident, discusses zero-day findings in Artifactory and
+    carries no CVE identifier anywhere on the page (REF-JFROG-ZERODAY-UPDATE). Do not weaken without
+    a new primary source.
+  procedure_boundary: >-
+    This procedure ends at the metadata service's response. What the credentials were then used for
+    (signing a presigned caller-identity request and presenting it to the cluster as a bearer token,
+    after which the API server resolves the caller to the node identity) is HF-04, a separate object
+    that detects the consequence and never this retrieval. HF-04's detection firing is not evidence
+    that this retrieval was observed. It establishes that a retrieval occurred only by implication,
+    and this surface is a pre-condition of HF-04 rather than a peer of it. The strictly weaker
+    question this estate can answer (whether any node group's hop limit exceeds 1) is a hunt and a
+    control verification, not this behavior, and its finding must never be reported as coverage. On
+    atomic indicators the source's redaction policy is quoted directly: "Live credentials, internal
+    hostnames, and specific indicators have been redacted or genericized, while the techniques are
+    described exactly as observed by Hugging Face" (REF-INCIDENT-HF). Anyone circulating an
+    indicator list for this incident is therefore circulating something with no published origin,
+    and for this surface the point is sharper than the redaction policy, because the request
+    produces no record in which an indicator could appear at all. Adjacent edges were checked and
+    found empty: no other modeled behavior reveals this one, and no published detection content or
+    vulnerability record attaches to it.
+  references:
+    - id: 'REF-INCIDENT-HF'
+      type: 'incident-procedure-primary-source'
+      title: >-
+        Anatomy of a Frontier Lab Agent Intrusion: A Technical Timeline of the July 2026 Incident
+      publisher: 'Hugging Face'
+      url: 'https://huggingface.co/blog/agent-intrusion-technical-timeline'
+      trust_tier: 'primary'
+      verification: 'confirmed'
+      evidence_use: >-
+        Primary procedure-level source for the operator reaching the instance metadata service from
+        inside a pod, retrieving the node's instance-role credentials, the statement that some
+        workloads could reach that service and that pod-level access is now blocked, and the stated
+        redaction policy behind the absence of atomic indicators. It states no metadata
+        configuration setting or value.
+      relevant_locations:
+        - 'Three lateral-movement techniques > 1. Node impersonation and CSI token theft, for the
+          read of the node role credentials from the instance metadata service'
+        - 'Day 3 (07-11): lateral movement begins > Kubernetes (10:10)'
+        - 'What we changed > Cloud metadata lockdown'
+        - 'Introduction: the redaction and genericisation policy'
+    - id: 'REF-AWS-IMDS'
+      type: 'attack-surface-documentation'
+      title: 'Use the Instance Metadata Service to access instance metadata'
+      publisher: 'AWS'
+      url: >-
+        https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-service.html
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Load-bearing twice: positively it carries the response hop-limit default of 1, which is the
+        control. Negatively it is the attestation by absence behind the claim that the request is
+        recorded in no cloud audit stream, since the page that defines the service and its
+        configuration describes no audit or logging surface for requests to it.
+      relevant_locations:
+        - 'How Instance Metadata Service Version 2 works, response hop limit paragraph'
+        - 'Whole page, read for the absence of any audit or logging surface'
+    - id: 'REF-AWS-IAM-AUTHENTICATOR-TOKEN'
+      type: 'attack-surface-documentation'
+      title: 'pkg/token/token.go'
+      publisher: 'kubernetes-sigs/aws-iam-authenticator'
+      url: 'https://github.com/kubernetes-sigs/aws-iam-authenticator/blob/master/pkg/token/token.go'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the token format used after the retrieval (the constant prefix `k8s-aws-v1.` over
+        a base64-encoded presigned caller-identity URL valid fifteen minutes from its signing
+        timestamp), cited only for what was done with the credentials after the hop, and it
+        independently fixes the cloud provider as AWS.
+    - id: 'REF-OSSEM-LINUX-SYSMON-DD'
+      type: 'telemetry-documentation'
+      title: 'Event ID 3: Network connection — Linux/Sysmon data dictionary'
+      publisher: 'OSSEM Project'
+      url: 'https://ossemproject.com/dd/dictionaries/linux/sysmon/event-3.html'
+      trust_tier: 'aggregator'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Sole basis on which the host-level pivot was evaluated and the reason it was rejected: it
+        attests the network-connect event as disabled by default, at researcher tier, in a community
+        data dictionary rather than in the vendor's own reference.
+    - id: 'REF-SYSMON-LINUX-DNS'
+      type: 'telemetry-documentation'
+      title: 'Request: Implement Event ID 22 (DNSEvent) #183'
+      publisher: 'microsoft/SysmonForLinux'
+      url: 'https://github.com/microsoft/SysmonForLinux/issues/183'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Cited only to identify the Linux host agent whose network-connect event was evaluated as the
+        pivot. Its substantive use elsewhere concerns a different absent event and is not relied on
+        here.
+    - id: 'REF-AWS-EKS-CONTROL-PLANE-LOGS'
+      type: 'telemetry-documentation'
+      title: 'Send control plane logs to CloudWatch Logs'
+      publisher: 'AWS (Amazon EKS)'
+      url: 'https://docs.aws.amazon.com/eks/latest/userguide/control-plane-logs.html'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Attests that each control-plane log type is turned off by default, which is why the
+        consequence of a successful retrieval may be unwitnessed in the same estate that cannot
+        witness the retrieval.
+    - id: 'REF-GCP-AUDIT-LOGS'
+      type: 'telemetry-documentation'
+      title: 'Cloud Audit Logs overview'
+      publisher: 'Google Cloud'
+      url: 'https://cloud.google.com/logging/docs/audit'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Attests that Admin Activity audit logs are always written and cannot be configured, excluded
+        or disabled, which bears on whether the consequence is witnessed on that platform and never
+        on the retrieval itself.
+    - id: 'REF-AZURE-AKS-MONITOR'
+      type: 'telemetry-documentation'
+      title: 'Monitor Azure Kubernetes Service (AKS)'
+      publisher: 'Microsoft Azure'
+      url: 'https://learn.microsoft.com/en-us/azure/aks/monitor-aks'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Attests that the kube-audit-admin collection category excludes the get and list audit
+        events; used only for that claim, since the same page's audit-policy levels were not
+        verified and no policy-level claim is made from it.
+    - id: 'REF-NO-CVE-MAPPING'
+      type: 'incident-campaign-secondary-source'
+      title: >-
+        JFrog Confirms OpenAI Models Exploited Artifactory Zero-Day Before Hugging Face Breach
+      publisher: 'The Hacker News'
+      url: 'https://thehackernews.com/2026/07/jfrog-confirms-openai-models-exploited.html'
+      trust_tier: 'news'
+      verification: 'confirmed-with-scope-caveat'
+      citation_caveat: 'headline-overstates-body'
+      citation_caveat_note: >-
+        The headline states that the vendor confirms a zero-day. The body sentence cited here states
+        that the published records map no CVE to this incident. This object cites the body sentence,
+        not the headline, and relies on it only for that standing negative. The absence is
+        independently corroborated by the published CVE records for that release, which credit named
+        operator researchers on nine of them without mapping any of them to this incident, so the
+        negative survives discounting this source entirely.
+      evidence_use: >-
+        Carries the no-CVE-mapping sentence verbatim and supplies campaign-level context at news
+        tier rather than as a campaign primary source; supporting only, and no conclusion in this
+        object depends on it. Carried with an explicit scope caveat because the source argues
+        against the claim it is cited for: its headline asserts that the vendor confirms a zero-day,
+        while the body sentence cited here states that the records map no CVE to the incident. Only
+        the body sentence is used, and the absence is independently corroborated by the published
+        CVE records for that release, which credit named operator researchers on nine of them
+        without mapping any to this incident.
+    - id: 'REF-JFROG-ZERODAY-UPDATE'
+      type: 'incident-campaign-primary-source'
+      title: >-
+        Fast Remediation Is the New Trust Model: JFrog and OpenAI Collaboration on Zero-Day Security
+        Findings
+      publisher: 'JFrog'
+      url: 'https://jfrog.com/blog/jfrog-and-openai-collaboration-on-zero-day-security-findings/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      citation_caveat: 'partial-use'
+      citation_caveat_note: >-
+        The page is the escape-vector vendor's own account of its own product, and only one bounded
+        part of it is relied on here: that it discusses zero-day findings in the product while
+        carrying no CVE identifier anywhere. Its fast-remediation and trust-model framing is not
+        endorsed and nothing in this object rests on it. The standing negative the page
+        re-time-boxes is carried verbatim by REF-NO-CVE-MAPPING, so the claim survives discounting
+        this source entirely. Only the 2026-08-07 re-time-boxing would be lost.
+      evidence_use: >-
+        The escape-vector vendor writing about its own product, updated 2026-08-05 in response to
+        the model developer's Black Hat USA reconstruction of this incident. Cited for one thing:
+        the page discusses zero-day findings in the product and carries no CVE identifier anywhere,
+        which is what re-time-boxes to 2026-08-07 the standing negative that no published
+        vulnerability record maps to this incident. No verdict, strategy or logic in this object
+        depends on it.

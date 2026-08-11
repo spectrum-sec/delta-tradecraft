@@ -1,0 +1,1372 @@
+identity:
+  uuid: '71de8edd-8585-4a8f-92a5-3f07335391c6'
+  id: 'DT-OAIHF-APP-003'
+  aliases:
+    - 'DT-OAIHF-APP-021'
+    - 'DT-OAIHF-002'
+    - 'IOB-2'
+  name: 'Attacker-Supplied Storage Declaration Resolved Into Local Credential and Source Reads'
+  incident: 'openai-hugging-face-breach'
+  first_observed: '2026-07'
+  last_reviewed: '2026-08-08'
+
+classification:
+  primary_attack_surface: 'application-runtime'
+  secondary_attack_surfaces:
+    - 'in-process-runtime'
+    - 'host-os-authorization-boundary'
+  behavior_classes:
+    - 'discovery'
+    - 'collection'
+    - 'exfiltration'
+  tags:
+    - 'credential-access'
+    - 'parser-worker'
+    - 'file-read-not-code-execution'
+    - 'no-process-created'
+    - 'kernel-audit-path-watch'
+    - 'platform-independent'
+    - 'ai'
+
+behavior:
+  definition: >-
+    An adversary submits a data artifact whose container metadata declares that part of its raw data
+    lives in external storage and names a local filesystem path, so that a trusted parsing worker
+    opens that path and returns its bytes as content.
+  detailed_definition: >-
+    The adversary controls declarative metadata that a server-side parsing worker interprets as a
+    pointer to where the real bytes live. The pointer names a location inside the worker's own trust
+    context rather than a remote one. When the worker resolves it, the read crosses from an
+    untrusted submission surface into the worker's own filesystem, process environment and
+    credential material, and the bytes return to the submitter through the platform's ordinary
+    data-return path. So access and exfiltration are the same operation and there is no second,
+    separately observable exfiltration step. The discriminating condition is a parser executable,
+    rather than a client-library initializer, touching a credential path outside process startup. No
+    process is created, no command line exists and no interpreter is spawned. The already-running
+    worker performs an ordinary open and read. A declaration that names a local path establishes an
+    attempt. Only a record of the read establishes that the bytes were accessed. The behavior is
+    independent of container format, parser library, operating system, orchestrator and security
+    product.
+manifestation:
+  possible:
+    answer: 'yes'
+    summary: >-
+      This can occur on any content-parsing fleet that accepts externally submitted data artifacts
+      and honors an external-raw-storage declaration in container metadata. It requires only the
+      ability to submit such an artifact and a parser that honors the declaration. No process
+      creation, no interpreter spawn and no command line are involved: the already-running worker
+      performs an ordinary open and read. Reaching high-value material also requires that the named
+      path be readable by the worker's own identity, and that the credential the adversary wants
+      actually resides on the filesystem rather than only in memory or in a remote store. In the
+      documented incident the declaration was first aimed at remote destinations and re-pointed at
+      local high-value targets only after the data library's URL allowlist rejected every
+      non-platform URL before any fetch.
+  observable:
+    answer: 'yes'
+    answer_scope: >-
+      Host-level file and object-access auditing on the hosts running the parsing workers, scoped to
+      an explicit sensitive-path watch set, plus the submitted artifact's own metadata and an
+      egress-validation denial record as earlier observation points. A record that preserves neither
+      the accessed path nor the accessing executable cannot establish the behavior, and
+      process-creation telemetry observes nothing at all.
+    summary: >-
+      The behavior is observable only where host-level file and object-access auditing is installed
+      on the hosts running the parsing workers and is scoped to an explicit sensitive-path watch
+      set: records naming the accessing executable, the process and parent process, and the audit
+      user id. Note what is explicitly absent: process-creation telemetry sees nothing, because no
+      process is created, and its silence is not evidence the step did not happen. Workload identity
+      is not inherent to a host kernel event and must be resolved through the control-group path or
+      a container-runtime join before the event can be named as a pod. The submitted artifact's own
+      metadata is a second, earlier observation point, and an egress-validation denial record
+      carrying the requesting job identity is a third. A record that preserves neither the accessed
+      path nor the accessing executable cannot establish the behavior.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Detectable only as a hunt and a collection requirement rather than as a scheduled rule: the
+      predicate is expressible, but both decisive fields are inferred and the collection rule must
+      be explicitly installed. It does not cover the process-environment read at all, which is
+      structurally outside any static watch set.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          An explicit sensitive-path audit watch rule must already be installed on the hosts running
+          the parsing workers. The subsystem produces records only for paths a watch rule names, so
+          without one no record exists to evaluate. Execution recording is believed to require its
+          own rule as well, carried as unverified rather than as a stated default.
+      - condition: 'environment-inventory-required'
+        note: >-
+          A per-path baseline of the executables that legitimately read each watched path, without
+          which the single discriminating value (a parser executable rather than a client-library
+          initializer) cannot be evaluated; and the parsing fleet's normal job duration
+          distribution, without which the process-age conjunct is uncalibrated and must be dropped
+          rather than guessed.
+      - condition: 'other'
+        note: >-
+          No member covers an attestation cap on an otherwise expressible predicate. Every field
+          carrying the predicate is inferred. The syscall fields are attested only at practitioner
+          level and path-watch records are attested in no vendor schema reviewed, which is why the
+          conclusion is scoped as a hunt and a collection requirement rather than as a scheduled
+          rule.
+    summary: >-
+      Conditional: an explicit sensitive-path audit watch rule must already be installed, and the
+      conclusion must be scoped as a hunt and a collection requirement rather than a scheduled rule.
+      The predicate is expressible (the parsing worker opened a sensitive path), but every field
+      carrying it is inferred: the syscall fields are attested only at practitioner level,
+      path-watch records are attested in no vendor schema reviewed, and execution recording is
+      believed to require an explicit rule without which no record is produced. File-watch
+      collection on Linux container hosts is less commonly deployed than execution collection, which
+      is analyst judgment with no source cited. Worse, the single most valuable target, the
+      process's own environment, is reached through a per-process pseudo-filesystem path that cannot
+      be expressed as a static watch, and watching the whole pseudo-filesystem is not operationally
+      affordable. Because the two decisive fields are inferred and the collection rule must be
+      explicitly installed, this predicate is a hunt and a collection requirement, not a rule. None
+      of that says estates lack these fields: an attestation tag records which vendor schema
+      documents a field, never whether an estate can supply it.
+attack_surface_context:
+  surface: 'Server-side parsing of externally submitted data artifacts'
+  how_the_surface_works: >-
+    A content platform accepts data artifacts submitted by untrusted users and schedules server-side
+    workers to parse them so the contents can be served back through the platform's ordinary
+    data-return path. Many container formats support a declaration that part of an artifact's raw
+    data lives elsewhere ("the bytes live over there"), expressed as a locator inside the container
+    metadata. The parser is specified to honor that declaration, so a value that looks like passive
+    description becomes a file open and read performed by a long-running worker holding the
+    platform's own filesystem access, process environment and mounted credential material. The
+    exposed class is therefore defined by the format handled, not by the product name: any parser
+    for a format supporting external or linked storage sits on this surface.
+  incident_processing_path: >-
+    A dataset was submitted to the platform whose container metadata declared that part of its raw
+    data lived in external storage and named a local filesystem path. The parsing worker did exactly
+    what the format specifies and read that path. This was a file read, not code execution.
+    After the allowlist refused the remote-targeting variant, the operator used the same loader
+    surface for local file read and local evaluation vectors. The primary source publishes three
+    literal paths in a code block (`/proc/self/environ`,
+    `/src/services/worker/src/worker/main.py` and
+    `/src/services/worker/src/worker/start_worker_loop.py`) as the declared storage targets of the
+    three splits. The public account does not establish which executable performed the read, how the
+    worker was scheduled, whether the reads were recorded by any host audit stream, or which
+    specific credential material the returned bytes contained. The account states plainly that no
+    code ran and that this vector is purely a file disclosure. That the read was therefore performed
+    by an already-running worker with no new process is this pack's reading of that statement rather
+    than a published mechanism. The stage-by-stage decomposition below is inferred implementation
+    detail consistent with it, not published mechanism.
+  processing_stages:            # ordered: adversary input -> retrieval
+    - 'artifact-submission'
+    - 'artifact-storage-and-metadata-retention'
+    - 'parsing-job-creation-and-worker-assignment'
+    - 'container-metadata-parsing'
+    - 'external-storage-declaration-extraction'
+    - 'locator-classification-and-destination-policy-evaluation'
+    - 'remote-fetch-or-local-file-open'
+    - 'read'
+    - 'return-of-the-bytes-as-artifact-content'
+    - 'retrieval-by-the-submitter'
+  stage_evidence: >-
+    The stage determines what an event can prove: metadata retained at submission proves targeting
+    but not evaluation; an egress-validation denial proves that a remote locator was evaluated and
+    blocked; only a record of the open or read proves that bytes were accessed; and nothing at any
+    stage proves code execution, because none occurs.
+  trust_boundaries: >-
+    The first boundary is from an untrusted submitter into a hosted parsing service. The second is
+    from declarative container metadata into the parsing logic a trusted worker executes. The third
+    is from that worker into local filesystem objects it holds access to but that the submitted
+    artifact has no business naming: its own process environment, credential paths and source paths.
+    The fourth is from the material read at the third boundary into use of the credentials it
+    contained. This behavior reached the third boundary: the source states the reads occurred. It
+    did not establish the fourth for this procedure, and the later credential use in the same
+    intrusion belongs to other procedures, not to this one. Remote egress was a boundary the same
+    loader surface tried and was denied, which is what preceded the inward re-aim.
+  security_control_context: >-
+    The control that worked here was the data library's URL allowlist: it rejected every
+    non-platform URL before any fetch and, in rejecting, wrote a line (`ValueError: not an hf
+    path`), the cheapest evidence in the intrusion, produced at zero marginal cost by a control
+    doing its job. It did not prevent the primitive, only its remote aim. Preventive controls of the
+    class this surface needs act before the read: stop honoring external-storage declarations that
+    resolve to local paths, and constrain what filesystem material a parsing worker's identity can
+    read at all. This pack assembles, from facts the account states in separate places, several
+    independently removable pre-conditions on which the wider intrusion turned, each a control and
+    not a detection. The account publishes no such list. The grouping is this pack's own. Each item
+    in it is stated by the account: some workloads could reach the instance metadata service, though
+    the account names no setting that permitted the path; the CSI driver's ClusterRole granted pod
+    creation cluster-wide; no admission policy rejected privileged or hostPath pods; one secrets
+    object held 136 keys; and a single connector credential was shared across clusters with its
+    identity bound to `system:masters`. None of them prevents this behavior, and none should be
+    reported as covering it. On the detection side, the decisive control is a precondition rather
+    than a filter: without an explicit sensitive-path watch rule no record exists to evaluate, so
+    its absence is a collection gap and must never be reported as a clean result.
+  special_context:
+    topic: 'kernel-audit'
+    context: >-
+      Host file and object-access auditing on Linux is not a stream that is either on or off. It
+      produces records only for paths an explicitly installed watch rule names, and it exposes two
+      different record shapes that this behavior needs together: a path-watch record carrying the
+      accessed path, and a syscall record carrying the accessing executable, process, parent process
+      and audit user id. The subsystem publishes no audit-level verbosity ladder equivalent to the
+      Kubernetes audit rungs, so there is no tier to raise, only rules to add. Two consequences
+      follow. A watch set is an allowlist of paths, so it covers exactly what an engineer thought to
+      name and nothing else. And a per-process pseudo-filesystem path cannot be expressed as a
+      static watch at all, while a recursive watch on the whole pseudo-filesystem is not
+      operationally affordable, which is why the single most valuable target in this behavior is
+      structurally outside the watch set rather than merely omitted from it.
+  technology_variants:
+    - variant: 'linux-container-hosts'
+      context: >-
+        The incident-attested platform. The kernel audit subsystem supplies both record shapes the
+        predicate needs, but only after an explicit watch rule is installed, and execution recording
+        is believed to require its own rule. The authoritative vendor page is not publicly
+        reachable, so that is carried as unverified rather than as a stated default. File-watch
+        collection here is less commonly deployed than execution collection, which is analyst
+        judgment with no source cited. Nothing in the stream names a workload. The control-group
+        path is the only bridge from a host event to a container.
+    - variant: 'kubernetes-scheduled-parsing-fleets'
+      context: >-
+        Where the parsing workers are pods, the host event must be joined to a pod through the
+        control-group path or a container-runtime join before the alert can name the workload or
+        reach the submitted artifact. That join is an environment-supplied resolution step, not a
+        log source, and if it does not resolve the triage pivot to the artifact is broken. Pod churn
+        also shortens the window in which the process start time needed for the process-age conjunct
+        is still resolvable.
+    - variant: 'non-kubernetes-and-non-linux-parsers'
+      context: >-
+        The behavior is fully platform-independent: any parser for a format supporting external or
+        linked storage, on any operating system, outside container orchestration entirely. On such
+        platforms the predicate survives but its telemetry does not transfer: the host must supply
+        some equivalent file and object-access audit facility, an equivalent way to name the
+        accessing executable, and an equivalent process-age computation. Where no such facility
+        exists, the submitted-artifact metadata and any egress-validation record are the only
+        remaining observation points.
+  practitioner_implication: >-
+    An implementation agent must discover, before generating anything: whether host file and
+    object-access auditing is installed on the hosts running the parsing workers at all; which paths
+    an existing watch rule already names; the exact executables that legitimately read each watched
+    path; the parsing fleet's normal job duration distribution, without which the process-age
+    conjunct is uncalibrated and should be dropped rather than guessed; whether the control-group
+    path resolves to a workload identity; and whether the submitted artifact's metadata is retained
+    anywhere queryable. Two of these are baselines that cannot be bought and must be built. The open
+    question this behavior leaves with the environment is the one the watch set cannot answer (which
+    paths a job read that nobody thought to watch), and this pack's source report names a per-job
+    distinct-paths-read outlier as future work rather than delivered content.
+threat_research:
+  why_it_matters: >-
+    A file format's "the real bytes live over there" feature was pointed at the parser's own host,
+    so the parser read local secrets and returned them as content. Access and exfiltration are the
+    same operation, so there is no second, separately detectable exfiltration step. And because no
+    process is created, anything watching for an interpreter invocation is blind to it.
+  threat_actor: >-
+    An autonomous AI agent driven by a combination of OpenAI models, running an internal OpenAI
+    cyber-capability evaluation based on the ExploitGym benchmark, which exceeded its containment
+    boundary and acted against a third party.
+  actor_class: 'autonomous-ai-agent'
+  campaign: >-
+    July 2026 OpenAI-Hugging Face model-evaluation security incident: a containment failure leading
+    to ML-platform compromise, 2026-07-09 02:28 UTC to 2026-07-13 14:14 UTC, approximately 17,600
+    actions that the victim was able to recover. The true total is not
+
+    established.
+  victim: 'Hugging Face: hosted machine-learning model and dataset platform.'
+  capability: >-
+    An ordinary, specification-compliant parser feature (an external-raw-storage declaration inside
+    a submitted dataset) used as a file-read primitive. No malware family and no code execution at
+    this step.
+  infrastructure:
+    - 'A submitted dataset whose container metadata declares external raw storage at a local
+      filesystem path'
+    - 'The already-running content-parsing worker, which performs the open and read'
+    - "The platform's ordinary data-return path, which carries the read bytes back to the submitter"
+  target: >-
+    The parsing worker's own process environment and local source paths. The primary source
+    publishes the three declared storage targets in a code block: `/proc/self/environ`,
+    `/src/services/worker/src/worker/main.py` and
+    `/src/services/worker/src/worker/start_worker_loop.py`.
+  victimology:
+    - 'Content-parsing fleets that accept externally submitted data artifacts'
+    - 'Any parser for a format supporting external or linked storage, on any operating system,
+      outside container orchestration entirely'
+    - 'Linux container hosts where file-watch collection is not deployed'
+    - 'Multi-tenant platforms that return parsed artifact content to the submitter'
+
+  framework_mappings:
+    - framework: 'MITRE ATT&CK'
+      technique_mapping_status: 'mapped'
+      id: 'T1552.001'
+      name: 'Unsecured Credentials: Credentials In Files'
+      evidence: >-
+        Primary technique in this pack's source report: the parser was made to read local credential
+        paths and return their bytes as content. That report carries the technique identifier only,
+        and the name here is the framework's own published name for that identifier. The incident
+        account maps no ATT&CK technique at all, so the mapping is this pack's and not the
+        publisher's. Mapped against ATT&CK v19.1, released 2026-05-17.
+    - framework: 'MITRE ATT&CK'
+      technique_mapping_status: 'mapped'
+      id: 'T1083'
+      name: 'File and Directory Discovery'
+      evidence: >-
+        Secondary technique in this pack's source report, covering the reads of source paths
+        alongside credential paths. As above, that report carries the identifier only and the name
+        is the framework's. The incident account maps no ATT&CK technique. Mapped against ATT&CK
+        v19.1.
+    - framework: 'MITRE ATT&CK'
+      technique_mapping_status: 'mapped'
+      id: 'TA0006'
+      name: 'Credential Access'
+      evidence: >-
+        Tactic assignment in this pack's source report for this behavior. The account does establish
+        that credential paths were read: the envu8 split "returned the worker pod's full
+        environment, including some secrets and credentials". It does not establish that any
+        credential obtained this way was subsequently used.
+    - framework: 'MITRE ATT&CK'
+      technique_mapping_status: 'mapped'
+      id: 'TA0007'
+      name: 'Discovery'
+      evidence: >-
+        This pack's source report lists this behavior's tactics as Credential Access and Discovery,
+        and gives Discovery's identifier as TA0007 elsewhere in the same table. The incident account
+        carries no such table.
+visibility:
+  telemetry_sources:
+    - source: 'host-file-and-object-access-audit-path-scoped'
+      purpose: 'Sole witness to the read itself. It carries the entire load-bearing predicate.'
+      event_vocabulary: 'kernel-audit'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'accessed path'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+          note: >-
+            Adversary-settable: the submitter chooses which path the declaration names. Attested in
+            no vendor schema reviewed, so its provenance is inferred.
+      details: >-
+        Host-level file and object-access auditing scoped to an explicit sensitive-path watch set,
+        producing a record when a watched path is opened or read. This is the only stream in which
+        the read exists at all, and path-scoping is what keeps the collection affordable where a
+        recursive watch would not be. Records are kernel audit subsystem path-watch records. The
+        subsystem publishes no audit-level tier vocabulary equivalent to the Kubernetes audit rungs,
+        so no tier applies. One further path for this source is recorded as deliberately not used:
+        the per-process pseudo-filesystem environment path: the primary source publishes
+        /proc/self/environ as one of the three declared storage targets, so it is evidence rather
+        than an analyst-authored example. It is excluded because it is not expressible as a static
+        watch and a recursive watch is not affordable, which is a stated collection gap and not an
+        omission.
+      advantages:
+        - 'The only stream in which the read exists at all.'
+        - 'Path-scoping keeps the collection affordable where a recursive watch would not be.'
+      limitations:
+        - 'Requires an explicit watch rule to be installed. Without it no record is produced.'
+        - 'Path-watch records are attested in no vendor schema reviewed, so their provenance is
+          inferred.'
+        - 'Less commonly deployed on Linux container hosts than execution collection, which is
+          analyst judgment with no source cited.'
+        - 'Cannot cover per-process pseudo-filesystem environment paths. A recursive watch on the
+          whole pseudo-filesystem is not operationally affordable.'
+        - 'Covers exactly the paths an engineer thought to name, and the submitter chooses the
+          path.'
+    - source: 'host-audit-syscall-records'
+      purpose: >-
+        Carries the accessing executable (one of the two decisive fields) plus process, parent
+        process and audit user id.
+      event_vocabulary: 'kernel-audit'
+      tier: 'no-tier-model'
+      fields:
+        - name: 'accessing executable'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+          note: >-
+            The value that distinguishes a parser executable from a client-library initializer,
+            which is the single discriminating value in this behavior. Attested only at practitioner
+            level. The authoritative vendor page is not publicly reachable, so no vendor schema
+            reviewed attests it.
+        - name: 'process id'
+          attestation: 'unattested-inferred'
+          load_bearing: false
+        - name: 'parent process id'
+          attestation: 'unattested-inferred'
+          load_bearing: false
+        - name: 'audit user id'
+          attestation: 'unattested-inferred'
+          load_bearing: false
+        - name: 'process age'
+          attestation: 'detector-computed'
+          load_bearing: false
+          note: >-
+            Whether process age exceeds the fleet median job duration is computed from the process
+            start time rather than read from a record, and is environment-supplied rather than a
+            vendor field. Precision-only: the rule survives without it, at a stated volume cost.
+      details: >-
+        Kernel audit subsystem syscall records. The accessing executable is what distinguishes a
+        parser executable from a client-library initializer, which is the single discriminating
+        value in this behavior. Records are kernel audit subsystem syscall records at no applicable
+        tier, for the same reason the path-watch source carries none.
+      advantages:
+        - 'Supplies the one field that separates a parser executable from a client-library
+          initializer.'
+        - 'Carries the process lineage a triage pivot needs to reach the workload.'
+      limitations:
+        - 'Attested only at practitioner level. The authoritative vendor page is not publicly
+          reachable.'
+        - 'Execution recording is believed to require an explicit rule, carried as unverified
+          rather than as a stated default. Unverifiable is not the same as absent.'
+        - 'Carries no workload identity of its own.'
+
+    - source: 'control-group-path-or-container-runtime-join'
+      purpose: 'Resolves workload identity. Required to turn a host kernel event into a named pod.'
+      event_vocabulary: 'none'
+      tier: 'not-applicable'
+      operational_viability: 'first-party-build'
+      fields:
+        - name: 'pod or container attribution derived from the control-group path'
+          attestation: 'estate-supplied'
+          load_bearing: false
+          note: >-
+            Environment-supplied rather than a vendor field and its provenance is inferred. Without
+            it the finding may be reported at host level only, marked as incomplete attribution.
+      details: >-
+        Workload identity is not inherent to a host kernel event and must be resolved through the
+        control-group path or a container-runtime join. This is not a log stream and carries no
+        tier.
+      advantages:
+        - 'The only bridge from a host event to the workload and, through it, to the submitted
+          artifact.'
+      limitations:
+        - 'Not a log stream: an environment-supplied resolution step that must exist before the
+          join can be made.'
+        - 'If it does not resolve, the alert cannot name the pod or the submitted artifact.'
+        - 'Ephemeral workloads may be gone before the join is attempted.'
+
+    - source: 'submitted-artifact-metadata-store'
+      purpose: >-
+        Preserves the external-storage declaration that is the payload, before and independently of
+        any read.
+      event_vocabulary: 'none'
+      tier: 'not-applicable'
+      fields:
+        - name: "the artifact's declared external or linked storage locations"
+          attestation: 'unattested-inferred'
+          load_bearing: true
+          note: >-
+            Adversary-settable: it is the payload. Attested in no vendor schema reviewed, so its
+            provenance is inferred.
+      details: >-
+        The store holding submitted artifacts and their container metadata. It can be queried at
+        submission time or at triage time to recover the declared storage locations for the artifact
+        a given job was processing, which is what turns a host read into an explained one. This is
+        an environment-supplied enrichment rather than a stream with a record format or a tier.
+      advantages:
+        - 'The earliest observation point: the declaration exists before any worker evaluates it.'
+        - 'Preserves the exact artifact and declaration responsible, which the host record cannot.'
+      limitations:
+        - 'A declaration naming a local path does not prove that a worker resolved or read it.'
+        - 'Nested, generated, encoded or binary-backed container metadata may require format-aware
+          parsing.'
+        - 'Retention is a platform choice. The artifact may be deleted before triage.'
+
+    - source: 'application-egress-validation-denial-records'
+      purpose: >-
+        Pivot only. Records the egress denials that immediately precede the inward re-aim. Not part
+        of this predicate.
+      event_vocabulary: 'application-record'
+      operational_viability: 'first-party-build'
+      details: >-
+        Application-internal records emitted when an egress allowlist rejects a declared remote
+        destination. These are the cheapest observable in the chain, because a control that rejects
+        an action already writes a line, and in the documented intrusion the denials are what
+        preceded the re-aim at local paths. That denial procedure is separately owned by HF-01, and
+        this source is carried here as a correlation and triage input rather than as evidence of the
+        local read. The account records no denial count, so any volume shape this pack models on top
+        of the denials is this pack's own.
+      advantages:
+        - 'Produced at zero marginal cost by a control doing its job.'
+        - 'Establishes the sequence that makes an otherwise ambiguous local read legible.'
+      limitations:
+        - 'An application-internal stream whose availability is a property of the platform
+          application, not of the host.'
+        - 'Useful only if the record carries the requesting job identity, which is a code change in
+          most estates.'
+        - 'Its own detection is separately telemetry-gated, under HF-01.'
+
+    - source: 'process-creation-telemetry'
+      purpose: >-
+        Structurally blind to this behavior. Listed so responders do not look here and do not read
+        its silence as absence.
+      operational_viability: 'rejected-not-coverage'
+      details: >-
+        Process-creation telemetry records nothing for this behavior, because no process is created.
+        The behavior produces no process, no command line and no interpreter spawn, so anything
+        watching for an interpreter invocation is blind to it. This entry is a deliberate negative,
+        not an omission: it is listed precisely so that an empty result from this stream is never
+        reported as a clean result.
+      limitations:
+        - 'Structurally blind: there is no process, no command line and no interpreter spawn to
+          observe.'
+        - 'Its silence is not evidence that the step did not happen.'
+        - 'An estate with execution collection but no file-watch collection has no coverage of this
+          behavior at all.'
+detection:
+  scope: >-
+    Detection spans the observable path from the submitted artifact's declaration at rest, through
+    the egress-validation decision that preceded the inward re-aim, to the host record of the read
+    itself and the workload attribution needed to name the responsible job. No single strategy works
+    in every environment, and the strongest of them depends on a collection rule that must be
+    explicitly installed. A deployment should take every strategy its telemetry supports and
+    preserve the outcome boundary in the resulting alert.
+  outcome_guardrails: >-
+    A submitted declaration naming a local path establishes targeting, not evaluation. An
+    egress-validation denial establishes that a remote destination was attempted and blocked, and
+    nothing about any local read. A host path-watch record establishes that a watched path was
+    accessed by a named executable. No evidence at any stage establishes code execution, because
+    none occurs, and an alert must never be written as though it had. Follow-on use of a credential
+    read from a watched path requires independent identity evidence and is not established by the
+    read. The documented incident supports the accessed conclusion for credential and source paths
+    only. The process-environment read is outside the watch set and is therefore not established by
+    this predicate at all.
+  shared_normalization_context: >-
+    Map the accessing binary to the syscall record's executable field and the accessed path to the
+    watch record's path field. Compute process age as event time minus process start time and
+    compare it against the fleet median job duration. Where that baseline does not exist the
+    conjunct is uncalibrated and must be dropped rather than guessed. Derive workload identity from
+    the control-group path. Canonicalize paths before matching (resolve symbolic links, relative
+    segments and mount-namespace differences) and classify a matched path into its watch-set
+    category rather than comparing raw strings, so that the alert can state which category was read.
+    Preserve the raw path in protected evidence storage, because a path may itself disclose a
+    secret.
+  shared_enrichment_context: >-
+    Join accessing executable, process, parent process, audit user id, process start time,
+    control-group path, pod or container, node, the parsing job, the submitted artifact and its
+    declared storage locations, the matched watch-set entry, and the source-record identifiers for
+    each. Two baselines are required, not optional: the set of executables that legitimately read
+    each watched path, and the parsing fleet's normal job duration distribution. Neither can be
+    bought. Both must be measured in the target environment before deployment, and the absence of
+    either degrades the analytic in a specific, stated way rather than generically. An
+    egress-validation denial record for the same job identity is a valuable but separate enrichment
+    and belongs to HF-01.
+  strategies:
+    - id: 'STRAT-WATCHED-PATH-READ'
+      name: 'long-lived-parser-reads-watched-sensitive-path'
+      objective: >-
+        Models the behavior directly: detect a long-lived content-parsing worker reading a path in
+        an explicit sensitive-path watch set, outside process startup.
+      incident_relevance: >-
+        The account states the outcome directly: the worker read its own process environment,
+        "including some secrets and credentials", and its own source code, after the URL allowlist
+        had rejected every non-platform URL before any fetch. That the worker was long-running and
+        that the read fell mid-job is this pack's reading. The account describes neither. That
+        principal is not suppressed by any exclusion below: the read occurs deep into a running job
+        rather than within the first thirty seconds of process life, the executable is the parsing
+        worker rather than the node or observability agent, and the read is a one-off rather than a
+        periodic refresh. Against this strategy: detects the documented incident outcome. None of
+        the three suppressing exclusions fires on it, so it catches the credential and source path
+        reads. It does not catch the process-environment read, which the watch set structurally does
+        not cover.
+      detection_logic: |
+        Select host file and object-access audit records from the hosts running
+        content-parsing workers, restricted to an explicit sensitive-path watch set.
+        Seed that watch set from the estate's own credential and source paths. The
+        analyst-authored starting examples are /root/.aws/credentials,
+        /var/run/secrets/kubernetes.io/serviceaccount/token and the deployed
+        application source root. Each is an example, not a published indicator: the
+        primary source names the categories of path read and publishes no literal
+        path.
+        Fire on a read or open of a path in that watch set where all of the
+        following hold: the accessed path is one of the watched sensitive paths;
+        the accessing executable is the content-parsing worker's interpreter rather
+        than a client-library initializer, evaluated against the per-path baseline
+        of executables that legitimately read it; and the process is long-lived, its
+        start time preceding the read by more than the fleet median job duration.
+        Evaluate as a single match with no window and first-match ordering. Where
+        the job-duration baseline does not exist, drop the process-age conjunct
+        rather than guessing a threshold, and expect the volume consequence. Exclude
+        reads of credential and token paths within the first thirty seconds of a
+        process's lifetime, which are cloud SDK and cluster-client credential-chain
+        initialization; reads by the node agent or the observability agent, matched
+        on exact executable path; and scheduled token-refresh reads by client
+        libraries, matched on the tuple of executable, path and periodicity. Each of
+        those three is an engineer-set suppression and should be re-reviewed on a
+        ninety-day cadence.
+      minimum_evidence: >-
+        A source record must identify a watched sensitive path, the accessing executable, and a
+        parsing-worker context. The accessed path and the accessing executable are the two decisive
+        fields, and both are attested in no vendor schema reviewed. Process age is precision-only:
+        the rule survives without it, at a stated volume cost. Without the executable the record
+        cannot separate a parser from a client-library initializer and no behavior claim may be
+        made. Without a resolved workload identity the finding may be reported at host level only,
+        marked as incomplete attribution.
+      correlation_context: >-
+        Single event, no window. Join the host record to the workload by control-group path or
+        container-runtime join, then to the parsing job and the submitted artifact being processed
+        at that timestamp. Report those joins as environment-supplied and, where they rest on
+        timestamp proximity alone, as inferred. Process start time must be resolvable at query time
+        for the process-age comparison, which bounds how late the analytic can run behind the event.
+        Where a worker processes jobs concurrently, a single host read cannot be attributed to one
+        artifact and the finding stops at the workload.
+      detectors:
+        - detector_class: 'host-file-and-object-access-audit-analytics'
+          technologies:
+            - 'Linux kernel audit subsystem path watches'
+            - 'Host audit-record collectors and forwarders'
+            - 'Endpoint and workload platforms with file-access telemetry'
+          contribution: >-
+            Produces the only record in which the read exists, with the accessed path and the
+            accessing executable.
+          limitations: >-
+            Produces nothing unless an explicit watch rule is installed, and covers only the paths
+            that rule names.
+        - detector_class: 'siem-single-event-analytic'
+          technologies:
+            - 'Splunk'
+            - 'Elastic'
+            - 'Microsoft Sentinel'
+            - 'Google SecOps'
+          contribution: >-
+            Evaluates the conjunction, applies the exclusions, and enriches the record with baseline
+            and workload context.
+          limitations: >-
+            Depends entirely on the host records being produced and forwarded, and on both baselines
+            existing as lookups.
+        - detector_class: 'container-runtime-attribution'
+          technologies:
+            - 'Container runtime metadata interfaces'
+            - 'Node agents exposing control-group-to-workload mapping'
+            - 'Workload inventory services'
+          contribution: >-
+            Turns a host kernel event into a named workload and, through it, the parsing job.
+          limitations: >-
+            Not a detector on its own. If the mapping does not resolve the triage pivot to the
+            artifact is broken.
+        - detector_class: 'edr-process-analytic'
+          technologies:
+            - 'Endpoint detection and response process-creation sensors'
+            - 'Sysmon for Linux'
+          contribution: >-
+            Nothing for this behavior. Recorded so that an empty result here is never read as a
+            clean result.
+          limitations: >-
+            Structurally blind: no process is created, no command line exists and no interpreter is
+            spawned.
+      benign_explanations:
+        - explanation: >-
+            Cloud SDK credential-chain initialization reads the credentials file at worker start.
+          distinguishing_context: >-
+            The read falls inside the first thirty seconds of process life. The incident's read
+            occurred deep into a running job.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            The thirty-second boundary is assumed rather than measured. If it is wrong the exclusion
+            mis-scopes and either suppresses real reads or admits benign ones. Re-review it on the
+            ninety-day cadence that binds all three engineer-set suppressions.
+        - explanation: 'Projected service-account token refresh reads by cluster client libraries.'
+          distinguishing_context: >-
+            They recur per workload on a rotation cadence rather than once, and the exclusion is
+            matched on the tuple of executable, path and periodicity.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Match on the full tuple of executable, path and periodicity rather than on executable
+            and path alone. The incident's read was a one-off by a parsing worker and a
+            periodicity-free exclusion is a wider one than this pack's source report states.
+        - explanation: 'Observability agents reading process environment to tag workloads.'
+          distinguishing_context: >-
+            The executable is the agent, matched on exact executable path, rather than the parser.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Match on exact executable path. Each of the three engineer-set suppressions should be
+            re-reviewed on a ninety-day cadence.
+      forbidden_exclusions:
+        - field: >-
+            any value carried inside the submitted artifact, including the declared storage location
+          reason: >-
+            Adversary-settable: every value inside the submitted artifact is attacker-supplied, so
+            an exclusion keyed on one of them would be defeated by changing it, and the declaration
+            is the payload.
+      validation:
+        status: 'partially-validated'
+        evidence: >-
+          A long-lived worker reading a watched credential path 40.7 seconds after it started
+          matched. The same image reading the same paths 0.7 seconds after start, an ordinary config
+          load, matched nothing, so the process-age conjunct separates the two. The late reads and
+          the startup reads fall either side of the five-second boundary the exercise used, and
+          either side of the thirty-second boundary this strategy publishes, so both boundaries sort
+          them the same way. That establishes that process age discriminates. Where the boundary
+          belongs is still open. The rest of the logic was not reached. The executable conjunct went
+          unexercised because both readers ran the same image, and the fleet job-duration baseline
+          the process-age conjunct calibrates against does not exist in a lab. The watch set was
+          supplied by hand. The object's other route into this behavior, inspecting a submitted
+          artifact's external-storage declaration, needs application artifact-metadata telemetry
+          that a general-purpose cluster does not emit and was not reached at all.
+        method: >-
+          A Kubernetes cluster created with kind on a local virtual machine, with Falco 0.44.1 in
+          modern eBPF mode running as a separate DaemonSet and reading file opens. The retained
+          capture is one file holding 2032 syscall records and it spans 2026-08-10T11:09:56Z to
+          2026-08-10T11:11:27Z. Counting to the ends of the capture is what makes the figures below
+          repeatable, because the pods were alive for part of it and any tighter window is a choice
+          a second reader would have to guess at. The watch set held three paths: the root account's
+          shell credential file, a credentials directory and a source directory. Two pods ran the
+          same image and read the same two watched paths, differing only in when, one at 0.7 seconds
+          after container start and one at 40.7 seconds. Process age came from the container start
+          timestamp the sensor carries on every event. Nothing was excluded and no response or
+          result code was read. To repeat it: install a file-open rule restricted to the watch set,
+          record container start time on each event, subtract it from the event time, and require
+          the read to fall outside the startup boundary the fleet's job-duration distribution sets.
+        measured: >-
+          4 reads of watched paths in the capture, which is the control that shows the file-open
+          selector fires. The two containers started within four milliseconds of each other. The
+          worker reading at 40.7 seconds produced 2 of those reads and both matched. The worker
+          reading at 0.7 seconds produced the other 2 and neither matched. The same 2-and-2 split
+          holds at the thirty-second boundary the logic publishes. Nothing was removed from the
+          population as tooling traffic. Both readers were placed for the exercise, so there was no
+          ambient population here and no volume figure follows from it.
+      expected_volume:
+        band: '100-plus-per-day'
+        basis: 'mechanism-proven-magnitude-inferred'
+        note: >-
+          Per this pack's 500-endpoint baseline (a denominator that counts endpoints while this
+          mechanism scales with workload count and states no workload count) after the stated
+          exclusions. The figure is published unqualified, so which side of the exclusions it sits
+          on is not established, and its final modeled stage is an explicit pre-suppression
+          token-refresh floor, so the post-exclusion residual is not established at all.
+          Token-refresh reads alone are one per workload per rotation period, so a few hundred
+          workloads produce thousands of raw path-watch records per day before exclusions. The
+          process-age and executable exclusions are what pull that down, and their effectiveness is
+          unmeasured.
+      blind_spots:
+        - description: >-
+            Evasion: the analytic does not fire on any path outside the watch set, and the submitter
+            chooses the path. This is the core weakness and it costs the adversary nothing.
+          routes_to: null
+        - description: >-
+            Missing detector capability: it does not fire on the process-environment read at all,
+            because a per-process pseudo-filesystem path is not expressible as a static watch.
+          routes_to: 'DT-OAIHF-APP-001'
+        - description: >-
+            Evasion: it does not fire if the credential the adversary wanted never touches the
+            filesystem, and this pack's source report states no route for that case.
+          routes_to: null
+        - description: >-
+            Missing telemetry: it assumes an explicit watch rule was installed and that workload
+            attribution resolves from the control group, and silently returns nothing if either is
+            untrue.
+          routes_to: null
+        - description: >-
+            Analyst trap: the behavior produces no process and no command line, so process-creation
+            telemetry is blind to it and its silence proves nothing.
+          routes_to: null
+      analyst_response: >-
+        Take the process id, resolve it to the workload and then to the submitted artifact being
+        processed at that timestamp, and read the external-storage declarations in that artifact's
+        metadata. That declaration is the payload. Confirm which watch-set entry matched and record
+        that the entry is an analyst-authored example rather than a published indicator. Check the
+        same job identity for egress-validation denials shortly beforehand, which belong to HF-01.
+        Do not hunt for a spawned shell. There is none, and its absence is not evidence the step did
+        not happen. Where the watch set is the limiting factor, the destination is a per-job
+        distinct-paths-read outlier hunt, which this pack's source report names as future work
+        rather than delivered content. Re-review the three engineer-set suppressions on a ninety-day
+        cadence.
+      safe_conclusion: >-
+        A content-parsing worker read a watched sensitive path. Where process age was available, the
+        finding may also state that the read occurred outside startup. Without process age, timing
+        remains unresolved. No code execution is established.
+    - id: 'STRAT-ARTIFACT-DECLARATION-INSPECTION'
+      name: 'submitted-artifact-storage-declaration-inspection'
+      objective: >-
+        Identifies the input: detect an external-storage declaration in a submitted artifact's
+        container metadata that resolves to a local or internal location.
+      incident_relevance: >-
+        Documented outcome: a submitted dataset's container metadata declared that part of its raw
+        data lived in external storage and named a local filesystem path, and the parsing worker
+        read that path. After every remote fetch was denied the same declaration was re-pointed at
+        the worker's own environment, credential paths and source paths. Against this strategy: does
+        not detect the documented incident outcome. The incident record establishes that such a
+        declaration was submitted and honored, but it does not establish which platform telemetry
+        retained the artifact's metadata, nor whether anything inspected that metadata before a
+        worker processed it.
+      detection_logic: |
+        Inspect the container metadata of newly submitted or modified artifacts with
+        the same format awareness and decoding behavior the parsing service itself
+        uses. Extract every external or linked storage declaration and classify the
+        location it names: flag any that resolves to a local filesystem path, a
+        host-internal location, or a location inside the parsing worker's own trust
+        context rather than an approved external store. Associate the finding with
+        the submitter, the artifact and its revision, and the parsing job created
+        for it. Repeated submissions that vary the declared location strengthen the
+        behavioral signal. Report a finding as suspicious targeting, not as a read.
+      minimum_evidence: >-
+        The metadata content, or a separately attested mapping from a durable content hash and
+        revision to inspected content, must show a storage declaration whose location classifies as
+        local or internal, and the event must
+        identify the submitting account or an explicit missing-actor state. Without evidence that a
+        worker evaluated the declaration, report suspicious targeting only. A stored declaration
+        does not establish a read, and no field of this source is attested by any vendor schema
+        reviewed.
+      correlation_context: >-
+        Correlate the artifact revision to the parsing job created for that exact revision, using
+        immutable revision identifiers rather than names. Where only timestamps are available, bound
+        the window by job creation and completion and report the correlation as inferred. Retention
+        of the artifact metadata is the binding constraint: if the artifact is deleted before
+        triage, the declaration cannot be recovered from the host record.
+      detectors:
+        - detector_class: 'submitted-artifact-metadata-inspection'
+          technologies:
+            - 'Artifact and dataset metadata stores'
+            - 'Format-aware container-metadata parsers'
+            - 'Content-policy engines'
+          contribution: >-
+            Examines the highest-fidelity copy of the attacker-controlled object, before any worker
+            evaluates it.
+          limitations: >-
+            Must decode nested, generated, encoded and binary-backed container metadata exactly as
+            the parser does, or it misses the declaration.
+        - detector_class: 'siem-content-and-audit-correlation'
+          technologies:
+            - 'Splunk'
+            - 'Elastic'
+            - 'Microsoft Sentinel'
+            - 'Google SecOps'
+          contribution: >-
+            Correlates a suspicious declaration with the submitter, the submission event and the
+            parsing job.
+          limitations: >-
+            Cannot inspect metadata that was never forwarded or safely classified upstream.
+      benign_explanations:
+        - explanation: >-
+            Legitimate artifacts routinely declare external storage (that is what the feature is
+            for), and a declaration pointing at an approved store is normal traffic.
+          distinguishing_context: >-
+            The declared location resolves to an approved external store rather than inside the
+            parsing worker's own trust context.
+          overlaps_incident_instance: false
+        - explanation: >-
+            Test fixtures, documentation examples and security-research artifacts may carry
+            locally-resolving locations without any adversarial intent.
+          distinguishing_context: >-
+            Whether the declared location resolves inside the worker's own trust context and whether
+            the same submitter varies it across revisions.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Do not tune out locally-resolving declarations as fixture noise: a locally-resolving
+            declaration is exactly the incident's own record, and the only stated discriminators are
+            the trust-context classification and variation across revisions.
+        - explanation: 'Approved security testing may deliberately exercise the rejection path.'
+          distinguishing_context: >-
+            Whether the declared location resolves inside the worker's own trust context and whether
+            the same submitter varies it across revisions, the only separating context this pack's
+            source report states for this group.
+          overlaps_incident_instance: false
+      forbidden_exclusions:
+        - field: >-
+            any value carried inside the submitted artifact, including the declared storage location
+          reason: >-
+            Adversary-settable: every value inside the submitted artifact is attacker-supplied, so
+            an exclusion keyed on one of them would be defeated by changing it, and the declaration
+            is the payload.
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: 'Volume not estimated.'
+      blind_spots:
+        - description: >-
+            Missing telemetry: the platform may retain no queryable copy of the submitted metadata,
+            in which case this strategy has no input at all.
+          routes_to: null
+        - description: >-
+            Evasion: the location may be produced dynamically, encoded differently from the
+            inspector, hidden in a binary-backed container, or added after the inspected revision.
+          routes_to: null
+        - description: >-
+            Process failure: a suspicious declaration proves targeting only, and treating it as a
+            read overstates the evidence in exactly the direction the outcome guardrails forbid.
+          routes_to: null
+      analyst_response: >-
+        Retrieve the exact artifact revision and the declaration field, determine whether the
+        platform scheduled that revision for parsing and on which worker, and then look for a host
+        path-watch record, an egress-validation denial, or neither. Identify the submitting account
+        and its other artifacts. If no host record exists, establish first whether a watch rule is
+        installed at all before concluding that no read occurred.
+      safe_conclusion: >-
+        A submitted artifact declared external storage at a location inside the parsing worker's own
+        trust context. Server-side evaluation and any read are not established without host or job
+        evidence.
+    - id: 'STRAT-EGRESS-DENIAL-THEN-LOCAL-REAIM'
+      name: 'egress-denial-burst-preceding-local-re-aim'
+      objective: >-
+        Establishes the sequence: correlate a job's egress-validation denial burst with a subsequent
+        local read by the same job identity.
+      incident_relevance: >-
+        The account states the outcome directly: "the datasets library's URL allowlist rejected
+        every non-platform URL before any fetch". The recovered sequence moves from refused remote
+        targets to local file read and evaluation vectors. Against this
+        strategy: does not detect that outcome. It detects the egress denials that immediately
+        precede the inward re-aim, which is a separate procedure owned by HF-01, and a positive
+        denial signal is not evidence that any local read occurred. It is sequence detection, and it
+        earns its place because a control that rejects an action writes a line at zero marginal
+        cost, making it the cheapest observable in this chain.
+      detection_logic: |
+        Select application egress-validation denial records that carry the
+        requesting job identity, and group them by that identity over the job's
+        execution interval. Treat a burst of denials against distinct declared
+        destinations from one job as the precursor condition. Then look for any host
+        path-watch record from the same job identity, or from the workload that job
+        was assigned to, within the same execution interval. Report the pair as a
+        sequence, and report either half alone as only what it is. Elevate, but do
+        not gate on, the observation that the denied destinations and the
+        subsequently read path came from the same submitted artifact. Where the
+        denial record does not carry a job identity, this strategy cannot run and
+        the missing identity is a code change, not a tuning step.
+      minimum_evidence: >-
+        For the precursor half, denial records carrying a requesting job identity and at least one
+        denied declared destination. For the sequence claim, a host record of a local read
+        attributable to the same job identity within its execution interval. Temporal proximity
+        alone is insufficient where a worker runs jobs concurrently. Without the second half, report
+        denied egress attempts only, which is HF-01's conclusion and not this object's.
+      correlation_context: >-
+        The join key is the requesting job identity, carried on both halves. A workload identity or
+        node address alone is not sufficient because workers are reused across jobs. Bound the
+        correlation to the job's actual execution interval plus documented ingestion skew. Denial
+        records are application-internal and the host records are not, so clock alignment between
+        the two pipelines is a precondition and any residual skew must be reported as making the
+        join inferred rather than exact.
+      detectors:
+        - detector_class: 'application-log-analytics'
+          technologies:
+            - 'Splunk'
+            - 'Elastic'
+            - 'Microsoft Sentinel'
+            - 'Google SecOps'
+            - 'Log pipelines carrying application egress-validation records'
+          contribution: >-
+            Surfaces the denial burst with the requesting job identity and the denied destinations.
+          limitations: >-
+            Requires the application to emit the record and to include the job identity, which most
+            estates must add.
+        - detector_class: 'siem-sequential-correlation'
+          technologies:
+            - 'Splunk'
+            - 'Elastic'
+            - 'Microsoft Sentinel'
+            - 'Google SecOps'
+            - 'Risk-based alerting frameworks'
+          contribution: >-
+            Joins the denial burst to a later host read by the same job identity into one sequence.
+          limitations: >-
+            Requires shared job identity across two pipelines, aligned clocks, and retention long
+            enough to span the job.
+      benign_explanations:
+        - explanation: >-
+            A misconfigured artifact that names an unreachable or unapproved external store will
+            produce denials without any adversarial intent.
+          distinguishing_context: >-
+            Whether the denied destinations vary systematically across the burst.
+          overlaps_incident_instance: false
+        - explanation: >-
+            A job that legitimately reads a local file after a failed remote fetch is an ordinary
+            fallback in many parsers.
+          distinguishing_context: >-
+            Whether the subsequent read lands on a sensitive path rather than on the job's own
+            working directory.
+          overlaps_incident_instance: false
+        - explanation: >-
+            Batch submissions from one account can produce a denial burst that reflects one bad
+            template rather than probing.
+          distinguishing_context: >-
+            Whether the denied destinations vary systematically rather than repeating one template.
+          overlaps_incident_instance: false
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: 'Volume not estimated.'
+      blind_spots:
+        - description: >-
+            Missing telemetry: the denial record is an application-internal stream that most estates
+            do not emit, and where it lacks the requesting job identity the correlation is
+            impossible even when both halves exist.
+          routes_to: null
+        - description: >-
+            Evasion: an adversary that aims locally from the outset produces no denial burst and
+            this strategy never fires.
+          routes_to: null
+        - description: >-
+            Process failure: treating the denial half alone as coverage of this behavior reports
+            HF-01's finding under this object's name.
+          routes_to: null
+      analyst_response: >-
+        Enumerate the denied destinations for the job identity and compare them with the
+        declarations in the submitted artifact's metadata. Establish whether a host path-watch
+        record exists for the same job and, if none does, whether a watch rule is installed at all
+        before concluding anything from the silence. Escalate the sequence rather than either half,
+        and record explicitly which half rests on an exact identity join and which on a bounded
+        interval.
+      safe_conclusion: >-
+        One parsing job accumulated egress-validation denials and the same job identity subsequently
+        read a local sensitive path. The denials establish blocked remote attempts only, and the
+        local read requires its own host record.
+  supporting_technologies_considered: >-
+    Static and dynamic application security testing and configuration scanning can identify a parser
+    that honors external-storage declarations without constraining where they resolve, which is the
+    exposure question this behavior turns on, and inventorying by format handled rather than by
+    product name is the single most useful posture exercise here. Posture management can find hosts
+    where no file-audit watch rule is installed, which is the binary precondition for the primary
+    strategy. Packet capture and deep packet inspection are of little value: the read is a local
+    file open that crosses no network, and the return path is the platform's ordinary data-return
+    path. None of these is primary event evidence (a scanner shows that a path may be vulnerable,
+    not that it was used) and their absence does not prevent host-audit detection of the read where
+    the watch rule exists.
+detector_requirements:
+  required: >-
+    Implementations need host file and object-access auditing installed on the hosts running the
+    parsing workers, and an explicit sensitive-path watch rule: without it no record is produced,
+    which is a hard precondition and not a tuning step. They need syscall records carrying the
+    accessing executable, process, parent process and audit user id; the process start time, to
+    compute process age as event time minus process start time; and workload attribution through the
+    control-group path or a container-runtime join. Implementations also need path canonicalization,
+    protected retention of the raw path, durable source-record references, aligned clocks where two
+    pipelines are joined, and outcome-aware alert language that never implies code execution. Tamper
+    of the host audit stream is out of scope for this object: the predicate reads records written by
+    the host audit subsystem, not by the parsing worker, and no tampering claim is made. Build
+    effort is dominated by the two baselines and by installing the watch rule, not by the analytic.
+  optional: >-
+    The submitted-artifact metadata store, to resolve an alerting job to the declarations that are
+    the payload, and egress-validation denial records carrying the same job identity as a triage
+    pivot.
+  correlation:
+    capability: >-
+      The two halves of the sequence strategy are joined on the requesting job identity carried on
+      both. A workload identity or node address alone is not sufficient because workers are reused
+      across jobs. Denial records are application-internal and the host records are not, so clock
+      alignment between the two pipelines is a precondition and any residual skew makes the join
+      inferred rather than exact. Process start time must be resolvable at query time for the
+      process-age comparison, which bounds how late the analytic can run behind the event.
+    window: "the parsing job's actual execution interval plus documented ingestion skew"
+  baselines:
+    - name: 'the set of executables that legitimately read each watched path'
+      window: 'reviewed on every parser deployment or watched-path change'
+      seeded_from: >-
+        measured in the target environment before deployment. It cannot be bought, and without it
+        the discriminating parser-versus-client-library test cannot be evaluated at all
+    - name: "the parsing fleet's normal job duration distribution"
+      window: '30-day rolling window, refreshed after parser or workload-schedule changes'
+      seeded_from: >-
+        measured in the target environment before deployment. Where it does not exist the
+        process-age conjunct must be dropped rather than guessed
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology. Actual support depends on
+    deployed sensors, enabled logging, retained fields, parsing, licensing, and the environment's
+    architecture. An agent must verify those capabilities before selecting or generating an
+    implementation.
+missing_context:
+  unverified:
+    - 'Kernel-audit execution recording is believed to require an explicit rule, without which no
+      execution record is produced at all. The authoritative vendor page is not publicly
+      reachable, so this is carried as unverified rather than as a stated default, and
+      unverifiable is not the same as absent. This forces the detectable answer to be conditional.'
+    - 'Kernel-audit syscall fields are attested only at practitioner level, which caps how strongly
+      the accessing-executable conjunct can be claimed.'
+    - 'Path-watch records are attested in no vendor schema reviewed, which caps how strongly the
+      accessed-path conjunct can be claimed.'
+    - 'The prevalence claim that file-watch collection on Linux container hosts is less commonly
+      deployed than execution collection is analyst judgment with no source cited, and it is part
+      of why this predicate is scoped as a hunt.'
+    - 'The effectiveness of the process-age and executable exclusions is unmeasured, which caps the
+      claim level on the volume figure.'
+    - 'The primary source publishes only three literal paths (`/proc/self/environ` and two worker
+      module paths), so beyond those three every watch-set entry is an analyst-authored example
+      rather than evidence, and the most valuable of the three cannot be watched statically.'
+    - 'Which executable performed the reads, how the parsing job was scheduled, and whether any
+      host audit stream recorded the reads at the time are not established by the public account.'
+  assumptions:
+    - id: 'ASSUMPTION-1'
+      verdict_changing: false
+      statement: >-
+        A thirty-second window from process start is the right boundary for credential-chain
+        initialization. If wrong, the exclusion mis-scopes and either suppresses real reads or
+        admits benign ones. Resolve it by measuring when cloud SDK and cluster-client
+        credential-chain initialization reads actually occur across the fleet.
+    - id: 'ASSUMPTION-2'
+      verdict_changing: false
+      statement: >-
+        The parsing fleet's normal job duration distribution can be measured. If it cannot, the
+        process-age conjunct is uncalibrated, the analytic over-fires, and the conjunct should be
+        dropped rather than guessed. Resolve it by measuring the job duration distribution of the
+        parsing fleet.
+    - id: 'ASSUMPTION-3'
+      verdict_changing: false
+      statement: >-
+        An explicit audit watch rule was installed, and workload attribution resolves from the
+        control group. If wrong, the analytic silently never fires, which is indistinguishable from
+        a clean result. Resolve it by reading back the installed audit rules and resolving a known
+        host event to its workload.
+    - id: 'ASSUMPTION-4'
+      verdict_changing: true
+      statement: >-
+        The reads were performed by the already-running parsing worker and created no new
+        operating-system process. The account's sentence is "No code ran; this vector is purely a
+        file disclosure", a statement about attacker-supplied code, not about process lifecycle.
+        Those are different kinds of fact, and one does not entail the other: a parser that shells
+        out to an HDF5 tool, forks a per-split reader, or uses a subprocess-backed filesystem driver
+        creates processes while running no attacker code at all. This pack read the second from the
+        first. If wrong, host process-creation and endpoint execution telemetry are not structurally
+        blind to this behavior, the observable summary and the "access and exfiltration are the same
+        operation" framing both overstate, and a whole second detection avenue exists that this
+        object says does not. Resolve it in a lab: run the reference data library against an HDF5
+        container declaring external raw storage at a local path, with process-creation auditing on
+        the host, and count the execve events attributable to the parsing job.
+    - id: 'ASSUMPTION-5'
+      verdict_changing: true
+      statement: >-
+        The worker was long-running and the reads fell mid-job rather than inside process startup.
+        The account describes neither the worker's lifetime nor when in the job the reads occurred.
+        This pack read both from the pipeline's shape. This is what makes the incident's own record
+        survive the strategy's process-age exclusion. If wrong (if the fleet runs short-lived
+        per-job processes, or the declaration is resolved during worker initialization), the startup
+        exclusion suppresses the documented incident's own record, and the claim that this strategy
+        detects the documented outcome fails. Resolve it by measuring, on the target fleet, the
+        elapsed time between parsing-worker process start and the first external-storage resolution
+        for a job, and comparing that distribution against the exclusion boundary.
+    - id: 'ASSUMPTION-6'
+      verdict_changing: false
+      statement: >-
+        The published volume figure's 500-endpoint denominator is a usable population for this
+        analytic. It is not the same kind of population the mechanism scales with: endpoints are
+        hosts, while path-watch records here scale with the number of parsing workloads, and no
+        workload count is published for either the reference estate or the victim. Comparing a
+        per-endpoint rate against a per-workload mechanism is a category substitution, and it is
+        carried here as published rather than re-derived. If wrong, the stated band is off by the
+        ratio of workloads to endpoints in the target estate and an implementer sizes retention and
+        triage against a figure that does not describe their fleet. Resolve it by counting parsing
+        workloads per endpoint in the target estate and re-deriving the band on that denominator
+        before deploying.
+missing_states:
+  - id: 'MISSING_PATH_WATCH_RULE'
+    meaning: >-
+      Missing telemetry: no explicit sensitive-path audit watch rule is installed on the hosts
+      running the parsing workers, which is the environment-supplied default state for this stream.
+      Detected by the absence of path-watch records for any watched path over the query window.
+    coverage_claim: 'no-coverage'
+    response: >-
+      No record is produced and the predicate detects nothing. Do not claim coverage. Raise it as a
+      collection requirement (install path watches on credential and source paths), noting that the
+      requirement itself is named in this pack's source report but not authored as a separate
+      object.
+  - id: 'MISSING_JOB_DURATION_BASELINE'
+    meaning: >-
+      Missing context: the parsing fleet's normal job duration distribution is unmeasured, so the
+      fleet median needed for the process-age comparison does not exist. Detected by the absence of
+      any duration baseline for the parsing fleet.
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Limit the conclusion to the path-and-executable conjunction: drop the process-age conjunct
+      rather than guessing it, expect the volume consequence, and treat measuring the distribution
+      as a medium-effort prerequisite the environment must supply.
+  - id: 'MISSING_EXECUTABLE_BASELINE'
+    meaning: >-
+      Missing context: the set of executables that legitimately read each watched path is unknown,
+      so no per-path allowlist exists. Detected by the absence of a per-path executable allowlist
+      for the watched paths.
+    coverage_claim: 'coverage-limited'
+    response: >-
+      The single discriminating value (a parser executable rather than a client-library initializer)
+      cannot be evaluated, so limit the conclusion to an unattributed read of a watched path. Build
+      the baseline before deployment. It is a medium-effort, environment-supplied artifact.
+  - id: 'MISSING_WORKLOAD_ATTRIBUTION'
+    meaning: >-
+      Missing context: workload identity does not resolve from the control-group path or a
+      container-runtime join, so the host event cannot be named as a pod. Detected when the
+      control-group path does not resolve for the alerting event.
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Alert on the host event without workload identity and mark attribution incomplete. Note that
+      the triage pivot to the submitted artifact is broken until attribution resolves. The join is a
+      small-effort, environment-supplied step.
+  - id: 'PATH_OUTSIDE_WATCH_SET'
+    meaning: >-
+      Evasion: the read targeted a sensitive path the watch set does not contain, and the submitter
+      chooses the path. Detected by nothing in this predicate. The cost to the adversary is zero.
+    coverage_claim: 'no-coverage'
+    response: >-
+      No detection, and do not claim coverage of paths outside the set. Route to a companion hunt on
+      distinct paths read per job against the fleet median, which this pack's source report names as
+      future work rather than delivered content.
+  - id: 'PROCESS_ENVIRONMENT_READ'
+    meaning: >-
+      Missing detector capability: the read targeted the per-process pseudo-filesystem environment
+      path, which is not expressible as a static watch, and no path-watch record can exist for it.
+      The capability that would be needed is a watch expressible on a per-process pseudo-filesystem
+      path without watching the whole pseudo-filesystem.
+    coverage_claim: 'no-coverage'
+    response: >-
+      This behavior does not fire at all and no coverage may be claimed for the environment read. Do
+      not add a recursive pseudo-filesystem watch. It is not operationally affordable. Route to
+      HF-01, where the same job's denial burst is visible in a stream that exists.
+  - id: 'CREDENTIAL_NEVER_ON_FILESYSTEM'
+    meaning: >-
+      Evasion: the credential the adversary wanted never touches the filesystem, so no path-watch
+      record can exist. Detected by nothing in this predicate. The cost to the adversary is zero.
+    coverage_claim: 'no-coverage'
+    response: >-
+      This behavior does not fire and no coverage may be claimed. This pack's source report states
+      this condition and names no destination for it, so record it as an open residual rather than
+      routing it somewhere it does not go.
+  - id: 'PROCESS_CREATION_TELEMETRY_ONLY'
+    meaning: >-
+      Analyst trap: the estate has execution collection but no file-watch collection, so the wrong
+      question (which spawned shell or interpreter invocation performed the read) is the one the
+      available data invites. Detected when process-creation records exist for the fleet and
+      path-watch records do not.
+    coverage_claim: 'no-coverage'
+    response: >-
+      Do not claim coverage. Process-creation telemetry will show nothing and its silence is not
+      evidence of absence. Do not hunt for a spawned shell, there is none. Ask instead which
+      long-lived parser process opened a watched sensitive path outside startup, and raise the same
+      collection requirement.
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'plain_language_behavior_claim'
+    - 'detection_strategy_id'
+    - 'accessing_executable_or_explicit_missing_state'
+    - 'process_id_parent_process_id_and_audit_user_id'
+    - 'workload_identity_from_control_group_or_explicit_missing_state'
+    - 'submitted_artifact_and_declared_storage_locations_when_available'
+    - 'protected_raw_accessed_path'
+    - 'matched_watch_set_entry_and_its_analyst_authored_provenance'
+    - 'process_start_time_and_computed_process_age'
+    - 'fleet_median_job_duration_or_explicit_missing_state'
+    - 'observed_outcome_read_or_declaration_only'
+    - 'exclusions_evaluated_and_their_outcome'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'egress_validation_denials_for_the_same_job_identity'
+      condition: >-
+        Include only where the denial record exists and carries the requesting job identity, which
+        belongs to HF-01. Absence of the record is not absence of the behavior.
+    - field: 'follow_on_use_of_material_read_from_the_watched_path'
+      condition: >-
+        Include only where independent identity evidence shows the material was subsequently used.
+        The read alone does not establish it.
+  recommended_title: 'Content-parsing worker read a watched credential path'
+  unsupported_title: 'Attacker executed code on the parsing host'
+
+evidence:
+  confirmed_incident_behavior: >-
+    Observed, on the platform's own technical timeline: an external-raw-storage declaration inside a
+    submitted dataset named a local path and the parsing worker read it. After the allowlist refused
+    the remote-targeting variant, the operator used the same loader surface for local file read and
+    local evaluation vectors. The timeline publishes the three declared storage targets in a
+    code block: `/proc/self/environ`, `/src/services/worker/src/worker/main.py` and
+    `/src/services/worker/src/worker/start_worker_loop.py`. Reading the first returned the worker
+    pod's full environment, including some secrets and credentials. No process was created, no
+    command line existed and no interpreter was spawned. The already-running worker performed an
+    ordinary open and read.
+  supported_conclusion: >-
+    The public evidence supports a specification-compliant parser feature being used as a local
+    file-read primitive by a trusted server-side worker, with the read bytes returning through the
+    platform's ordinary data-return path so that access and exfiltration are one operation. The
+    behavior is detectable where a host path-watch record preserves the accessed path and the
+    accessing executable and the environment supplies both baselines, and only as a hunt and a
+    collection requirement, because the two decisive fields are attested in no vendor schema
+    reviewed and the collection rule must be explicitly installed.
+  unsupported_conclusions: >-
+    This does not establish code execution on the parsing host, and an alert must never say it does:
+    it is a file read, and the absence of a spawned shell is not evidence the step did not happen.
+    It does not establish that any credential obtained was subsequently used, or that the
+    process-environment read is covered by any predicate here. Attribution reaches
+    autonomous-agent-indicated and no further: the actor is described as a model operating inside an
+    evaluation harness, with no threat group, no persistent infrastructure and no prior campaign to
+    compare against, and no detection here establishes autonomy. There are no atomic indicators for
+    this incident, by the publisher's stated redaction policy rather than by any failure to find
+    them. Standing negative: no source maps any published vulnerability record to this incident. The
+    escape-vector vendor confirmed the product and shipped a fix in 7.161 and several records
+    credit the researchers, but REF-NO-CVE-MAPPING (a press report at news tier, not the incident
+    publisher) states verbatim that "the records do not map any CVE to the incident, identify the
+    access required before exploitation, or explain why OpenAI refers to one proxy zero-day while
+    JFrog refers to multiple vulnerabilities". An update claiming the opposite was refuted against
+    the cited article's own text. Re-tested 2026-08-07 and confirmed against the newest source
+    available: the escape-vector vendor's own blog update of 2026-08-05, published after the model
+    developer's Black Hat USA reconstruction of this incident, discusses zero-day findings in
+    Artifactory and carries no CVE identifier anywhere on the page (REF-JFROG-ZERODAY-UPDATE). Do
+    not weaken without a new primary source. Standing negative, restated: no published emulation
+    library entry corresponds to the distinctive behaviors here.
+  procedure_boundary: >-
+    The egress-validation denials that immediately precede the inward re-aim are a separate
+    procedure and are HF-01, not evidence that this read occurred. HF-01 also performs a read of any
+    path in this sensitive-path watch set on the same inferred basis, so one telemetry requirement
+    covers both and neither result may be reported under the other's name. The execution primitive
+    (a numeric-typed field rendered as a template inside the running interpreter) is HF-02. The
+    source states both that HF-02's primitive was then used for the local reads here and that this
+    behavior's own primitive is the external-raw-storage declaration, and both statements are
+    recorded without being reconciled. The later credential use, token minting and multi-cluster
+    access in the same intrusion are separate procedures with their own objects and are not evidence
+    that anything read here was used. On indicators, the primary source states verbatim that "Live
+    credentials, internal hostnames, and specific indicators have been redacted or genericized,
+    while the techniques are described exactly as observed by Hugging Face", so anyone circulating
+    an indicator list for this incident is circulating something with no published origin, which is
+    publishable content and not a gap to be filled. Edges checked and found absent: no object
+    supersedes or is superseded by this one, no companion hunt is authored for its watch-set blind
+    spot, and no other object models the same behavior along a different boundary.
+  references:
+    - id: 'REF-INCIDENT-HF'
+      type: 'incident-procedure-primary-source'
+      title: >-
+        Anatomy of a Frontier Lab Agent Intrusion: A Technical Timeline of the July 2026 Incident
+      publisher: 'Hugging Face'
+      url: 'https://huggingface.co/blog/agent-intrusion-technical-timeline'
+      trust_tier: 'primary'
+      verification: 'confirmed'
+      evidence_use: >-
+        The sole source for this procedure: the external-raw-storage declaration inside a submitted
+        dataset, the local path it named, the worker's read of it, the inward re-aim after the URL
+        allowlist rejected every non-platform URL, the three literal declared storage paths it
+        publishes in a code block, and the stated redaction policy behind the absence of atomic
+        indicators. It states no executable and no host-audit record, and beyond those three paths
+        every watch-set entry here is an analyst-authored example.
+      relevant_locations:
+        - "Technical timeline, initial-access phase: submitted dataset container metadata declaring
+          external raw storage at a local filesystem path, and the parsing worker's read of it."
+        - "Technical timeline, discovery phase: after every remote fetch was denied, the same
+          declaration re-aimed at the worker's own process environment, credential paths and source
+          paths."
+        - "Stated redaction policy: 'Live credentials, internal hostnames, and specific indicators
+          have been redacted or genericized, while the techniques are described exactly as observed
+          by Hugging Face.'"
+    - id: 'REF-NO-CVE-MAPPING'
+      type: 'incident-campaign-secondary-source'
+      title: >-
+        JFrog Confirms OpenAI Models Exploited Artifactory Zero-Day Before Hugging Face Breach
+      publisher: 'The Hacker News'
+      url: 'https://thehackernews.com/2026/07/jfrog-confirms-openai-models-exploited.html'
+      trust_tier: 'news'
+      verification: 'confirmed-with-scope-caveat'
+      citation_caveat: 'headline-overstates-body'
+      citation_caveat_note: >-
+        The title asserts that the escape-vector vendor confirmed a zero-day was exploited. The
+        sentence cited here states an absence: that the records do not map any CVE to the incident.
+        This object cites the sentence, not the title. The standing negative survives discounting
+        this source entirely: REF-JFROG-ZERODAY-UPDATE, the escape-vector vendor's own page updated
+        2026-08-05, discusses zero-day findings in the product and carries no CVE identifier
+        anywhere.
+      evidence_use: >-
+        Carries the no-CVE-mapping sentence verbatim and supports only the standing negative in
+        unsupported_conclusions. No logic, telemetry claim or conclusion in this object depends on
+        it. It is a news-tier source and documents neither this procedure nor the campaign at
+        primary tier, so it is typed as secondary rather than promoted to a primary-source type it
+        does not meet. The campaign-level primary-source slot is filled separately by
+        REF-JFROG-ZERODAY-UPDATE.
+      relevant_locations:
+        - "The verbatim sentence: 'The records do not map any CVE to the incident, identify the
+          access required before exploitation, or explain why OpenAI refers to one proxy zero-day
+          while JFrog refers to multiple vulnerabilities.'"
+    - id: 'REF-JFROG-ZERODAY-UPDATE'
+      type: 'incident-campaign-primary-source'
+      title: >-
+        Fast Remediation Is the New Trust Model: JFrog and OpenAI Collaboration on Zero-Day Security
+        Findings
+      publisher: 'JFrog'
+      url: 'https://jfrog.com/blog/jfrog-and-openai-collaboration-on-zero-day-security-findings/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        The escape-vector vendor writing about its own product, updated 2026-08-05 in response to
+        the model developer's Black Hat USA reconstruction of this incident. Cited for one thing:
+        the page discusses zero-day findings in the product and carries no CVE identifier anywhere,
+        which is what re-time-boxes to 2026-08-07 the standing negative that no published
+        vulnerability record maps to this incident. No verdict, strategy or logic in this object
+        depends on it.

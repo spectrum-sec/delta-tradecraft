@@ -1,0 +1,456 @@
+# Validates every published Tradecraft object against DELTA_TRADECRAFT_TEMPLATE.yaml.
+#
+# Scope, deliberately: the object parses as YAML, carries the 13 blocks the
+# normative template defines, carries a unique uuid, answers the three
+# manifestation gates with legal values, states its blocking conditions where the
+# template requires them, uses list-typed fields as lists, and writes a member of
+# the closed vocabulary in every closed-vocabulary slot. That is the whole gate.
+# There is no bespoke validator in this repository and this workflow is not the
+# beginning of one — a JSON Schema is worth raising once objects arrive from
+# outside the team, not before.
+#
+# The member lists moved out of the template and into SCHEMA.md, where a reader
+# looks them up but nothing checks them. They are duplicated below on purpose, so
+# that the check survives that move. Adding a member to SCHEMA.md without adding
+# it here fails the corpus loudly, which is the intended failure direction.
+#
+# NOT validated, because no gate has a machine-checkable answer for it: whether
+# the prose is any good, and whether the member chosen was the RIGHT one. Whether
+# it is a member at all is now checked. The rest is what review is for — see
+# CONTRIBUTING.md.
+
+name: validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  objects:
+    name: object validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install --quiet "pyyaml==6.0.2"
+
+      - name: Validate objects
+        run: |
+          python3 - <<'PY'
+          import pathlib, re, sys, uuid as uuidlib, yaml
+
+          # The 13 blocks of DELTA_TRADECRAFT_TEMPLATE.yaml, in template order.
+          BLOCKS = ["identity", "classification", "behavior", "manifestation",
+                    "attack_surface_context", "threat_research", "visibility",
+                    "detection", "detector_requirements", "missing_context",
+                    "missing_states", "alert_evidence_contract", "evidence"]
+          IDENTITY = ["uuid", "id", "name", "incident", "first_observed", "last_reviewed"]
+          # possible takes two answers; the other two gates take three. yes-conditional
+          # is not legal on possible — scope a yes in answer_scope instead.
+          GATES = {"possible": ("yes", "no"),
+                   "observable": ("yes", "yes-conditional", "no"),
+                   "detectable": ("yes", "yes-conditional", "no")}
+          # Unfilled template slots, in the only two shapes the template emits. Narrow on
+          # purpose: real objects write angle brackets in prose (`system:node:<node-name>`),
+          # and a gate that fires on those trains contributors to ignore it.
+          #   1. a whole scalar value that is a placeholder:  id: "<unique-tradecraft-id>"
+          #   2. an unedited prose block, which always opens `<` + a capitalised verb:
+          #        definition: |
+          #          <Explain the adversary behavior in one or two sentences.
+          PLACEHOLDER = re.compile(r'^\s*(?:-\s+)?(?:[a-z_]+:\s*)?"?<[^<>]+>"?\s*$|<[A-Z][a-z]+ ')
+
+          # ---- closed vocabularies, normative in SCHEMA.md --------------------
+          # "other" appears in a list only where the vocabulary admits it. Where the
+          # template names the note that must accompany "other", the note is named
+          # alongside the list and enforced.
+          #
+          # One list serves both surface fields. The split in SCHEMA.md between
+          # primary-attested and secondary-attested members records where each is
+          # used in the corpus; it is not two vocabularies.
+          SURFACES = {
+              # primary-attested
+              "ai-agent-harness", "application-ai-platform", "application-runtime",
+              "cloud-control-plane", "cloud-instance-metadata-service",
+              "container-orchestrator", "data-plane",
+              "estate-preventive-control-configuration", "host-os",
+              "identity-provider", "secret-store",
+              # additional secondary-attested
+              "cloud-instance-metadata-reachability-configuration",
+              "cloud-management-event-record", "cloud-secret-store",
+              "node-instance-role-credentials", "cluster-identity-mapping",
+              "container-orchestrator-admission-control",
+              "container-orchestrator-control-plane", "container-registry",
+              "container-workload", "identity-provider-signing-material-custody",
+              "identity-provider-token-issuance", "signing-key-material",
+              "token-verification", "workload-identity", "authorization-boundary",
+              "authorization-decision-api", "host-os-authorization-boundary",
+              "data-plane-field-parser", "host-filesystem", "in-process-runtime",
+              "parser-worker", "container-to-link-local-network-reachability",
+              "egress-control", "name-resolution-path", "consolidated-secret-store",
+              "self-hosted-artifact-repository-manager", "submitted-content-ingest",
+              # accepted alias, recorded in SCHEMA.md
+              "cloud-instance-metadata",
+              "other"}
+          BEHAVIOR_CLASSES = {
+              "credential-access-via-cloud-instance-metadata",
+              "credential-access-via-control-plane-api",
+              "credential-replay-from-outside-the-issuing-boundary",
+              "instance-role-credential-theft-via-metadata-service",
+              "workload-identity-token-minting", "borrowed-identity-capability-mapping",
+              "capability-redirection-under-one-identity",
+              "host-identity-impersonation-by-a-workload", "identity-borrowing",
+              "presigned-identity-api-request-used-as-a-bearer-token",
+              "authoritative-self-permission-enumeration", "control-state-verification",
+              "discovery", "discovery-without-denials", "empirical-permission-discovery",
+              "read-only-infrastructure-enumeration", "blocked-egress-then-local-re-aim",
+              "authorization-denial-accrual-on-one-principal",
+              "denial-record-as-primary-observable", "inverted-success-to-denial-ratio",
+              "cloud-metadata-access-attempt", "containment-boundary-crossing",
+              "in-process-interpreter-execution", "schema-type-violation",
+              "server-side-request-forgery", "template-injection",
+              "lateral-movement-without-privilege-escalation", "persistence",
+              "privilege-escalation", "collection", "exfiltration",
+              "defense-impairment", "estate-precondition-removal", "stealth",
+              "other"}
+          BLOCKING_CONDITIONS = {
+              # collection family, pairs with yes-conditional
+              "audit-tier-or-enablement-required", "stream-existence-varies-by-estate",
+              "environment-inventory-required", "cross-source-join-required",
+              "below-alerting-signal-strength",
+              # structural family, pairs with no
+              "deciding-property-not-in-any-schema", "action-emits-no-record",
+              "only-unreliable-negative-evidence", "indistinguishable-from-legitimate",
+              "other"}
+          EVENT_VOCABULARY = {"kube-audit", "cloud-management-event", "cloud-data-event",
+                              "kernel-audit", "host-process-event", "flow-record",
+                              "dns-resolver-record", "application-record", "none", "other"}
+          TIERS = {"metadata", "request", "request-response", "no-tier-model",
+                   "not-applicable", "not-implemented"}          # closed, no "other"
+          OPERATIONAL_VIABILITY = {"opt-in", "on-by-default", "first-party-build",
+                                   "rejected-not-coverage", "other"}
+          ATTESTATION = {"vendor-attested", "community-attested", "vendor-attested-absent",
+                         "unattested-inferred", "estate-supplied", "detector-computed",
+                         "other"}
+          VALIDATION_STATUS = {"untested", "validated-in-lab", "partially-validated",
+                               "validation-withdrawn", "lab-telemetry-verified",
+                               "not-obtainable", "other"}
+          VOLUME_BAND = {"rare", "1-10-per-day", "100-plus-per-day", "unbounded"}
+          VOLUME_BASIS = {"source-stated", "mechanism-proven-magnitude-inferred",
+                          "modelled", "unavailable"}                # closed, no "other"
+          COVERAGE_CLAIM = {"no-coverage", "coverage-limited", "coverage-unaffected"}
+          REFERENCE_TYPE = {"incident-procedure-primary-source",
+                            "incident-campaign-primary-source",
+                            "incident-campaign-secondary-source",
+                            "attack-surface-documentation", "telemetry-documentation",
+                            "framework", "detection-modeling-reference", "other"}
+          TRUST_TIER = {"vendor", "primary", "news", "researcher", "registry", "aggregator"}
+          VERIFICATION = {"confirmed", "confirmed-with-scope-caveat",
+                          "not-resolved-out-of-scope", "not-resolved-no-url-exists"}
+          CITATION_CAVEAT = {"headline-overstates-body", "partial-use",
+                             "contradicted-elsewhere", "superseded"}
+
+          objects = sorted(pathlib.Path("packs").glob("*/*.tradecraft.yaml"))
+          if not objects:
+              sys.exit("no objects found under packs/ - refusing to report a pass on an empty set")
+          errors = []
+
+          # A green run over zero objects is a false pass, not a pass.
+          if not objects:
+              print("::error::no *.tradecraft.yaml objects found")
+              sys.exit(1)
+
+          seen_ids, seen_uuids = {}, {}
+          for path in objects:
+              text = path.read_text(encoding="utf-8")
+              err = lambda m: errors.append(f"{path}: {m}")
+              try:
+                  obj = yaml.safe_load(text)
+              except yaml.YAMLError as e:
+                  err(f"does not parse as YAML: {e}")
+                  continue
+              if not isinstance(obj, dict):
+                  err("top level is not a mapping")
+                  continue
+
+              missing = [b for b in BLOCKS if b not in obj]
+              unknown = [k for k in obj if k not in BLOCKS]
+              if missing:
+                  err(f"missing required block(s): {', '.join(missing)}")
+              if unknown:
+                  err(f"unknown top-level block(s): {', '.join(unknown)}")
+
+              identity = obj.get("identity") or {}
+              if isinstance(identity, dict):
+                  for f in IDENTITY:
+                      if not str(identity.get(f) or "").strip():
+                          err(f"identity.{f} is missing or empty")
+                  # uuid is the sole reference target, so it must exist, be well formed,
+                  # and be unique across the corpus. An optional or duplicated
+                  # reference target is not a reference target.
+                  raw = str(identity.get("uuid") or "").strip()
+                  if raw:
+                      try:
+                          uuidlib.UUID(raw)
+                      except ValueError:
+                          err(f"identity.uuid {raw!r} is not a UUID")
+                      else:
+                          if raw in seen_uuids:
+                              err(f"identity.uuid {raw!r} already used by {seen_uuids[raw]}")
+                          seen_uuids[raw] = path
+                  oid = identity.get("id")
+                  if oid:
+                      if oid in seen_ids:
+                          err(f"identity.id {oid!r} already used by {seen_ids[oid]}")
+                      seen_ids[oid] = path
+              else:
+                  err("identity is not a mapping")
+
+              manifestation = obj.get("manifestation") or {}
+              for gate_name, legal in GATES.items():
+                  gate = manifestation.get(gate_name) if isinstance(manifestation, dict) else None
+                  if not isinstance(gate, dict):
+                      err(f"manifestation.{gate_name} is missing or not a mapping")
+                      continue
+                  answer = gate.get("answer")
+                  if answer not in legal:
+                      err(f"manifestation.{gate_name}.answer is {answer!r}, expected one of {legal}")
+                      continue
+                  if answer == "yes":
+                      continue
+                  # Not a plain yes: the template requires the scope, and requires the
+                  # blocking conditions as a LIST on observable and detectable — one gate
+                  # routinely carries several simultaneous conditions.
+                  if not str(gate.get("answer_scope") or "").strip():
+                      err(f"manifestation.{gate_name}.answer_scope is required when answer is {answer!r}")
+                  if gate_name != "possible":
+                      conditions = gate.get("blocking_conditions")
+                      if not isinstance(conditions, list) or not conditions:
+                          err(f"manifestation.{gate_name}.blocking_conditions must be a non-empty list "
+                              f"when answer is {answer!r}")
+
+              detection = obj.get("detection") or {}
+              strategies = detection.get("strategies") if isinstance(detection, dict) else None
+              if not isinstance(strategies, list) or not strategies:
+                  err("detection.strategies must be a non-empty list")
+              else:
+                  for s in strategies:
+                      if not isinstance(s, dict):
+                          err("detection.strategies entry is not a mapping")
+                          continue
+                      sid = s.get("id", "<no id>")
+                      # Both are list-typed. Prose here is the pre-list form and the most
+                      # common migration mistake.
+                      for field in ("benign_explanations", "blind_spots"):
+                          value = s.get(field)
+                          if not isinstance(value, list) or not value:
+                              err(f"detection.strategies[{sid}].{field} must be a non-empty list")
+                      # An ABSENT validation block means untested, and that is legal and
+                      # honest. A PRESENT one must carry a status. Expected volume is a
+                      # separate concern and lives in its own sibling block, so that an
+                      # author with only a noise figure need not open a validation block
+                      # and rob the absent-block rule of its meaning.
+                      v = s.get("validation")
+                      if v is not None:
+                          if not isinstance(v, dict):
+                              err(f"detection.strategies[{sid}].validation is not a mapping")
+                          elif not str(v.get("status") or "").strip():
+                              err(f"detection.strategies[{sid}].validation.status is required")
+                          if isinstance(v, dict) and v.get("volume") is not None:
+                              err(f"detection.strategies[{sid}].validation.volume has moved to expected_volume")
+                          # A lab result a reader cannot check is not a result. method and
+                          # measured are what make a lab claim falsifiable, so the gate keys
+                          # on the status rather than on the presence of the keys.
+                          if isinstance(v, dict) and str(v.get("status") or "") in (
+                                  "validated-in-lab", "partially-validated"):
+                              for req in ("method", "measured"):
+                                  if not str(v.get(req) or "").strip():
+                                      err(f"detection.strategies[{sid}].validation.{req} is "
+                                          f"required when status is {v.get('status')}")
+                      ev = s.get("expected_volume")
+                      if ev is not None:
+                          if not isinstance(ev, dict):
+                              err(f"detection.strategies[{sid}].expected_volume is not a mapping")
+                          elif not str(ev.get("basis") or "").strip():
+                              err(f"detection.strategies[{sid}].expected_volume.basis is required")
+
+              # ---- closed-vocabulary membership ---------------------------
+              # Reports the field path and the offending value, because "invalid
+              # enum" without both is a grep, not a report.
+              def member(value, allowed, where, owner=None, note=None):
+                  if value is None:
+                      return
+                  if not isinstance(value, str) or value not in allowed:
+                      err(f"{where}: {value!r} is not a member of the closed vocabulary "
+                          f"({', '.join(sorted(allowed))})")
+                      return
+                  # "other" is a legal member only where the vocabulary admits it, and
+                  # where the template names a note, the note is what makes it legal.
+                  if value == "other" and note:
+                      if not str((owner or {}).get(note) or "").strip():
+                          err(f"{where}: value is 'other', so {note} is required")
+
+              cls = obj.get("classification")
+              if isinstance(cls, dict):
+                  member(cls.get("primary_attack_surface"), SURFACES,
+                         "classification.primary_attack_surface", cls,
+                         "primary_attack_surface_note")
+                  for i, s in enumerate(cls.get("secondary_attack_surfaces") or []):
+                      member(s, SURFACES, f"classification.secondary_attack_surfaces[{i}]",
+                             cls, "secondary_attack_surfaces_note")
+                  for i, b in enumerate(cls.get("behavior_classes") or []):
+                      member(b, BEHAVIOR_CLASSES, f"classification.behavior_classes[{i}]",
+                             cls, "behavior_classes_note")
+
+              # The three .answer fields are checked against GATES above; only the
+              # conditions need the vocabulary. possible takes no blocking_conditions.
+              for gate_name in ("observable", "detectable"):
+                  gate = manifestation.get(gate_name) if isinstance(manifestation, dict) else None
+                  if not isinstance(gate, dict):
+                      continue
+                  for i, c in enumerate(gate.get("blocking_conditions") or []):
+                      if not isinstance(c, dict):
+                          continue
+                      member(c.get("condition"), BLOCKING_CONDITIONS,
+                             f"manifestation.{gate_name}.blocking_conditions[{i}].condition",
+                             c, "note")
+
+              visibility = obj.get("visibility")
+              sources = visibility.get("telemetry_sources") if isinstance(visibility, dict) else None
+              for i, src in enumerate(sources or []):
+                  if not isinstance(src, dict):
+                      continue
+                  at = f"visibility.telemetry_sources[{src.get('source', i)}]"
+                  member(src.get("event_vocabulary"), EVENT_VOCABULARY,
+                         f"{at}.event_vocabulary", src, "event_vocabulary_note")
+                  member(src.get("tier"), TIERS, f"{at}.tier")
+                  member(src.get("operational_viability"), OPERATIONAL_VIABILITY,
+                         f"{at}.operational_viability", src, "operational_viability_note")
+                  for j, fld in enumerate(src.get("fields") or []):
+                      if not isinstance(fld, dict):
+                          continue
+                      member(fld.get("attestation"), ATTESTATION,
+                             f"{at}.fields[{fld.get('name', j)}].attestation", fld, "note")
+
+              for s in (strategies or []):
+                  if not isinstance(s, dict):
+                      continue
+                  sid = s.get("id", "<no id>")
+                  v = s.get("validation")
+                  if isinstance(v, dict):
+                      member(v.get("status"), VALIDATION_STATUS,
+                             f"detection.strategies[{sid}].validation.status", v, "status_note")
+                  ev = s.get("expected_volume")
+                  if isinstance(ev, dict):
+                      # band is one of the two fields where null is a legal value, so an
+                      # absent or null band is not an error. basis is not optional.
+                      if ev.get("band") is not None:
+                          member(ev.get("band"), VOLUME_BAND,
+                                 f"detection.strategies[{sid}].expected_volume.band")
+                      member(ev.get("basis"), VOLUME_BASIS,
+                             f"detection.strategies[{sid}].expected_volume.basis")
+
+              for i, m in enumerate(obj.get("missing_states") or []):
+                  if isinstance(m, dict):
+                      member(m.get("coverage_claim"), COVERAGE_CLAIM,
+                             f"missing_states[{m.get('id', i)}].coverage_claim")
+
+              evidence = obj.get("evidence")
+              refs = evidence.get("references") if isinstance(evidence, dict) else None
+              for i, r in enumerate(refs or []):
+                  if not isinstance(r, dict):
+                      continue
+                  at = f"evidence.references[{r.get('id', i)}]"
+                  member(r.get("type"), REFERENCE_TYPE, f"{at}.type")
+                  # trust_tier and verification are required on every reference. They were
+                  # optional once, and the corpus answered by leaving them off 205 of 208
+                  # references, which is how a filterable field quietly became prose again.
+                  for req in ("trust_tier", "verification"):
+                      if not str(r.get(req) or "").strip():
+                          err(f"{at}.{req} is required on every reference")
+                  member(r.get("trust_tier"), TRUST_TIER, f"{at}.trust_tier")
+                  member(r.get("verification"), VERIFICATION, f"{at}.verification")
+                  member(r.get("citation_caveat"), CITATION_CAVEAT, f"{at}.citation_caveat")
+                  if r.get("citation_caveat") is not None and \
+                          not str(r.get("citation_caveat_note") or "").strip():
+                      err(f"{at}: citation_caveat is set, so citation_caveat_note is required")
+
+              for n, line in enumerate(text.splitlines(), 1):
+                  if PLACEHOLDER.search(line):
+                      err(f"line {n}: unfilled template placeholder: {line.strip()[:70]}")
+
+          print(f"checked {len(objects)} object(s)")
+          for e in errors:
+              print(f"::error::{e}")
+          print(f"{len(errors)} error(s)")
+          sys.exit(1 if errors else 0)
+          PY
+
+      - name: Cross-reference integrity
+        run: |
+          python3 - <<'PY'
+          # Objects refer to one another by a short form that maps to a file stem by
+          # convention. A pointer to an object that does not exist is worse than no
+          # pointer: it implies a relation a reader cannot follow.
+          #
+          # routes_to is checked here too, and is the one pointer the format spells
+          # with the human identity.id rather than the uuid — because a pointer a
+          # reviewer cannot read is worse than one that has to be maintained. This is
+          # what makes maintaining it enforceable: renumber an id without updating the
+          # routes_to that point at it and this gate fails.
+          import yaml, glob, re, sys, os, pathlib
+          packs = [p for p in glob.glob("packs/*/") if glob.glob(p + "*.yaml")]
+          errors = []
+          for P in packs:
+              files = sorted(glob.glob(P + "*.yaml"))
+              stems = {"-".join(os.path.basename(f).split("-")[:2]) for f in files}
+              ids, aliases, parsed = set(), set(), {}
+              for f in files:
+                  parsed[f] = yaml.safe_load(open(f)) or {}
+                  i = parsed[f].get("identity") or {}
+                  if i.get("id"): ids.add(str(i["id"]))
+                  for a in (i.get("aliases") or []): aliases.add(str(a))
+              SHORT = re.compile(r"\bHF-(\d{2,3})\b")
+              LONG = re.compile(r"\bDT-OAIHF-[A-Z]*-?\d{3}\b")
+              for f in files:
+                  text = open(f).read()
+                  for n in set(SHORT.findall(text)):
+                      if ("hf-" + n) not in stems:
+                          errors.append(f"{os.path.basename(f)}: reference to HF-{n}, which no object in this pack provides")
+                  for m in set(LONG.findall(text)):
+                      if m not in ids and m not in aliases:
+                          errors.append(f"{os.path.basename(f)}: reference to {m}, which is neither an id nor an alias in this pack")
+                  # Every non-null routes_to must name a sibling's current identity.id.
+                  # An alias is not a reference target, so a pointer that only matches
+                  # an alias is reported as unresolved and says so.
+                  detection = parsed[f].get("detection") or {}
+                  strategies = detection.get("strategies") if isinstance(detection, dict) else None
+                  for s in (strategies or []):
+                      if not isinstance(s, dict):
+                          continue
+                      sid = s.get("id", "<no id>")
+                      for b in (s.get("blind_spots") or []):
+                          if not isinstance(b, dict) or b.get("routes_to") is None:
+                              continue
+                          target = str(b["routes_to"]).strip()
+                          if target in ids:
+                              continue
+                          why = ("that is an alias, not a current identity.id"
+                                 if target in aliases
+                                 else "no object in this pack declares that identity.id")
+                          errors.append(
+                              f"{os.path.basename(f)}: strategy {sid}: blind_spots[].routes_to "
+                              f"{target!r} does not resolve - {why}")
+          print(f"checked cross-references across {len(packs)} pack(s)")
+          for e in sorted(set(errors)):
+              print(f"::error::{e}")
+          print(f"{len(set(errors))} dangling reference(s)")
+          sys.exit(1 if errors else 0)
+          PY
