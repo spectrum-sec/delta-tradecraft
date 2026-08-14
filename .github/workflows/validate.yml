@@ -139,7 +139,7 @@ jobs:
           ATTESTATION = {"vendor-attested", "community-attested", "vendor-attested-absent",
                          "unattested-inferred", "estate-supplied", "detector-computed",
                          "other"}
-          VALIDATION_STATUS = {"untested", "validated-in-lab", "partially-validated",
+          VALIDATION_STATUS = {"validated-in-lab", "partially-validated",
                                "validation-withdrawn", "lab-telemetry-verified",
                                "not-obtainable", "other"}
           VOLUME_BAND = {"rare", "1-10-per-day", "100-plus-per-day", "unbounded"}
@@ -198,13 +198,16 @@ jobs:
                   raw = str(identity.get("uuid") or "").strip()
                   if raw:
                       try:
-                          uuidlib.UUID(raw)
+                          parsed_uuid = uuidlib.UUID(raw)
                       except ValueError:
                           err(f"identity.uuid {raw!r} is not a UUID")
                       else:
-                          if raw in seen_uuids:
-                              err(f"identity.uuid {raw!r} already used by {seen_uuids[raw]}")
-                          seen_uuids[raw] = path
+                          if parsed_uuid.version != 4:
+                              err(f"identity.uuid {raw!r} is not a UUIDv4")
+                          if parsed_uuid in seen_uuids:
+                              err(f"identity.uuid {raw!r} already used by "
+                                  f"{seen_uuids[parsed_uuid]}")
+                          seen_uuids[parsed_uuid] = path
                   oid = identity.get("id")
                   if oid:
                       if oid in seen_ids:
@@ -263,6 +266,8 @@ jobs:
                               err(f"detection.strategies[{sid}].validation is not a mapping")
                           elif not str(v.get("status") or "").strip():
                               err(f"detection.strategies[{sid}].validation.status is required")
+                          elif not str(v.get("evidence") or "").strip():
+                              err(f"detection.strategies[{sid}].validation.evidence is required")
                           if isinstance(v, dict) and v.get("volume") is not None:
                               err(f"detection.strategies[{sid}].validation.volume has moved to expected_volume")
                           # A lab result a reader cannot check is not a result. method and
