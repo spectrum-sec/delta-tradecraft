@@ -12,6 +12,7 @@ and nothing in the format assumes a particular pack exists.
 | Pack | Subject | Objects | Strategies | Tested | Index |
 |---|---|---|---|---|---|
 | `openai-huggingface-2026-07` | Model-evaluation containment failure leading to ML-platform compromise, July 2026 | 26 | 72 | 2 full, 15 partial | [README](openai-huggingface-2026-07/README.md) |
+| `ai-agent-adversary-group-1` | AI/agent adversary procedures, catalog Group 1 (prompt injection, MCP/agent supply chain, agent exfiltration, autonomous-agent activity, model-artifact execution, browser/multimodal/A2A boundaries) | 36 | 61 | none | [README](ai-agent-adversary-group-1/README.md) |
 
 **Tested** counts strategies exercised in a lab: fired on a faithful reproduction of the behavior,
 and stayed quiet on a benign twin built to differ in exactly the property they key on. Partial means

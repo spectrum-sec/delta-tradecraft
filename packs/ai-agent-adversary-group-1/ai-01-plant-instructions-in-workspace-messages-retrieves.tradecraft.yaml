@@ -1,0 +1,551 @@
+identity:
+  uuid: 'af0139e5-86d0-4cf9-9dc5-b8798f6eceb5'
+  id: 'DT-AAG1-AI-001'
+  aliases:
+    - 'P08'
+  name: 'Attackers plant instructions in workspace messages an agent retrieves'
+  incident: >-
+    Slack AI indirect prompt injection, responsibly disclosed by PromptArmor: a message in a public
+    channel made Slack AI surface private-channel content, with the displayed citation referencing
+    only the private channel and hiding the attacker's planted message.
+  first_observed: '2024'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'submitted-content-ingest'
+  secondary_attack_surfaces:
+    - 'application-ai-platform'
+  behavior_classes:
+    - 'other'
+  behavior_classes_note: >-
+    indirect-prompt-injection-via-retrieved-content: untrusted text in a workspace object the agent
+    retrieves redirects the agent to expose data across a trust boundary the message author cannot
+    themselves cross.
+  tags:
+    - 'ai'
+    - 'prompt-injection'
+    - 'slack'
+    - 'retrieval'
+    - 'data-exfiltration'
+
+behavior:
+  definition: >-
+    An attacker inserts prompt-injection text into a readable workspace message; when an assistant
+    retrieves the message it follows the planted instruction and exposes data the attacker cannot
+    directly access.
+  detailed_definition: >-
+    The adversary controls content in a shared workspace that a retrieval-augmented assistant will
+    pull into its context on behalf of some other user. The assistant treats retrieved message text
+    as data, but the model may act on instructions embedded in it, so retrieval crosses from
+    untrusted published content into agent action taken under the retrieving user's identity and
+    access. The attempt ends when the instruction-bearing message is posted and readable; success
+    begins when the assistant retrieves it, follows the instruction, and surfaces or forwards data
+    the message author could not have reached. It is independent of assistant product, retrieval
+    implementation, and workspace platform.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers planting the instruction and the assistant acting on it to expose data across the
+      author's access boundary; does not cover any specific downstream exfiltration channel.
+    summary: >-
+      This can occur when an attacker can post content into a workspace an assistant retrieves from,
+      the assistant grounds a victim's query on that content within the victim's broader access, and
+      the model follows instructions embedded in retrieved text. Exposure requires that the victim's
+      access spans data the message author cannot reach and that the assistant's output or a
+      follow-on action carries that data to a surface the attacker can observe.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      The retrieving prompt, the tool/retrieval call, and the output can be observed where AI-runtime
+      telemetry is enabled; the fact that a specific untrusted message entered context has no native
+      event and is inferred by joining tool or file-access telemetry to the workspace object.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          AI-runtime prompt and tool text is gated: Claude Code needs OTEL_LOG_USER_PROMPTS=1 and
+          OTEL_LOG_TOOL_DETAILS=1, Cowork needs an admin-set OTLP endpoint, and M365 Copilot
+          prompt/response text is a separate licensed Graph export.
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          Whether any AI-runtime telemetry is exported at all depends on which assistant is deployed
+          and whether the estate wired it to a collector; several evaluated platforms emit nothing
+          queryable.
+      - condition: 'cross-source-join-required'
+        note: >-
+          No platform emits a retrieval-provenance event naming the untrusted message; it must be
+          derived by joining tool/file-access telemetry to the workspace object identity.
+    summary: >-
+      The behavior is observable when an AI-runtime record carries the retrieval or tool call and the
+      generated output, and a downstream workspace audit or DLP signal shows data crossing an access
+      boundary. A prompt log alone establishes that the assistant ran, not what it read; a Slack
+      audit event establishes actor and channel, not message content or that an assistant read it; an
+      output DLP hit establishes exposure, not the injecting message. Establishing the behavior needs
+      the retrieval tied to the specific workspace object and to an output carrying otherwise
+      inaccessible data.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Separable from benign cross-channel summarisation when a retrieval of injection-like content
+      correlates with an output carrying data the message author cannot access and with audit
+      evidence of a channel-boundary crossing; a legitimate shared-channel assistant summary overlaps
+      and must not be tuned out on channel-crossing alone.
+    blocking_conditions:
+      - condition: 'cross-source-join-required'
+        note: >-
+          Distinguishing malicious injection from a normal summary needs the AI-runtime retrieval and
+          output joined to workspace access/audit on message id, channel id, and user; no single
+          stream separates them.
+    summary: >-
+      Separation rests on correlating a retrieval of instruction-like message text with an output
+      exposing data outside the message author's access, corroborated by workspace audit of the
+      boundary crossing. Normalising the retrieved object to a message and channel id, classifying
+      the output against the author's access, and requiring the access-boundary crossing are what
+      make it distinguishable; a retrieval with no boundary-crossing output, or an output with no
+      identifiable injecting message, is too weak to establish it.
+
+attack_surface_context:
+  surface: >-
+    A workspace AI assistant (Slack AI) that retrieves channel messages as grounding context and
+    answers or summarises for a requesting user within that user's access.
+  how_the_surface_works: >-
+    The assistant indexes messages the requesting user can read, retrieves relevant ones for a query,
+    and generates an answer or summary with citations back to source messages. Retrieved message text
+    is intended as data, but the language model can follow imperative text inside it, so a crafted
+    message can steer what the assistant retrieves next, what it discloses, and how it cites.
+  incident_processing_path: >-
+    PromptArmor reports (source-attested) that a message placed in a public Slack channel caused
+    Slack AI to surface content from a private channel, and that the response's citation referenced
+    only the private channel, hiding the attacker's instruction-bearing message from the victim. That
+    the model followed the planted text as an indirect prompt injection at retrieval time, rather
+    than surfacing the private content coincidentally, is this pack's reading of the demonstration,
+    consistent with but not separately instrumented by the source.
+  processing_stages:
+    - 'message-authoring'
+    - 'channel-posting'
+    - 'victim-query'
+    - 'message-retrieval'
+    - 'context-assembly'
+    - 'instruction-following'
+    - 'response-generation'
+    - 'cross-boundary-data-exposure'
+  stage_evidence: >-
+    The stage instrumentation sits at fixes what it can prove: a channel-post audit proves a message
+    exists, not that it was read; a prompt or retrieval log proves the assistant ran and may name the
+    retrieved object; only the generated output tied to the requesting user's access proves data
+    crossed a boundary, and only a follow-on fetch proves onward exfiltration.
+  trust_boundaries: >-
+    Untrusted message author into the assistant's retrieved context (reached: the planted message was
+    retrieved); the private-channel access boundary (reached: private content was surfaced to a user
+    without direct access via the author's route); assistant output into an attacker-observable
+    surface (reached in the demonstration through the displayed answer and citation).
+  security_control_context: >-
+    Slack channel membership and ACLs decide what a user, and therefore the assistant on their
+    behalf, may read; the assistant retrieves within the requesting user's access, so injection
+    redirects that access rather than escalating it. Output DLP, where deployed, can flag exposed
+    sensitive data. Bypass representations include instructions hidden in ordinary-looking message
+    text and citations that omit the injecting message, so the victim sees only the trusted source.
+  practitioner_implication: >-
+    An implementer must discover which assistant is actually deployed and whether its prompt, tool,
+    and retrieval telemetry is enabled and exported; whether Slack audit and output DLP are available;
+    and how to join an AI-runtime retrieval to a workspace object identity and to the requesting
+    user's access, since no native event names the untrusted message that entered context.
+
+threat_research:
+  why_it_matters: >-
+    A workspace assistant runs with the requesting user's full access, so a single readable message
+    can turn routine summarisation into disclosure of data the message author was never entitled to,
+    with the trusted citation masking the injection.
+  threat_actor: >-
+    Unknown. The behavior was demonstrated by PromptArmor security research against Slack AI; no
+    threat group is attributed and the source describes responsible disclosure rather than in-the-wild
+    use.
+  campaign: 'PromptArmor Slack AI indirect prompt injection research (responsibly disclosed).'
+  victim: >-
+    Slack AI and its users; the demonstration targeted Slack AI itself rather than a named victim
+    organisation.
+  capability: >-
+    A public-channel message that made Slack AI surface private-channel content, with the displayed
+    citation referencing only the private channel so the attacker's message was hidden from the
+    victim; demonstrated as research, not observed in the wild.
+  target: >-
+    A retrieval-augmented workspace assistant and the private data reachable through the requesting
+    user's access. Exposure was demonstrated against Slack AI; the source does not quantify affected
+    tenants or users.
+  victimology:
+    - 'Retrieval-augmented workspace assistants that ground answers on user-readable messages.'
+    - 'Organisations whose assistants span channels with differing access, so one user query can
+      bridge a private boundary.'
+
+visibility:
+  telemetry_sources:
+    - source: 'AI coding-agent OpenTelemetry (Anthropic Claude Code / Claude Cowork)'
+      purpose: >-
+        Record the retrieving prompt and the tool or file-access call so a retrieved workspace object
+        and the generated output can be tied to a session.
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'claude_code.user_prompt (prompt, prompt_length, session.id, prompt.id)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CLAUDE-OTEL'
+          load_bearing: true
+          note: 'Prompt text present only when OTEL_LOG_USER_PROMPTS=1.'
+        - name: 'claude_code.tool_result (tool_name, tool_parameters, tool_input)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CLAUDE-OTEL'
+          load_bearing: true
+          note: >-
+            Retrieved workspace-message text appears only if it transits a logged tool call, with
+            tool details gated on OTEL_LOG_TOOL_DETAILS=1 and values truncated.
+      details: >-
+        Claude Code and Cowork emit user-prompt and tool/MCP-invocation events carrying session and
+        prompt correlation ids; Cowork events also cover file access and approvals once an admin sets
+        an OTLP endpoint. Retrieved message text is visible only when it transits a logged tool call.
+      limitations:
+        - 'Prompt and tool text are gated behind environment flags or an admin-set OTLP endpoint.'
+        - 'No event names which retrieved object was the untrusted one; provenance must be derived.'
+        - 'Values are truncated, so long injected message bodies may be clipped.'
+    - source: 'Microsoft 365 Copilot interaction audit (Office 365 Management API RecordType 261)'
+      purpose: >-
+        Attribute a Copilot interaction to a user and to the grounded resources it accessed, so a
+        cross-boundary retrieval can be reconstructed.
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'on-by-default'
+      fields:
+        - name: 'CopilotEventData.AccessedResources (Id, SiteUrl, listItemUniqueId, SensitivityLabelId, Action)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-M365-COPILOT-SCHEMA'
+          load_bearing: true
+          note: >-
+            Names grounded-resource identity but carries no prompt or response text; text is a
+            separate licensed Graph getAllEnterpriseInteractions export.
+      details: >-
+        CopilotInteractionAuditRecord records AppHost, Contexts, ThreadId, MessageIds, accessed
+        resources, and DLP-deferred bitmasks; prompt and response text are exported separately via
+        Graph with AiEnterpriseInteraction.Read.All and a Copilot licence.
+      limitations:
+        - 'The record carries no prompt or response text; content is a separate licensed export.'
+        - 'XPIADetected and per-message JailbreakDetected were not found on the fetched schema pages;
+          any XPIA/jailbreak claim is unverified.'
+        - 'Retention for the Copilot audit records is not stated on the fetched pages.'
+    - source: 'Google Workspace Reports API Gemini events'
+      purpose: 'Establish that a workspace AI feature was used, for scoping which users and apps are in play.'
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'on-by-default'
+      details: >-
+        applicationName=gemini_in_workspace_apps ai_usage_event feature_utilization records action,
+        app_name, event_category, and feature_source over a rolling 180-day window from 2025-06-20.
+      limitations:
+        - 'Proves feature use only; carries no retrieved content or accessed-resource identity.'
+        - 'Bounded to a 180-day rolling window with a fixed start date.'
+    - source: 'Microsoft Agent 365 observability spans'
+      purpose: 'Would carry agent input and output messages for invoke_agent and chat spans.'
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'other'
+      operational_viability_note: >-
+        gen_ai.input.messages / gen_ai.output.messages are mandatory span attributes but are
+        captured-but-not-yet-surfaced in advanced hunting, so the deciding content is present in the
+        span yet not queryable in any hunting table.
+      details: >-
+        invoke_agent and chat spans mandate gen_ai.input.messages and gen_ai.output.messages, but the
+        documentation states they are captured and not yet surfaced, with no CloudAppEvents.RawEventData
+        field exposing them.
+      limitations:
+        - 'The input/output message content is not queryable in advanced hunting today.'
+        - 'No retrieval-provenance attribute names the untrusted workspace object.'
+    - source: 'Slack Audit Logs API'
+      purpose: 'Attribute channel and membership actions to an actor and time to corroborate a boundary crossing.'
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'on-by-default'
+      fields:
+        - name: 'actor / action / entity / context (id, date_create)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-SLACK-AUDIT'
+          load_bearing: false
+          note: 'Channel and file entity ids are present; message content and any assistant read are not.'
+      details: >-
+        Events are actor/action/entity/context with channel and file entity ids; the documented
+        actions on the fetched page are login, file download, emoji, and channel-create events.
+      limitations:
+        - 'The page states the API does not enable monitoring of message content.'
+        - 'No AI, assistant, or message-read action is documented, so an assistant read is not recorded.'
+        - 'Enterprise Grid only.'
+    - source: 'Egress proxy / DNS and endpoint network telemetry'
+      purpose: 'Record any outbound fetch that follows a successful injection, for the exfiltration leg.'
+      event_vocabulary: 'dns-resolver-record'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      details: >-
+        Route 53 Resolver or Cloud DNS query logs and DeviceNetworkEvents record an outbound
+        destination when an injected instruction triggers a fetch from a served link or a local agent.
+      limitations:
+        - 'Only relevant when the injection causes an outbound request; pure in-UI disclosure emits none.'
+        - 'A destination without the retrieval context does not attribute the fetch to this behavior.'
+
+detection:
+  scope: >-
+    Detection spans the planted message at rest, its retrieval into an assistant's context, the
+    generated output, and any follow-on fetch. The one materially available strategy correlates an
+    AI-runtime retrieval of injection-like content with an output exposing data outside the message
+    author's access and with workspace audit of the boundary crossing, because no single stream
+    carries the whole path.
+  outcome_guardrails: >-
+    A channel post establishes a message exists, not that it was read. A prompt or retrieval log
+    establishes the assistant ran and may name the retrieved object, not that data crossed a boundary.
+    An output DLP hit establishes exposure, not the injecting message. A follow-on DNS or network
+    event establishes an outbound fetch, not that it carried the exposed data. These stay distinct.
+  shared_normalization_context: >-
+    Canonicalise the retrieved object to a message id and channel id, classify the output against the
+    requesting user's and the message author's access, and treat injection-like imperative text as a
+    content class rather than matching literal payload strings.
+  shared_enrichment_context: >-
+    Join AI-runtime retrieval and output, Slack channel membership and audit, and output DLP on
+    conversation id, message id, channel id, and user id. A rolling 30-day access history per user,
+    channel, and data source helps prioritise, but proof that the author lacked access to the exposed
+    resource plus an output DLP hit is meaningful without a long baseline.
+  strategies:
+    - id: 'STRAT-RETRIEVAL-EXPOSURE-CORRELATION'
+      name: 'cross-source retrieval-to-exposure correlation'
+      objective: >-
+        Detect an AI-mediated exposure where an assistant retrieves an injection-bearing workspace
+        message and outputs data the message author could not access.
+      incident_relevance: >-
+        Detects the demonstrated outcome, private content surfaced through a retrieved public-channel
+        message. A retrieval alone, or an output alone, does not establish the behavior; the join does.
+      detection_logic: >-
+        Correlate a retrieval of a workspace message containing injection-like instructions with an
+        output DLP hit for data unavailable to the message author, and require Slack permission or
+        audit evidence of a channel-boundary crossing. Normalise the retrieved object to a message and
+        channel id and classify the exposed data against the author's access. Raise when all three
+        align within the correlation window; report a weaker suspected finding when only two do.
+      minimum_evidence: >-
+        An AI-runtime retrieval or tool event naming the retrieved workspace object and an output
+        carrying data the message author cannot access, joined on user and conversation. Without the
+        access-boundary evidence, report a suspected AI-mediated exposure, not a confirmed injection.
+      correlation_context: >-
+        Correlate on conversation id, retrieval URI or message id, Slack channel id, and user id
+        within up to fifteen minutes, with an explicit maximum gap of ten minutes, against a rolling
+        thirty-day access history. Concurrent unrelated retrievals on one session weaken attribution.
+      detectors:
+        - detector_class: 'ai-runtime-and-saas-correlation'
+          technologies:
+            - 'Splunk'
+            - 'Elastic'
+            - 'Microsoft Sentinel'
+            - 'Google SecOps'
+          contribution: 'Joins the AI-runtime retrieval and output to Slack audit and access on shared keys.'
+          limitations: 'Depends on AI-runtime telemetry being enabled and on retrieval provenance being derivable.'
+        - detector_class: 'content-and-access-classification'
+          technologies:
+            - 'Output DLP / data classifiers'
+            - 'Content classifier, embedding, or LLM judge'
+          contribution: 'Classifies injection-like input and flags output data outside the author''s access.'
+          limitations: 'Classifier error on both sides; imperative text is common in benign messages.'
+      benign_explanations:
+        - explanation: >-
+            Shared-channel assistants and legitimate cross-channel summaries routinely surface content
+            from multiple channels for a user who can read all of them.
+          distinguishing_context: >-
+            Proof that the message author lacked access to the exposed resource, plus an output DLP
+            hit, separates the malicious case; channel-crossing under the user's own access does not.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding all cross-channel summaries to cut noise would also suppress the injection, which
+            presents as a cross-channel summary.
+      blind_spots:
+        - description: 'Missing telemetry: no platform emits a retrieval-provenance event naming the untrusted message.'
+          routes_to: null
+        - description: 'Missing telemetry: Slack audit carries no message content and no assistant-read action.'
+          routes_to: null
+        - description: 'Attribution limit: M365 Copilot XPIA/jailbreak flags were not found on the fetched schema and cannot be relied on.'
+          routes_to: null
+      analyst_response: >-
+        Identify the assistant session and the retrieved workspace objects, determine whether the
+        output carried data outside the message author's access, pull Slack channel membership and
+        audit for the boundary crossing, inspect the retrieved message for injection-like text, and
+        check egress/DNS for any follow-on fetch.
+      safe_conclusion: >-
+        An assistant surfaced data across an access boundary after retrieving a workspace message;
+        attributing it to a planted injection requires the retrieval-to-message and access join.
+
+detector_requirements:
+  required: >-
+    Enabled AI-runtime prompt and tool telemetry on the deployed assistant; canonicalisation of the
+    retrieved object to a message and channel id; classification of the output against the requesting
+    user's and message author's access; a join across AI-runtime, Slack audit/membership, and output
+    DLP on user and conversation keys; retention of access history long enough to establish the
+    author's lack of access; and outcome-aware alert text separating a suspected exposure from a
+    confirmed injection.
+  optional: >-
+    Output DLP and an LLM-judge classifier improve precision on the exposure and injection sides
+    respectively, and a per-user access baseline speeds triage, but none gates the core correlation.
+  correlation:
+    capability: >-
+      Aligned clocks across AI-runtime, Slack audit, and DLP streams; stable message, channel, and
+      conversation identifiers carried end to end; and per-user access data to establish that the
+      message author could not reach the exposed resource.
+    window: 'Up to fifteen minutes from retrieval to exposure, with an explicit maximum gap of ten minutes.'
+  baselines:
+    - name: 'Per-user, per-channel, per-data-source access history'
+      window: '30-day rolling'
+      seeded_from: >-
+        Workspace membership and access records; never seeded from the assistant's own retrievals,
+        which would enrol an injected cross-boundary read as normal.
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on deployed
+    sensors, enabled logging, retained fields, and architecture. For this object, verification
+    specifically means confirming that the deployed assistant's prompt and tool telemetry is enabled
+    and exported, that Slack audit and output DLP are available, and that retrieval provenance can be
+    derived, since no platform emits a native event naming the untrusted message.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of the behavior; the cited research page is undated in the catalog.'
+    - 'Whether M365 Copilot emits XPIADetected or per-message JailbreakDetected; not found on the fetched schema pages.'
+    - 'Retention for the Purview Copilot interaction audit records; not stated on the fetched pages.'
+    - 'The exact retrieval and tool call path each deployed assistant emits for a grounded message read.'
+  assumptions:
+    - id: 'ASSUMPTION-INJECTION-MECHANISM'
+      verdict_changing: true
+      statement: >-
+        The private content surfaced because the model followed instructions embedded in the retrieved
+        public-channel message, rather than being surfaced coincidentally by normal retrieval. The
+        source demonstrates the outcome and the hidden citation but publishes no model-internal trace;
+        this pack inferred the indirect-prompt-injection mechanism from the demonstration, which is
+        reasoning from the outcome to the mechanism. If wrong, the injection-like-content predicate is
+        not the right signal and the detectable scope shifts to generic over-broad retrieval. Resolve
+        it by reproducing the disclosure in a lab and recording whether removing the imperative text
+        from the message stops the cross-boundary surfacing.
+  standing_negatives:
+    - statement: >-
+        The Slack Audit Logs API records no message content and no AI, assistant, or message-read
+        action: the fetched page states the API does not enable monitoring of message content and
+        lists only login, file, emoji, and channel-create actions.
+      ref: 'REF-SLACK-AUDIT'
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the Slack Audit Logs API documentation for a newly documented AI/assistant or
+        message-read action, or a message-content monitoring capability.
+
+missing_states:
+  - id: 'MISSING_RETRIEVAL_PROVENANCE'
+    meaning: 'Missing telemetry: no platform emits an event naming the untrusted message that entered context.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Derive provenance by joining tool or file-access telemetry to the workspace object identity;
+      do not claim which message was the injection from a prompt log alone.
+  - id: 'MISSING_AI_RUNTIME_TELEMETRY'
+    meaning: 'Missing telemetry: the deployed assistant exports no prompt or tool text, or none at all.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Fall back to workspace audit and DLP for the boundary crossing and report a suspected exposure
+      at most; do not claim an injection was followed.
+  - id: 'SLACK_AUDIT_NO_MESSAGE_CONTENT'
+    meaning: 'Missing telemetry: Slack audit carries no message body and no assistant-read action.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Use Slack audit only to corroborate actor, channel, and boundary crossing; recover message
+      content and the read from AI-runtime or DLP telemetry, not from the audit log.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'actor_or_explicit_missing_state'
+    - 'retrieving_user_and_assistant_session'
+    - 'retrieved_message_and_channel_identity'
+    - 'exposed_data_and_author_access_gap'
+    - 'observed_output_or_dlp_decision'
+    - 'boundary_crossing_audit_evidence'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'outbound_fetch_destination'
+      condition: 'when the injection triggers an outbound request captured in egress or endpoint telemetry'
+  recommended_title: 'Assistant surfaced data across a channel boundary after retrieving an injection-bearing message'
+  unsupported_title: 'Attacker exfiltrated all private Slack data through prompt injection'
+
+evidence:
+  confirmed_incident_behavior: >-
+    PromptArmor reports that a message placed in a public Slack channel made Slack AI surface
+    private-channel content and that the displayed citation referenced only the private channel,
+    hiding the attacker's instruction-bearing message from the victim. That this occurred as an
+    indirect prompt injection the model acted on at retrieval time, rather than a coincidental
+    surfacing, is this pack's reading of the demonstration, registered in missing_context.assumptions,
+    not a model-internal trace the source publishes.
+  supported_conclusion: >-
+    The evidence supports that a readable workspace message can steer a retrieval-augmented assistant
+    into surfacing data across the message author's access boundary, demonstrated against Slack AI as
+    responsible disclosure. The behavior is detectable where an AI-runtime retrieval of injection-like
+    content is correlated with an output exposing otherwise-inaccessible data and with audit of the
+    boundary crossing, and reportable as a suspected exposure from partial evidence.
+  unsupported_conclusions: >-
+    The evidence does not establish in-the-wild use, a threat actor, the number of affected tenants
+    or users, or any exfiltration beyond the demonstrated in-UI disclosure. Onward network
+    exfiltration, persistence, or account compromise require telemetry not carried by the cited source.
+  procedure_boundary: >-
+    This procedure is the planting of an instruction-bearing message and the assistant acting on it
+    to expose data across the author's access boundary. Any downstream exfiltration channel,
+    credential theft, or follow-on automation is a separate behavior and is not evidenced by the
+    disclosure itself.
+  references:
+    - id: 'REF-THREAT-PROMPTARMOR'
+      type: 'incident-procedure-primary-source'
+      title: 'Data Exfiltration from Slack AI via indirect prompt injection'
+      publisher: 'PromptArmor'
+      url: 'https://www.promptarmor.com/resources/data-exfiltration-from-slack-ai-via-indirect-prompt-injection'
+      trust_tier: 'researcher'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary procedure-level source for the injected public-channel message, the surfaced
+        private-channel content, and the hiding citation. It does not document in-the-wild use, a
+        victim count, or the model-internal mechanism.
+    - id: 'REF-THREAT-THEREGISTER'
+      type: 'incident-campaign-secondary-source'
+      title: 'Slack AI can be tricked into leaking data from private channels'
+      publisher: 'The Register'
+      url: 'https://www.theregister.com/2024/08/21/slack_ai_prompt_injection/'
+      trust_tier: 'news'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        News-tier corroboration of the disclosure and its August 2024 timing; supports the
+        first-observed year, not any telemetry claim.
+    - id: 'REF-CLAUDE-OTEL'
+      type: 'telemetry-documentation'
+      title: 'Monitoring usage with OpenTelemetry (Claude Code)'
+      publisher: 'Anthropic'
+      url: 'https://code.claude.com/docs/en/monitoring-usage'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the claude_code.user_prompt and claude_code.tool_result events and their enablement
+        flags used by the AI-runtime telemetry source; supports no incident fact.
+    - id: 'REF-M365-COPILOT-SCHEMA'
+      type: 'telemetry-documentation'
+      title: 'Office 365 Management API Copilot schema'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/office/office-365-management-api/copilot-schema'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents CopilotInteractionAuditRecord and AccessedResources used by the Copilot telemetry
+        source, and the absence of prompt/response text in the record.
+    - id: 'REF-SLACK-AUDIT'
+      type: 'telemetry-documentation'
+      title: 'Slack Audit Logs API'
+      publisher: 'Slack'
+      url: 'https://docs.slack.dev/admins/audit-logs-api/'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the actor/action/entity/context shape and attests that the API does not monitor
+        message content and lists no AI or message-read action; supports the standing negative.

@@ -1,0 +1,583 @@
+identity:
+  uuid: '94e6b7ba-9ecb-4987-b844-37f22bac05b4'
+  id: 'DT-AAG1-AI-028'
+  aliases:
+    - 'P63'
+  name: 'A code-interpreter sandbox sends data-bearing DNS queries through its allowed resolver'
+  incident: >-
+    AWS sandbox network-isolation bypass, a responsibly disclosed proof-of-concept reported by
+    Unit 42 in which a code-interpreter sandbox reaches an external receiver by encoding data into
+    DNS queries sent through the resolver the sandbox is permitted to use.
+  first_observed: '2025'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'application-ai-platform'
+  secondary_attack_surfaces:
+    - 'name-resolution-path'
+    - 'egress-control'
+  behavior_classes:
+    - 'exfiltration'
+    - 'containment-boundary-crossing'
+  tags:
+    - 'ai'
+    - 'code-interpreter'
+    - 'dns-exfiltration'
+    - 'sandbox'
+    - 'data-exfiltration'
+
+behavior:
+  definition: >-
+    An agent code-interpreter sandbox sends data-bearing DNS queries through a resolver allowed by
+    the sandbox, creating a DNS-only outbound channel.
+  detailed_definition: >-
+    An adversary running code inside a network-isolated interpreter sandbox encodes data into the
+    labels of DNS queries and emits them to a resolver the sandbox is still permitted to reach.
+    Because name resolution is allowed while general egress is blocked, the queries cross the
+    isolation boundary and carry data to any authoritative server the attacker controls for the
+    queried zone. The attempt is the emission of data-bearing queries; success is the receiver
+    reconstructing the encoded data. It is independent of which sandbox platform, resolver, or
+    encoding scheme is used, and is not proven by the DNS event alone.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers a sandbox emitting data-bearing DNS through an allowed resolver and the channel that
+      creates; it does not cover proof that a receiver reconstructed the data, which the DNS record
+      alone does not establish.
+    summary: >-
+      This can occur where a code interpreter runs attacker-influenced code, general outbound network
+      access is restricted but DNS resolution through an allowed resolver is not, and the attacker
+      controls, or can query, an external zone. It requires only that the sandbox issue queries whose
+      names encode data to a zone that routes to the attacker.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Observable where DNS resolver query logging is enabled and retained, because the data-bearing
+      qname appears in resolver logs; not observable from any AI or agent platform, which emits no
+      DNS-level record, and attribution to a specific sandbox session needs a derived identity join.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          Resolver query logging (Route 53 Resolver, Cloud DNS) must be enabled, and Vertex AI Data
+          Access logs that would prove an execution occurred are off by default and require a
+          privileged log-reader role; without enablement neither the qname nor the execution is
+          recorded.
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          The deciding evidence lives in resolver logs, which many estates do not collect for the
+          VPC or network the sandbox uses; where absent, the channel leaves no record.
+      - condition: 'cross-source-join-required'
+        note: >-
+          Tying a resolver record to a specific sandbox session requires a source-identity mapping
+          (srcaddr/srcids or sourceIP to session) that no product documents.
+    summary: >-
+      The behavior is observable when resolver query logs capture the qname, query rate, and label
+      content of queries from the sandbox's network, ideally joined to the sandbox session by source
+      address or identity. A DNS event alone shows queries were made; without label-length and
+      entropy analysis and a source-identity join it does not establish a data-bearing channel from a
+      specific sandbox. No AI platform record carries the qname, so resolver telemetry is the only
+      primary evidence.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Separable from benign DNS where long or high-entropy labels, elevated unique-query rates, and
+      unexpected external zones from a sandbox source are analysed together; benign high-entropy DNS
+      (CDN, telemetry, some security products) overlaps and must not be excluded blindly.
+    blocking_conditions:
+      - condition: 'cross-source-join-required'
+        note: >-
+          Distinguishing sandbox exfiltration from ordinary VPC DNS needs the resolver record joined
+          to the sandbox source identity; neither stream separates them alone.
+      - condition: 'below-alerting-signal-strength'
+        note: >-
+          Low-and-slow data-bearing queries interleaved with normal resolution can sit under any
+          per-window rate or entropy threshold and not clear an alerting bar.
+    summary: >-
+      Separation rests on treating label length, character entropy, unique-query rate, and
+      destination-zone novelty as one class of features over queries attributed to a sandbox source,
+      rather than matching any single query. Benign services also emit long encoded labels, so the
+      discriminator is the combination plus the sandbox origin; a single long qname, or a rate spike
+      with no source attribution, is too weak to establish the behavior.
+
+attack_surface_context:
+  surface: >-
+    An agent code-interpreter sandbox (e.g. Vertex AI sandbox environments, Bedrock AgentCore code
+    interpreter, or a local agent shell) and the DNS resolver it is permitted to reach under network
+    isolation.
+  how_the_surface_works: >-
+    A code interpreter runs model- or user-supplied code in an isolated environment that restricts
+    general outbound network access. Name resolution is typically still permitted through a
+    designated resolver so that the environment can function; the sandbox emits DNS queries to that
+    resolver, which forwards them toward the authoritative servers for the queried zones.
+  incident_processing_path: >-
+    Unit 42 reports (source-attested) that a code-interpreter sandbox under AWS network-isolation
+    mode can still reach an external receiver by sending data encoded in DNS queries through the
+    allowed resolver, bypassing the intended isolation. That the deciding evidence is the qname
+    captured in resolver query logs, rather than any platform execution record, is this pack's
+    reading of the available telemetry, since the platforms emit no DNS-level field.
+  processing_stages:
+    - 'attacker-influenced-code-runs-in-sandbox'
+    - 'data-encoded-into-dns-labels'
+    - 'query-sent-to-allowed-resolver'
+    - 'resolver-forwards-to-authoritative-zone'
+    - 'attacker-controlled-nameserver-receives'
+    - 'receiver-reconstructs-data'
+  stage_evidence: >-
+    A platform execution record proves only that the interpreter ran, not what it sent; the resolver
+    log at the query-sent stage is the first and only stage that carries the encoded labels. Nothing
+    downstream of the resolver is visible to the defender unless they control the zone, so the
+    reconstruction stage is unobservable from estate telemetry.
+  trust_boundaries: >-
+    Sandbox network isolation into the wider network (crossed in the PoC via the allowed resolver);
+    resolver into the external authoritative zone (crossed: queries are forwarded outward). Whether a
+    receiver reconstructed the data is not established by estate telemetry and is treated as the
+    unverified success half.
+  security_control_context: >-
+    Network isolation is the preventive control: it blocks general egress while permitting DNS to a
+    designated resolver so the environment works. It decides at the network layer and, by design,
+    lets DNS through, so it neither blocks nor records the channel. Bypass representations include
+    encoding data in subdomain labels, spreading data across many low-rate queries, and using a zone
+    the resolver will happily forward to.
+  practitioner_implication: >-
+    An implementer must discover which sandbox platform runs the interpreter and whether it emits any
+    execution record (Vertex Data Access is off by default; AgentCore console logs are absent from
+    CloudWatch), whether resolver query logging is enabled for the VPC or network the sandbox uses,
+    and how a resolver source address or identity maps back to a sandbox session, since that mapping
+    is not natively documented.
+
+threat_research:
+  why_it_matters: >-
+    A DNS-only channel defeats the point of running untrusted code in a network-isolated sandbox: it
+    lets an attacker move data out of an environment that was specifically built to contain it, using
+    the one protocol the isolation must leave open.
+  threat_actor: >-
+    Unknown; the behavior was demonstrated by Unit 42 researchers as a responsibly disclosed
+    proof-of-concept, with no in-the-wild actor attributed.
+  campaign: >-
+    Unit 42 research disclosure of an AWS sandbox network-isolation bypass via data-bearing DNS; no
+    named campaign or victim organization.
+  victim: >-
+    Operators of agent code-interpreter sandboxes that permit DNS resolution under network isolation;
+    the source demonstrates the class rather than naming a compromised organization.
+  capability: >-
+    A demonstrated proof-of-concept that a network-isolated code-interpreter sandbox can exfiltrate
+    data by encoding it into DNS queries sent through the allowed resolver; the source shows the
+    channel, not a measured volume of exfiltrated data in production.
+  target: >-
+    The name-resolution path left open by sandbox network isolation; targeted and demonstrated in a
+    PoC, with real-world exploitation neither claimed nor evidenced.
+  victimology:
+    - 'Platforms that run agent-generated code in network-isolated interpreters with DNS still allowed.'
+    - 'Environments that permit resolution to arbitrary external zones from the sandbox network.'
+
+visibility:
+  telemetry_sources:
+    - source: 'DNS resolver query logs (AWS Route 53 Resolver, Google Cloud DNS)'
+      purpose: >-
+        Carry the data-bearing qname, query rate, and destination zone, the only primary evidence of
+        the channel.
+      event_vocabulary: 'dns-resolver-record'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'query_name / queryName (the queried label, where data is encoded)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-ROUTE53-RESOLVER'
+          load_bearing: true
+          note: 'Carries the encoded labels; label length and entropy are derived from it.'
+        - name: 'srcaddr / srcids{instance,resolver_endpoint} / sourceIP, source_type'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-ROUTE53-RESOLVER'
+          load_bearing: true
+          note: 'Source attribution to a VPC or instance; mapping to a sandbox session is derived, not native.'
+        - name: 'rdata (truncated to 260 bytes on Cloud DNS), rcode, query_type'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CLOUDDNS'
+          load_bearing: false
+          note: 'Cloud DNS truncates rdata at 260 bytes, bounding any response-side reconstruction.'
+      details: >-
+        Route 53 Resolver query logs record query_name, query_type, rcode, rdata, srcaddr, srcport,
+        transport, and srcids; Cloud DNS records queryName, queryType, sourceIP, source_type,
+        responseCode, and truncated rdata. These are the label-level evidence of data-bearing qnames.
+      limitations:
+        - 'Off unless resolver query logging is explicitly enabled for the network.'
+        - 'Source fields attribute to a VPC or instance, not natively to a sandbox session.'
+        - 'Cloud DNS truncates rdata at 260 bytes, limiting response-side evidence.'
+    - source: 'Google Cloud Vertex AI sandbox audit (Data Access)'
+      purpose: 'Establish that a sandbox execution occurred, where Data Access logging is enabled.'
+      event_vocabulary: 'cloud-management-event'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'sandboxEnvironments.execute (DATA_WRITE); sandboxEnvironments.get/.list (ADMIN_READ)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-VERTEX-AUDIT'
+          load_bearing: false
+          note: 'Proves an execution occurred, not the code run or the network activity.'
+      details: >-
+        sandboxEnvironments.execute is an audited Data Access DATA_WRITE method; all Data Access
+        categories are disabled by default and require explicit enablement and a privileged
+        log-reader role to read.
+      limitations:
+        - 'Data Access logs are off by default and require a privileged role to read.'
+        - 'Records that an execution occurred, not the code or any DNS activity.'
+    - source: 'AWS Bedrock AgentCore code interpreter and runtime telemetry'
+      purpose: 'Establish invocation-level activity where the interpreter runs on AgentCore.'
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'code-interpreter execution console logs (documented absent in CloudWatch)'
+          attestation: 'vendor-attested-absent'
+          attestation_ref: 'REF-AGENTCORE-OBS'
+          load_bearing: false
+          note: 'The page states execution console logs are not available in CloudWatch; stdout/stderr return per invocation instead.'
+      details: >-
+        AgentCore exposes CloudWatch metrics only (session counts, duration, invocations, latency,
+        throttles, user/system errors); when the interpreter runs inside a runtime, logs and spans
+        land in per-runtime log groups under the bedrock-agentcore runtimes path.
+      limitations:
+        - 'Execution console logs are documented as not available in CloudWatch.'
+        - 'Metrics carry no qname, no code text, and no network activity.'
+    - source: 'Host DNS and process telemetry (Sysmon, endpoint) for local sandboxes'
+      purpose: 'Attribute DNS queries and the issuing command where the sandbox is a local process.'
+      event_vocabulary: 'host-process-event'
+      tier: 'request'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'Sysmon 22 (DnsQuery) QueryName; Claude Code claude_code.tool_result Bash full_command'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-SYSMON'
+          load_bearing: false
+          note: 'Claude Code full_command requires OTEL_LOG_TOOL_DETAILS=1 and shows the command that issued the lookups for a local agent shell.'
+      details: >-
+        Sysmon event 22 (DnsQuery) or endpoint network events give host-level DNS attribution where
+        the sandbox is a local process; Claude Code OTel can surface the issuing Bash command under a
+        tool-detail flag.
+      limitations:
+        - 'Applies only where the sandbox runs as an instrumented local process.'
+        - 'Claude Code command capture requires OTEL_LOG_TOOL_DETAILS=1 and is not a resolver-level record.'
+
+detection:
+  scope: >-
+    The observable path runs from sandbox execution, through data-bearing DNS emission, to a resolver
+    that forwards it outward. Two materially distinct strategies divide coverage: one analyses
+    resolver query logs directly for data-bearing labels and rates, and one correlates a sandbox
+    execution record with the resolver traffic to attribute the channel to a specific session.
+  outcome_guardrails: >-
+    A resolver record establishes that data-bearing queries were emitted, not that a receiver
+    reconstructed the data. A platform execution record establishes that the interpreter ran, not
+    what it sent. "Data-bearing DNS observed" and "data exfiltrated" are different claims and must
+    stay distinct.
+  shared_normalization_context: >-
+    Compute per-query label length and character entropy, per-source unique-query rate over a window,
+    and destination-zone novelty; treat these as one feature class rather than matching literal
+    labels, and canonicalize the sandbox source by resolver source address or identity.
+  shared_enrichment_context: >-
+    Join resolver records to a sandbox session via source address or identity where a mapping exists,
+    and to any platform execution record on time and source. A baseline of normal resolved zones and
+    query rates per sandbox network helps prioritise but is not required to flag a clear data-bearing
+    burst.
+  strategies:
+    - id: 'STRAT-DNS-DATA-EXFIL'
+      name: 'sandbox DNS data-bearing channel'
+      objective: >-
+        Detect long or high-entropy or encoded subdomains, elevated unique-query rates, and
+        unexpected external zones originating from a code-interpreter sandbox source.
+      incident_relevance: >-
+        Detects the channel the PoC demonstrated, from its only primary evidence. A positive
+        establishes a data-bearing channel, not that a receiver reconstructed the data.
+      detection_logic: >-
+        From resolver query logs scoped to the sandbox network, raise when queries from a sandbox
+        source combine long or high-entropy labels, an elevated unique-query rate, and destination
+        zones outside an expected set. Treat the feature combination as the predicate, not any single
+        query. Do not exclude a source solely because some benign services also emit encoded labels;
+        require the origin plus the feature combination.
+      minimum_evidence: >-
+        Resolver records from a sandbox source showing data-bearing labels and an anomalous rate or
+        novel zone. Without a source-to-session mapping, report a data-bearing DNS channel from a
+        network source, not from a named sandbox session.
+      correlation_context: >-
+        Correlate queries over a rolling window by resolver source address or identity; attribution
+        to a sandbox session depends on a source-identity mapping that is derived, not native.
+      detectors:
+        - detector_class: 'dns-resolver-log-analytics'
+          technologies:
+            - 'AWS Route 53 Resolver query logs'
+            - 'Google Cloud DNS query logging'
+            - 'SIEM DNS analytics (Splunk, Elastic, Microsoft Sentinel, Google SecOps)'
+          contribution: 'Carries the qname, rate, and zone needed to flag a data-bearing channel.'
+          limitations: 'Requires resolver logging enabled; attributes to a VPC or source, not natively a session.'
+      benign_explanations:
+        - explanation: >-
+            Content delivery, telemetry, and some security products legitimately emit long,
+            high-entropy DNS labels and high query rates.
+          distinguishing_context: >-
+            A sandbox source resolving a novel external zone with encoded labels separates the
+            suspicious case; a known service on a known zone does not.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding all long or high-entropy labels to cut CDN noise also suppresses the exfil
+            channel, which is built from exactly those labels.
+      blind_spots:
+        - description: 'Missing telemetry: no resolver query logging enabled for the sandbox network.'
+          routes_to: null
+        - description: 'Evasion: low-and-slow queries interleaved with normal resolution sitting under rate thresholds.'
+          routes_to: null
+        - description: 'Attribution limit: resolver source maps to a VPC or instance, not a sandbox session.'
+          routes_to: null
+      analyst_response: >-
+        Pull the sandbox-source queries, examine label length, entropy, rate, and destination zones,
+        determine whether the zone is attacker-associated, map the source to a sandbox session where
+        possible, and scope the volume and duration of the channel.
+      safe_conclusion: >-
+        A code-interpreter sandbox source emitted data-bearing DNS queries; receiver reconstruction
+        or exfiltration is not proven by the DNS event alone.
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: >-
+          No source or estate rate is available; volume depends on the sandbox DNS baseline and the
+          entropy and rate thresholds chosen.
+    - id: 'STRAT-EXEC-TO-DNS-CORRELATION'
+      name: 'sandbox execution to resolver correlation'
+      objective: >-
+        Tie a sandbox execution record to the resolver traffic it produced, attributing a data-bearing
+        channel to a specific interpreter session.
+      incident_relevance: >-
+        Strengthens attribution of the demonstrated channel to a session; it does not detect the
+        channel independently and depends on the platform execution record being enabled.
+      detection_logic: >-
+        Where a platform emits an execution record (Vertex sandboxEnvironments.execute) or a local
+        agent shell logs the issuing command, correlate it in time and source with resolver
+        data-bearing queries, and raise when an execution is followed by anomalous DNS from the same
+        source. Use the platform record for session identity that resolver logs lack.
+      minimum_evidence: >-
+        An execution record correlated in time and source with data-bearing resolver queries. Without
+        the execution record, fall back to the resolver-only strategy and mark session attribution as
+        unavailable.
+      correlation_context: >-
+        Correlate on aligned clocks and a shared source or identity between the platform record and
+        the resolver log within a bounded window; concurrent sandbox sessions on one source weaken
+        attribution.
+      detectors:
+        - detector_class: 'ai-platform-and-dns-correlation'
+          technologies:
+            - 'Vertex AI Data Access audit logs'
+            - 'AWS Bedrock AgentCore runtime logs and spans'
+            - 'Anthropic Claude Code OTel (Bash full_command)'
+            - 'DNS resolver query logs'
+          contribution: 'Supplies session identity to attribute resolver traffic to a specific execution.'
+          limitations: 'Platform records are off by default or absent (AgentCore console logs); no native join key exists.'
+      benign_explanations:
+        - explanation: >-
+            A sandbox execution that legitimately resolves external services will show DNS shortly
+            after the execution record.
+          distinguishing_context: >-
+            Data-bearing labels and novel zones after the execution separate the suspicious case;
+            ordinary resolution of known services does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Correlating on execution time alone without the DNS feature class would alert on every
+            network-using execution.
+      blind_spots:
+        - description: 'Missing telemetry: Vertex Data Access off by default and AgentCore console logs absent from CloudWatch.'
+          routes_to: null
+        - description: 'Attribution limit: no native key joins a platform execution to a resolver record.'
+          routes_to: null
+      analyst_response: >-
+        Retrieve the execution record and the correlated resolver queries, confirm the source and
+        timing align, assess the DNS features, and determine which interpreter session emitted the
+        channel.
+      safe_conclusion: >-
+        A specific sandbox execution correlates with data-bearing DNS from the same source; the join
+        is inferred from time and source and the exfiltration outcome remains unproven.
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: 'Depends on whether platform execution logging is enabled and the correlation window.'
+
+detector_requirements:
+  required: >-
+    Derivation of per-query label length and entropy and per-source unique-query rate; classification
+    of destination zones against an expected set; resolver query logging enabled and retained for the
+    sandbox network; a source-address-or-identity to sandbox-session mapping; and outcome-aware alert
+    text that separates a data-bearing DNS channel from confirmed exfiltration.
+  optional: >-
+    A platform execution record (Vertex Data Access, AgentCore runtime logs, or a local agent shell
+    command log) adds session attribution the resolver logs lack, but it does not gate the
+    resolver-only detection.
+  correlation:
+    capability: >-
+      Aligned clocks between platform and resolver streams, retained resolver logs, a stable source
+      address or identity for the sandbox, and a derived mapping from that source to a session.
+    window: 'A rolling window for rate and entropy aggregation, and a short join window from execution to DNS.'
+  baselines:
+    - name: 'Expected resolved zones and query rates per sandbox network'
+      window: '30-day'
+      seeded_from: >-
+        Observed benign resolution from the sandbox network under normal operation; never seeded from
+        a window containing the incident, which would enrol the exfil zone as expected.
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on deployed
+    sensors, enabled logging, retained fields, and architecture. For this object, verification
+    specifically means confirming that resolver query logging is enabled for the sandbox network and
+    retained, that any platform execution record is enabled (Vertex Data Access is off by default;
+    AgentCore console logs are absent from CloudWatch), and that a source-to-session mapping exists,
+    since no AI platform emits a DNS-level field.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of the behavior; the cited disclosure is undated in the catalog.'
+    - 'Whether any receiver reconstructed exfiltrated data in the PoC or in the wild.'
+    - 'The exact encoding and rate the PoC used, and any evasion against rate or entropy thresholds.'
+    - 'How a resolver source address or identity maps to a sandbox session on each platform.'
+  assumptions:
+    - id: 'ASSUMPTION-RESOLVER-IS-ONLY-PRIMARY-EVIDENCE'
+      verdict_changing: true
+      statement: >-
+        The resolver query log is the only primary evidence of the channel, because no AI or agent
+        platform emits a DNS-level field. The disclosure describes the DNS bypass but names no
+        platform DNS record; this pack inferred from the fetched telemetry that resolver logs are the
+        sole carrier of the qname, which is reasoning from a documentation audit to an evidence claim.
+        If wrong and a platform does emit sandbox DNS, the observable gate understates coverage and a
+        platform-native strategy is missing. Resolve it by re-checking Vertex, AgentCore, and other
+        sandbox platform telemetry references for a documented per-query DNS field.
+  standing_negatives:
+    - statement: >-
+        No AI or agent code-interpreter platform fetched emits DNS-level telemetry: the qname, query
+        rate, label length, and entropy exist only in resolver logs, and AgentCore documents that
+        execution console logs are not available in CloudWatch; the platform pages fetched describe
+        metrics and execution records with no per-query DNS field.
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the Vertex AI audit-logging and Bedrock AgentCore observability documentation for a
+        newly documented sandbox DNS or per-query network field.
+      ref: 'REF-AGENTCORE-OBS'
+
+missing_states:
+  - id: 'MISSING_RESOLVER_QUERY_LOGGING'
+    meaning: 'Missing telemetry: resolver query logging is not enabled for the sandbox network.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Do not claim a data-bearing DNS channel; state that the only primary evidence is uncollected
+      and recommend enabling resolver query logging for the sandbox network.
+  - id: 'MISSING_SANDBOX_SESSION_MAPPING'
+    meaning: 'Attribution gap: a resolver record maps to a VPC or source, not to a sandbox session.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report the data-bearing channel at network-source level and mark the tie to a specific sandbox
+      session as inferred or unavailable.
+  - id: 'MISSING_PLATFORM_EXECUTION_RECORD'
+    meaning: 'Missing telemetry: platform execution logging is off (Vertex Data Access) or absent (AgentCore console logs).'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Fall back to the resolver-only strategy and state that no session-level execution record is
+      available to attribute the channel.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'actor_or_explicit_missing_state'
+    - 'sandbox_source_address_or_identity'
+    - 'sandbox_session_when_mappable_or_explicit_missing_state'
+    - 'queried_names_with_label_length_and_entropy'
+    - 'unique_query_rate_and_destination_zones'
+    - 'platform_execution_record_when_available'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'correlated_execution_session_id'
+      condition: 'when a platform execution record can be joined to the resolver traffic'
+  recommended_title: 'Code-interpreter sandbox emitted data-bearing DNS through its allowed resolver (exfiltration unconfirmed)'
+  unsupported_title: 'Attacker exfiltrated the dataset from the sandbox over DNS'
+
+evidence:
+  confirmed_incident_behavior: >-
+    Unit 42 reports a proof-of-concept in which a code-interpreter sandbox under AWS network-isolation
+    mode reaches an external receiver by encoding data into DNS queries sent through the allowed
+    resolver, bypassing the intended isolation. That resolver query logs are the only primary
+    evidence, because the platforms emit no DNS-level field, is this pack's reading of the fetched
+    telemetry, registered in missing_context.assumptions, not a claim the disclosure makes about
+    logging.
+  supported_conclusion: >-
+    The evidence supports that a network-isolated code-interpreter sandbox can create a data-bearing
+    DNS channel through its allowed resolver, as demonstrated in a responsibly disclosed PoC. A
+    detector can report a data-bearing DNS channel where resolver logging is enabled and, with a
+    session mapping, attribute it to a sandbox; it cannot confirm exfiltration from the DNS event
+    alone.
+  unsupported_conclusions: >-
+    The evidence does not establish that a receiver reconstructed data, a volume exfiltrated, or
+    real-world exploitation. Those require control of the receiving zone or telemetry the source does
+    not carry.
+  procedure_boundary: >-
+    This procedure is the emission of data-bearing DNS from the sandbox through the allowed resolver.
+    Receiver-side reconstruction and any use of the exfiltrated data are separate behaviors and are
+    not evidenced by the queries having been sent.
+  references:
+    - id: 'REF-THREAT-UNIT42'
+      type: 'incident-procedure-primary-source'
+      title: 'Bypass of AWS sandbox network-isolation mode'
+      publisher: 'Palo Alto Networks Unit 42'
+      url: 'https://unit42.paloaltonetworks.com/bypass-of-aws-sandbox-network-isolation-mode/'
+      trust_tier: 'researcher'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary source for the PoC that a network-isolated code-interpreter sandbox can exfiltrate via
+        DNS through the allowed resolver. It does not document reconstruction, a data volume, or
+        real-world exploitation.
+    - id: 'REF-ROUTE53-RESOLVER'
+      type: 'telemetry-documentation'
+      title: 'Route 53 Resolver query log format'
+      publisher: 'Amazon Web Services'
+      url: 'https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resolver-query-logs-format.html'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the query_name, srcaddr, srcids, and related fields used as the primary evidence of
+        data-bearing qnames; supports the resolver telemetry source and its enablement limitation.
+    - id: 'REF-CLOUDDNS'
+      type: 'telemetry-documentation'
+      title: 'Cloud DNS logging and monitoring'
+      publisher: 'Google'
+      url: 'https://cloud.google.com/dns/docs/monitoring'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents queryName, sourceIP, source_type, and rdata truncation at 260 bytes; supports the
+        Cloud DNS fields and the response-side truncation limitation.
+    - id: 'REF-VERTEX-AUDIT'
+      type: 'telemetry-documentation'
+      title: 'Vertex AI audit logging'
+      publisher: 'Google'
+      url: 'https://cloud.google.com/vertex-ai/docs/general/audit-logging'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents sandboxEnvironments.execute as an audited Data Access method disabled by default;
+        supports the execution-record source and its off-by-default limitation, not any incident fact.
+    - id: 'REF-AGENTCORE-OBS'
+      type: 'telemetry-documentation'
+      title: 'AgentCore code interpreter observability'
+      publisher: 'Amazon Web Services'
+      url: 'https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/code-interpreter-observability.html'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Attests that AgentCore exposes CloudWatch metrics only and that execution console logs are not
+        available in CloudWatch; supports the vendor-attested-absent field and the standing negative.
+    - id: 'REF-SYSMON'
+      type: 'telemetry-documentation'
+      title: 'Sysmon event reference'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/sysinternals/downloads/sysmon'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents Sysmon event 22 (DnsQuery) used for host-level DNS attribution where the sandbox is
+        a local process; supports that source only, not the resolver-level evidence.

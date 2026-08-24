@@ -1,0 +1,554 @@
+identity:
+  uuid: 'b8b1b4f9-ed40-41b6-a5e9-2581c4757cdb'
+  id: 'DT-AAG1-AI-013'
+  aliases:
+    - 'P32'
+  name: 'Attackers poison persistent assistant memory to affect later sessions'
+  incident: >-
+    SpAIware (ChatGPT macOS app) and a Gemini long-term-memory attack: responsibly disclosed research
+    in which indirect injection wrote durable instructions into assistant memory that later, unrelated
+    conversations retrieved and acted on.
+  first_observed: '2024'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'application-ai-platform'
+  secondary_attack_surfaces:
+    - 'ai-agent-harness'
+  behavior_classes:
+    - 'persistence'
+    - 'other'
+  behavior_classes_note: >-
+    persistent-memory-poisoning-via-indirect-injection: injected content is saved as durable assistant
+    memory and retrieved by later, unrelated sessions that repeat the attacker's directives, giving
+    cross-session persistence rather than a single-turn compromise.
+  tags:
+    - 'ai'
+    - 'memory-poisoning'
+    - 'prompt-injection'
+    - 'chatgpt'
+    - 'gemini'
+    - 'persistence'
+
+behavior:
+  definition: >-
+    An attacker injects content that is saved as durable assistant memory; unrelated later
+    conversations retrieve the poisoned memory and repeat attacker-directed actions or disclosures.
+  detailed_definition: >-
+    The adversary controls content the assistant reads and induces it to persist attacker directives
+    into durable memory that outlives the session. The boundary crossed is from a single conversation
+    into the assistant's durable state: once written, the directive is retrieved by later sessions the
+    attacker never touched. Possible outcomes range from a benign-looking preference to a standing
+    instruction that exfiltrates every future conversation. The attempt ends when the poisoned memory
+    is written; success begins when a later, unrelated session retrieves it and acts on it. It is
+    independent of assistant platform, whether memory is platform-managed or a local file, and endpoint
+    sensor.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers writing a poisoned directive into durable assistant memory and its retrieval by a later
+      session; does not cover the specific follow-on action the retrieved directive triggers, which
+      varies with what the assistant can then do.
+    summary: >-
+      This can occur when an attacker can place content the assistant reads, the assistant has a
+      durable memory it will write to, and later sessions retrieve that memory into their context. The
+      cross-session effect requires only that a later session retrieve the poisoned record; the
+      demonstrations note that a user interaction is needed to trigger the write, which is why one
+      vendor rated impact low.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      A memory write is observable for local-file memory (filesystem telemetry) and for
+      session-event writes where cloud Data Access logging is on; a platform memory-write on managed
+      services may emit no documented audit record. Later-session retrieval is observable only by
+      joining on session or agent identity.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          Vertex Data Access categories (DATA_READ, DATA_WRITE, ADMIN_READ) are disabled by default and
+          require roles/logging.privateLogViewer to read; AgentCore memory tracing must be enabled at
+          memory-creation time.
+      - condition: 'action-emits-no-record'
+        note: >-
+          A memory *write* audit method is not documented for the platform-managed path: Vertex lists
+          memories.retrieve under DATA_READ and memories.get/list under ADMIN_READ but no
+          memories.create/write under DATA_WRITE, and Purview, Copilot Studio, and Agent 365 document no
+          memory-write event, so the platform-managed write is structurally unrecorded; the local-file
+          and session-event paths are what remain observable.
+      - condition: 'cross-source-join-required'
+        note: >-
+          Tying a poisoned write to a later effect needs the write record joined to later-session tool
+          or output behavior on session and agent identity, since no field links a memory record to the
+          session that consumes it.
+    summary: >-
+      The behavior is observable for the local-file memory path (a DeviceFileEvents or Sysmon 11 write
+      to files such as ~/.claude/projects, with SHA256 before and after) and for session-event writes
+      where cloud Data Access logging is enabled, joined to later-session behavior. A write with
+      injection-like content establishes the poisoning attempt; a later session repeating the directive
+      establishes the effect. No vendor documents a gen_ai.memory.records or gen_ai.memory.query.text
+      field, and no platform-managed memory-write audit method is documented, so those fields are
+      derived and the write on managed services can be structurally invisible.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Separable from a legitimate durable preference when a write carries injection-like content from
+      an external or untrusted writer and a later unrelated session repeats an attacker-directed action;
+      benign standing instructions overlap and cannot be told apart on the write alone.
+    blocking_conditions:
+      - condition: 'cross-source-join-required'
+        note: >-
+          Separation rests on joining the injection-like memory write to later-session anomalous
+          behavior over a multi-day window; the write content alone does not distinguish a poisoned
+          directive from a durable user instruction.
+    summary: >-
+      Distinguishing poisoning from legitimate memory rests on classifying the written content as
+      injection-like, attributing the writer as external or untrusted, and correlating the record to
+      later, unrelated-session tool or output behavior over a rolling window. An external-carrier write
+      with a semantic injection verdict and repeated later anomalous calls is distinguishable; a benign
+      standing preference, or a write with no observed later effect, is too weak to establish the
+      behavior.
+
+attack_surface_context:
+  surface: >-
+    Assistant durable memory, in two forms: platform-managed memory (ChatGPT memory, Gemini long-term
+    memory, Vertex and AgentCore session/memory stores) and local-file memory (a coding agent's
+    auto-memory directory and instruction files).
+  how_the_surface_works: >-
+    A durable memory captures facts or instructions across sessions. Platform-managed memory is written
+    through a service API and retrieved into later conversations automatically; local-file memory is a
+    directory of markdown files (memory and instruction files) the agent reads at session start. In
+    both, content the assistant reads in one session can be persisted and then surfaces as trusted
+    context in unrelated later sessions, including after the original chat is deleted.
+  incident_processing_path: >-
+    Research reports (source-attested) that SpAIware used indirect injection to write instructions into
+    ChatGPT memory so that all future conversations were sent to an attacker server, that the memories
+    survived chat deletion, and that the issue was fixed in ChatGPT macOS 1.2024.247; and that a
+    poisoned document caused false long-term-memory writes in Gemini, which Google rated low impact
+    because user interaction is required. That the local-file memory path (a coding agent's memory
+    directory) is the same behavior class as the platform-managed cases is this pack's mapping, added
+    because it is the observable path where no memory event exists, not a case the cited sources cover.
+  processing_stages:
+    - 'attacker-content-ingest'
+    - 'session-inference'
+    - 'memory-write-decision'
+    - 'durable-memory-persist'
+    - 'later-session-start'
+    - 'memory-retrieval-into-context'
+    - 'attacker-directed-action-or-disclosure'
+  stage_evidence: >-
+    The stage an instrument sits at fixes what it proves: a write event proves a poisoned record was
+    persisted, not that it was ever used; a retrieval or later tool/output event proves the record
+    influenced a later session; neither alone proves cross-session causation without the identity join.
+  trust_boundaries: >-
+    Untrusted content into the assistant's memory-write path (reached: the injection was persisted);
+    durable memory into an unrelated later session's context (reached: later conversations retrieved and
+    acted on the directive); session isolation, which memory deliberately spans (crossed by design, and
+    survived chat deletion). Whether a user interaction gates the write is platform-specific and, in the
+    Gemini case, was required.
+  security_control_context: >-
+    Preventive controls decide at the write and retrieval boundaries: a memory-write policy or approval
+    can gate what is persisted, an allowed-writers list can reject external carriers, and content
+    classification can flag injection-like text. These log a write decision where the platform emits one,
+    which for the managed-memory path it often does not. Bypass representations include benign-looking
+    preference phrasing, writing through a document the user later opens, and persisting before a fix
+    that only blocks the specific carrier.
+  practitioner_implication: >-
+    An implementer must discover whether memory is platform-managed or a local file, whether the
+    platform emits any memory-write record (often none) and whether Data Access logging is enabled,
+    which local files constitute memory and instructions on the host, and how a later session can be
+    joined to a memory record by session or agent identity, since no field links the two.
+
+threat_research:
+  why_it_matters: >-
+    Poisoned memory converts a single injection into standing persistence: one write can steer every
+    later conversation, surviving chat deletion and needing no further attacker contact, which is far
+    more durable than a single-turn prompt injection.
+  threat_actor: >-
+    Unknown; both are researcher demonstrations (SpAIware by Embrace The Red, the Gemini work reported by
+    InfoQ and Ars Technica) with no in-the-wild actor or group attribution.
+  campaign: >-
+    SpAIware against the ChatGPT macOS app (September 2024) and a Gemini long-term-memory attack
+    (reported February 2025).
+  victim: >-
+    None in the wild; the demonstrations used the researchers' own ChatGPT and Gemini accounts. The
+    exposed class is any assistant with durable memory that persists content read during a session.
+  capability: >-
+    Researchers showed indirect injection writing durable instructions into ChatGPT memory that sent all
+    future conversations to an attacker server and survived chat deletion, and a poisoned document causing
+    false long-term-memory writes in Gemini. The demonstrations establish the write-and-persist-and-retrieve
+    chain; Google rated the Gemini impact low because user interaction is required to trigger the write.
+  target: >-
+    The assistant's durable memory and, through it, every later session, targeted via indirect injection.
+    Reached in the research accounts; the ChatGPT case was fixed in a specific macOS build.
+  victimology:
+    - 'Consumer and enterprise assistants with durable cross-session memory (ChatGPT, Gemini).'
+    - 'Coding agents with local-file auto-memory and instruction files read at session start.'
+
+visibility:
+  telemetry_sources:
+    - source: 'Cloud memory and session audit (Vertex AI Data Access, AgentCore memory logs)'
+      purpose: >-
+        Attribute memory and session reads and writes to a principal and time where Data Access logging
+        is enabled.
+      event_vocabulary: 'cloud-data-event'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'Vertex audited methods (memories.retrieve DATA_READ; sessions.create/update/delete, sessionEvents.append DATA_WRITE; memories.get/list ADMIN_READ)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-VERTEX-AUDIT'
+          load_bearing: true
+          note: >-
+            All three Data Access categories are disabled by default and require
+            roles/logging.privateLogViewer to read; a memories.create or write method is not listed under
+            DATA_WRITE, so the platform-managed memory write itself has no documented audit method.
+      details: >-
+        Vertex records the retrieve and session-event methods above; AgentCore delivers memory logs to a
+        vended log group only after put_delivery_source and put_delivery_destination are configured, and
+        built-in tools emit no logs by default.
+      limitations:
+        - 'Data Access logging is off by default and privileged to read.'
+        - 'No documented memory-write audit method on the managed path.'
+        - 'Purview, Copilot Studio, and Agent 365 document no memory-write event.'
+    - source: 'Agent tracing with message content (Vertex Agent Engine)'
+      purpose: 'Carry the input and output messages so injection-like content in a write can be classified.'
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      details: >-
+        Agent Engine spans expose llm.input_messages, message.role, message.content, output.value, and
+        output.mime_type, enabled by GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY=true plus
+        OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true, with trace ingestion requiring the
+        Telemetry API; Perplexity audit logs carry the full answer text and model.
+      limitations:
+        - 'Message content requires two opt-in flags plus the Telemetry API enabled.'
+        - 'No memory-operation span or gen_ai.memory.* field is documented.'
+    - source: 'Endpoint filesystem telemetry for local-file memory'
+      purpose: >-
+        Record writes and reads of the agent memory and instruction files where no platform memory event
+        exists.
+      event_vocabulary: 'host-process-event'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'DeviceFileEvents (FolderPath, FileName, SHA256, PreviousFileName, InitiatingProcessCommandLine)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-DEFENDER-FILE'
+          load_bearing: true
+          note: >-
+            Sysmon 11 FileCreate is the equivalent; Windows 4663 with a SACL is needed for read access.
+            The monitored paths are the agent auto-memory directory and instruction files (memory
+            markdown plus CLAUDE.md and rule files).
+      details: >-
+        Endpoint file events record the write to the memory directory and instruction files with a SHA256
+        before and after, and DeviceProcessEvents or Sysmon 1 records the writing process lineage.
+      limitations:
+        - 'Requires an endpoint sensor and, for reads, a SACL on the memory paths.'
+        - 'A file write does not prove a later session retrieved it.'
+
+detection:
+  scope: >-
+    Detection spans the poisoned memory write, its persistence, and its retrieval and effect in a later,
+    unrelated session. Two materially distinct strategies divide the path: one flags an injection-like or
+    externally-sourced memory write, and one correlates a memory record to later cross-session anomalous
+    behavior.
+  outcome_guardrails: >-
+    An injection-like write establishes an attempt; a later unrelated session repeating the directive
+    establishes influence; a downstream tool audit establishes the effect. These stay distinct: "poisoned
+    memory written" and "later session acted on it" are different alerts, and a write with no observed
+    later effect must not be reported as cross-session compromise.
+  shared_normalization_context: >-
+    Canonicalize the memory record (writer identity, source URI, content), classify content as
+    injection-like versus a benign preference, and normalize the local-file paths and platform memory ids
+    into one memory-record key.
+  shared_enrichment_context: >-
+    Join the memory record to later-session tool and output behavior on memory record id, agent or user
+    id, source URI, and session id over a rolling multi-day window. An external carrier plus a semantic
+    injection verdict plus repeated later anomalous calls is meaningful; a durable memory history of
+    30 days supports the later join.
+  strategies:
+    - id: 'STRAT-MEMORY-WRITE-PROVENANCE'
+      name: 'memory-write provenance and content'
+      objective: >-
+        Flag a durable memory write whose content is injection-like or whose writer is external or
+        untrusted.
+      incident_relevance: >-
+        Detects the poisoning step the research demonstrated. It establishes that a suspicious record was
+        persisted; it does not by itself establish that a later session used it, which the correlation
+        strategy adds.
+      detection_logic: >-
+        Evaluate each memory write (a Vertex session-event write, an AgentCore memory record, or a
+        local-file memory or instruction change) for injection-like content and for an external or
+        untrusted writer or source URI, and raise when both hold. Associate the finding with the memory
+        record id, writer, and source. Prefer a content classifier over keyword matching, since benign
+        preferences and injected directives share surface form.
+      minimum_evidence: >-
+        A memory write with an injection-like content verdict and an external or untrusted writer or
+        source. Without a later-session join, report attempted memory poisoning, not confirmed
+        cross-session influence.
+      correlation_context: >-
+        Key on memory record id, agent or user id, and source URI. For local-file memory, compare SHA256
+        before and after to isolate the changed record; for the managed path, the write may not be
+        recorded at all.
+      detectors:
+        - detector_class: 'memory-write-content-analytics'
+          technologies:
+            - 'Content classifier / LLM judge over write content'
+            - 'Endpoint file-integrity monitoring (DeviceFileEvents, Sysmon 11)'
+            - 'Cloud Data Access logs (Vertex session events)'
+          contribution: 'Classifies the write content and attributes the writer at the point of persistence.'
+          limitations: 'The managed memory-write is often unrecorded; classification of benign directives overlaps.'
+      benign_explanations:
+        - explanation: >-
+            Users legitimately save durable preferences and standing instructions to assistant memory.
+          distinguishing_context: >-
+            An external carrier or untrusted source URI plus an injection-like verdict separates the
+            poisoned write; a first-party preference from the user does not.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding all durable-instruction writes to cut noise would suppress the poisoned directive,
+            which is written as a durable instruction.
+      blind_spots:
+        - description: 'Missing telemetry: the platform-managed memory write emits no documented audit record.'
+          routes_to: null
+        - description: 'Missing telemetry: no gen_ai.memory.* field exists, so record content is derived from spans or files.'
+          routes_to: null
+        - description: 'Evasion: benign-looking preference phrasing that passes the content classifier.'
+          routes_to: null
+      analyst_response: >-
+        Recover the written record and its source, classify the content, identify the writer and whether
+        it is external, and check whether later sessions retrieved or acted on the record.
+      safe_conclusion: >-
+        A durable memory record was written with injection-like content from an untrusted source; a
+        cross-session effect requires the later-session correlation.
+    - id: 'STRAT-CROSS-SESSION-INFLUENCE-CORRELATION'
+      name: 'cross-session influence correlation'
+      objective: >-
+        Detect a later, unrelated session repeating an attacker-directed action or disclosure traceable to
+        a poisoned memory record.
+      incident_relevance: >-
+        Detects the durable effect the write alone cannot prove, such as SpAIware sending all future
+        conversations to an attacker server. A later anomalous action must be tied to a memory record
+        before it is attributed to this procedure.
+      detection_logic: >-
+        Correlate a memory record flagged by the provenance strategy to later-session tool or output
+        behavior over a rolling multi-day window, keyed on agent or user identity, and raise when unrelated
+        later sessions repeat a directive traceable to the record (for example a standing exfiltration
+        instruction). Apply an explicit maximum gap so an unrelated write and a much later action are not
+        joined by coincidence.
+      minimum_evidence: >-
+        A poisoned memory record plus later-session behavior by the same agent or user that repeats a
+        directive traceable to the record. Without the record linkage, report anomalous later-session
+        behavior, not memory-driven persistence.
+      correlation_context: >-
+        Correlate over a multi-day window with an explicit maximum gap of thirty days on memory record id,
+        agent or user id, and session id. No field links a memory record to the session that consumes it,
+        so the join is by identity and timing and is inferential.
+      detectors:
+        - detector_class: 'cross-session-behavior-correlation'
+          technologies:
+            - 'SIEM stateful correlation with durable lookup or KV state'
+            - 'Risk-based alerting accumulating per memory record and agent'
+          contribution: 'Links a persisted record to later anomalous behavior over a rolling window.'
+          limitations: 'The join is inferential by identity and timing; retrieval itself is not directly recorded.'
+      benign_explanations:
+        - explanation: >-
+            A saved preference legitimately changes behavior in many later sessions, producing repeated
+            downstream actions.
+          distinguishing_context: >-
+            A later action traceable to an externally-sourced injection-like record separates the malicious
+            case; a first-party preference producing consistent behavior does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Treating all repeated later behavior as benign consistency would dismiss the poisoned directive
+            operating exactly as designed.
+      blind_spots:
+        - description: 'Missing telemetry: retrieval of a memory record into a later session is not directly recorded.'
+          routes_to: null
+        - description: 'Attribution limit: no field links a memory record to the consuming session; the join is inferential.'
+          routes_to: null
+      analyst_response: >-
+        Identify the later sessions by the same agent or user, determine which repeat a directive traceable
+        to the flagged record, confirm the downstream tool or output effect, and scope how many sessions the
+        record influenced.
+      safe_conclusion: >-
+        A later, unrelated session repeated a directive traceable to a poisoned memory record; the linkage
+        is inferential by identity and timing, not a recorded retrieval.
+
+detector_requirements:
+  required: >-
+    A memory-write signal (platform Data Access logging, agent tracing with message content, or endpoint
+    file-integrity monitoring of the local memory and instruction files); content classification of writes
+    as injection-like; writer and source attribution; durable retention of a memory history for the
+    later-session join; a join from a memory record to later-session behavior on agent or user identity over
+    a multi-day window; and outcome-aware alert text separating a poisoned write from a confirmed
+    cross-session effect.
+  optional: >-
+    Risk-based alerting that accumulates suspicious write provenance and later cross-session anomalies per
+    memory record and agent raises confidence, but is not required to flag an individual injection-like write.
+  correlation:
+    capability: >-
+      Aligned clocks across the memory-write and later-session streams, a stable memory record id and agent
+      or user identity carried across sessions, and durable state to hold a memory history, since retrieval
+      is not directly recorded.
+    window: 'Multi-day, with an explicit maximum gap of thirty days between the write and the later effect.'
+  baselines:
+    - name: 'Allowed writers and durable memory history'
+      window: '30-day rolling memory history'
+      seeded_from: >-
+        Sanctioned first-party memory writes and known user preferences; never seeded from externally-carried
+        writes, which would enrol the poisoned directive as an approved memory.
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on deployed sensors,
+    enabled logging, retained fields, and architecture. For this object, verification means confirming that
+    some memory-write signal exists at all (Data Access logging enabled, agent tracing with content, or
+    endpoint file monitoring of the memory paths), and that a later session can be joined to a memory record
+    by identity, since no vendor documents a memory-write audit method or a record-to-session link.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of the behavior; SpAIware is dated September 2024 and the Gemini work February 2025, but the catalog fixes no single date.'
+    - 'Whether the local-file memory path, added by this pack, was exercised in any cited demonstration.'
+    - 'The schema, field names, and retention of any platform memory-write record, which is not documented.'
+    - 'How many later sessions each demonstrated poisoning influenced.'
+  assumptions:
+    - id: 'ASSUMPTION-LOCALFILE-SAME-CLASS'
+      verdict_changing: false
+      statement: >-
+        Local-file agent memory (an auto-memory directory and instruction files read at session start) is
+        the same behavior class as the platform-managed ChatGPT and Gemini memory poisoning. The cited
+        sources cover the managed cases only; this pack added the local-file path because it is the
+        observable path where no memory event exists, mapping the managed behavior onto a file surface. If
+        wrong, the local-file detectors target a surface the procedure does not actually cover and the
+        observable scope narrows to the managed path. Resolve it by reproducing an injection that writes a
+        durable instruction into a coding agent's memory file and confirming a later session retrieves it.
+  standing_negatives:
+    - statement: >-
+        No platform-managed memory-write audit method is documented: the pages fetched for the telemetry
+        audit list Vertex memories.retrieve under DATA_READ and memories.get/list under ADMIN_READ but no
+        memories.create/write under DATA_WRITE, and Purview, Copilot Studio, and Agent 365 document no
+        memory-write event.
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the Vertex audit-logging, Purview, and Agent 365 documentation for a newly documented
+        memory-write audit method or memory event.
+
+missing_states:
+  - id: 'MISSING_MEMORY_WRITE_RECORD'
+    meaning: 'Missing telemetry: the platform-managed memory write emits no documented audit record.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Infer the write from local-file monitoring or session-event writes where available, and do not claim
+      a managed-memory write from platform telemetry alone.
+  - id: 'MISSING_RETRIEVAL_EVENT'
+    meaning: 'Missing telemetry: retrieval of a memory record into a later session is not directly recorded.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Join the write to later-session behavior by identity and timing and mark the retrieval linkage
+      inferential, not a recorded event.
+  - id: 'MISSING_MEMORY_CONTENT_FIELD'
+    meaning: 'Missing telemetry: no gen_ai.memory.* field exists to carry the record content or query text.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Derive record content from agent spans or local files and treat the content classification as a
+      derived analytic rather than a native field.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'actor_or_explicit_missing_state'
+    - 'memory_record_id_or_file_path'
+    - 'writer_and_source_provenance'
+    - 'injection_content_verdict'
+    - 'later_session_effect_when_correlated'
+    - 'agent_or_user_identity'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'downstream_tool_or_output_effect'
+      condition: 'when a later unrelated session repeats a directive traceable to the record'
+  recommended_title: 'Injection-like directive written to durable assistant memory from an untrusted source'
+  unsupported_title: 'Attacker permanently controls every future conversation of the victim'
+
+evidence:
+  confirmed_incident_behavior: >-
+    Research reports that SpAIware used indirect injection to write instructions into ChatGPT memory that
+    sent all future conversations to an attacker server, that the memories survived chat deletion, and that
+    the issue was fixed in ChatGPT macOS 1.2024.247; and that a poisoned document caused false
+    long-term-memory writes in Gemini, which Google rated low impact because user interaction is required.
+    That the local-file agent-memory path is the same behavior class is this pack's mapping, registered in
+    missing_context.assumptions, not a case the cited sources cover.
+  supported_conclusion: >-
+    The evidence supports that indirect injection can write durable directives into assistant memory that
+    later, unrelated sessions retrieve and act on, surviving chat deletion. The behavior is detectable where
+    an injection-like, externally-sourced memory write is correlated with later cross-session anomalous
+    behavior, and reportable as attempted memory poisoning from the write alone.
+  unsupported_conclusions: >-
+    The evidence does not establish an in-the-wild victim, the number of later sessions influenced, or that
+    the managed-memory write is recorded anywhere. Beyond the demonstrated exfiltration directive, any
+    specific follow-on action requires downstream telemetry not carried by the cited research.
+  procedure_boundary: >-
+    This procedure is the poisoning of durable memory and its retrieval by a later session. The upstream
+    injection carrier and the specific downstream action the retrieved directive triggers are separate
+    behaviors and are not evidenced by the record having been written.
+  references:
+    - id: 'REF-THREAT-EMBRACETHERED'
+      type: 'incident-procedure-primary-source'
+      title: 'ChatGPT macOS app: persistent data exfiltration (SpAIware)'
+      publisher: 'Embrace The Red'
+      url: 'https://embracethered.com/blog/posts/2024/chatgpt-macos-app-persistent-data-exfiltration/'
+      trust_tier: 'researcher'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary source for SpAIware writing durable instructions into ChatGPT memory, exfiltrating future
+        conversations, surviving chat deletion, and the fixed macOS build. It does not cover the local-file
+        memory path or a production victim.
+    - id: 'REF-THREAT-HACKERNEWS'
+      type: 'incident-campaign-secondary-source'
+      title: 'ChatGPT macOS flaw could have enabled long-term data exfiltration'
+      publisher: 'The Hacker News'
+      url: 'https://thehackernews.com/2024/09/chatgpt-macos-flaw-couldve-enabled-long.html'
+      trust_tier: 'news'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Secondary coverage corroborating the SpAIware memory-poisoning finding and the fix.'
+    - id: 'REF-THREAT-INFOQ'
+      type: 'incident-campaign-secondary-source'
+      title: 'Gemini long-term memory attack'
+      publisher: 'InfoQ'
+      url: 'https://www.infoq.com/news/2025/02/gemini-long-term-memory-attack/'
+      trust_tier: 'news'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Secondary source for the Gemini poisoned-document memory write and Google's low-impact rating
+        because user interaction is required.
+    - id: 'REF-THREAT-ARSTECHNICA'
+      type: 'incident-campaign-secondary-source'
+      title: 'New hack uses prompt injection to corrupt Gemini''s long-term memory'
+      publisher: 'Ars Technica'
+      url: 'https://arstechnica.com/security/2025/02/new-hack-uses-prompt-injection-to-corrupt-geminis-long-term-memory/'
+      trust_tier: 'news'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Secondary coverage corroborating the Gemini long-term-memory corruption via injection.'
+    - id: 'REF-VERTEX-AUDIT'
+      type: 'telemetry-documentation'
+      title: 'Vertex AI audit logging'
+      publisher: 'Google'
+      url: 'https://cloud.google.com/vertex-ai/docs/general/audit-logging'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the audited memory and session methods and their off-by-default Data Access categories,
+        and the absence of a documented memory-write method; supports no incident fact.
+    - id: 'REF-DEFENDER-FILE'
+      type: 'telemetry-documentation'
+      title: 'DeviceFileEvents table (advanced hunting)'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-devicefileevents-table'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the file-write fields used to monitor local-file memory and instruction paths.'

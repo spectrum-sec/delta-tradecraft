@@ -1,0 +1,643 @@
+identity:
+  uuid: '938ed4ad-624f-4741-abe6-33ab5667cab2'
+  id: 'DT-AAG1-AI-006'
+  aliases:
+    - 'P17'
+  name: 'Attackers modify agent configuration or session-start hooks after approval'
+  incident: >-
+    Post-approval modification of Claude Code hooks and agent/MCP configuration, reported by Lord
+    (hook-system weaponisation) and Semgrep (malicious dependency touching agent-relevant config).
+  first_observed: '2026'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'ai-agent-harness'
+  secondary_attack_surfaces:
+    - 'host-filesystem'
+  behavior_classes:
+    - 'persistence'
+    - 'other'
+  behavior_classes_note: >-
+    post-approval-agent-config-and-hook-tampering: a writer changes an already-approved agent, MCP,
+    or session-start-hook configuration after the approval decision, so that later sessions load
+    attacker-chosen settings; the change is the procedure and later execution is corroboration.
+  tags:
+    - 'ai'
+    - 'claude-code'
+    - 'hooks'
+    - 'config-modification'
+    - 'persistence'
+
+behavior:
+  definition: >-
+    An attacker or non-agent process modifies an approved agent/MCP configuration or agent
+    session-start hook after approval, changing what later sessions load; later execution is
+    corroboration, not the procedure.
+  detailed_definition: >-
+    The adversary alters configuration that an agent runtime has already approved and will re-read on
+    a future session: the server list it connects to, the tools it exposes, or the callbacks that run
+    at session start. The boundary crossed is between an approved, trusted configuration state and a
+    silently mutated one; the possible outcomes range from an added auto-starting capability to a
+    hook that runs attacker code the next time the agent launches. The attempt ends when the approved
+    state is overwritten; success begins when a later session loads the mutated state. It is
+    independent of agent product, configuration file format, and endpoint sensor.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers modification of an approved agent/MCP configuration or session-start hook after the
+      approval decision and its effect on later sessions; does not cover the original approval, nor
+      any specific follow-on objective once the mutated configuration executes.
+    summary: >-
+      This can occur when an approved configuration or hook is stored where a process other than the
+      approving one can write it, and the agent re-reads that state at a later session start without
+      re-authorising it. It requires only write access to the configuration surface and a subsequent
+      session load; it needs no privilege escalation, since the agent honours its own approved state.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      A post-approval change is observable where a native agent config-change signal is implemented
+      and shipped, or where endpoint file/process telemetry covers the configuration paths; changes
+      arriving through MDM or a vendor console, and estates without those streams, are not observed.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          Claude Code ConfigChange is a local hook the customer must implement and export, not a
+          shipped OTel event; Cursor records config changes only in a Team/Enterprise audit stream
+          with no stated retention. Without those enablements the change leaves no native record.
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          Host file and process telemetry on the configuration paths exists only where an endpoint
+          sensor is deployed; managed-settings changes from MDM or the vendor console fire no
+          ConfigChange hook, so that path is unrecorded even where the hook is implemented.
+    summary: >-
+      The change is observable when a file-write event names the configuration path with its writer
+      lineage, or when an agent-side config-change event fires and is shipped. A watchlist path
+      appearing in a write event establishes a modification but, without the writer process, not who
+      made it; a native config-change event establishes that the agent noticed a change but, for the
+      MDM/console path, never fires. A later session load alone establishes use of the state, not the
+      modification that produced it.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Separable from a legitimate configuration change when an unexpected or non-agent writer, or the
+      absence of an authorised change record, is correlated with a watchlist configuration path; a
+      sanctioned config-management tool writing the same paths overlaps and must not be excluded by
+      path alone.
+    blocking_conditions:
+      - condition: 'cross-source-join-required'
+        note: >-
+          Separating a malicious post-approval write from a benign one needs the file-modification
+          event joined to writer process lineage and to an authorised-change record; no single agent
+          or file stream names the non-agent writer, so process attribution is EDR-only.
+    summary: >-
+      Separation rests on writer attribution and change provenance, not on the write itself, because
+      legitimate configuration changes touch the same paths. Normalising the configuration surface to
+      a fixed watchlist, attaching the writer process and its parent, and requiring the absence of an
+      authorised change record are what make the modification distinguishable; a path write with no
+      writer lineage, or a change that matches an approved ticket, is too weak to establish the
+      behavior.
+
+attack_surface_context:
+  surface: >-
+    Agent runtime configuration and session-start hooks (e.g. Claude Code settings.json,
+    managed-settings, hooks.json, ~/.claude.json; Cursor team hooks/rules; OpenClaw state/config
+    directories) stored on the host and re-read by the agent at session start.
+  how_the_surface_works: >-
+    An agent reads layered configuration at startup: user, project, and managed settings files, plus
+    a hooks file that binds callbacks to lifecycle events such as SessionStart and PreToolUse. An
+    approval step gates what the agent may load, but the approved state persists as ordinary files
+    the agent re-reads on each later session, so a change written after approval takes effect the
+    next time the agent launches.
+  incident_processing_path: >-
+    Lord reports (source-attested) that Claude Code's hook system can be weaponised so that a
+    session-start or tool-use hook runs attacker-controlled commands, and Semgrep reports
+    (source-attested) a malicious dependency that modifies Claude Code hooks or agent-relevant
+    configuration; Elastic ships a prebuilt rule for GenAI configuration modification, which this
+    pack reads as corroboration that the configuration surface is treated as a monitored target. That
+    the deciding event is a post-approval write by a writer other than the approving user, rather
+    than the later hook execution, is this pack's framing of the procedure, aligned with the source
+    name.
+  processing_stages:
+    - 'config-approval'
+    - 'approved-config-at-rest'
+    - 'post-approval-modification'
+    - 'writer-process-execution'
+    - 'config-persisted'
+    - 'next-session-start'
+    - 'hook-or-config-load'
+    - 'agent-execution-under-modified-config'
+  stage_evidence: >-
+    The stage an event sits at fixes what it can prove: a write event at post-approval-modification
+    proves the state changed and, with writer lineage, who changed it; a config-load event at
+    next-session-start proves the agent consumed the state but not who mutated it; a later tool
+    execution proves the modified configuration ran, not that the modification was unauthorised.
+  trust_boundaries: >-
+    Approving user or agent into the approved configuration state (the boundary the procedure
+    crosses: an unexpected writer overwrites approved state); configuration state into the agent
+    runtime (reached whenever a later session loads it); MDM or vendor console into managed settings
+    (a legitimate write path that fires no local change event and so is unattributed at the agent).
+    The source establishes the weaponisation capability and dependency-driven modification; it does
+    not enumerate victim loads.
+  security_control_context: >-
+    Approval gates decide what the agent may load at approval time and log the decision, but they do
+    not re-authorise the persisted state on later reads, and managed-settings arriving from MDM or
+    the console bypass the local ConfigChange hook entirely. File-integrity monitoring and an
+    authorised-change register decide before load where an estate deploys them. Bypass
+    representations include writing through the sanctioned config-management tooling, editing on the
+    MDM/console path that fires no local event, and modifying a path outside the monitored watchlist.
+  practitioner_implication: >-
+    An implementer must discover which agent products the estate runs and their exact configuration
+    and hook paths, whether the native config-change hook is implemented and its output shipped,
+    whether endpoint telemetry covers those paths, whether managed settings arrive by MDM or console
+    (and so fire no local event), and where the authorised-change record for those paths lives.
+
+threat_research:
+  why_it_matters: >-
+    An approved agent configuration is trusted on every later session, so a single post-approval
+    write converts a one-time approval into standing attacker control: an added MCP server, an
+    exposed tool, or a session-start hook that runs on the next launch, all under the agent's own
+    identity and permissions.
+  threat_actor: >-
+    Unknown as a named group. The reported vectors are a malicious dependency that modifies agent
+    configuration or hooks and demonstrated weaponisation of the hook system; the sources assign no
+    group attribution.
+  campaign: >-
+    Post-approval modification of Claude Code hooks and agent/MCP configuration, reported by Lord and
+    Semgrep and reflected in an Elastic prebuilt configuration-modification rule.
+  victim: >-
+    Developers and agent operators running Claude Code, Cursor, or comparable agents whose approved
+    configuration or hooks can be modified after approval; the sources report the mechanism and
+    dependency vector rather than an enumerated victim set.
+  capability: >-
+    Malware/dependency activity that modifies Claude Code hooks or agent-relevant configuration, and
+    demonstrated weaponisation of the hook system, alongside evidence of approved-MCP post-approval
+    mutation; a modified session-start hook runs on the next agent launch.
+  target: >-
+    The approved configuration and session-start-hook state of coding agents. The sources establish
+    the modification capability and vector; whether specific victim agents loaded a modified state is
+    reported as a mechanism, not an enumerated outcome.
+  victimology:
+    - 'Developer workstations running coding agents that persist approved configuration and hooks.'
+    - 'Teams that distribute agent configuration or dependencies through shared or managed channels.'
+
+visibility:
+  telemetry_sources:
+    - source: 'Claude Code agent-side config-change hook'
+      purpose: >-
+        Signal that the agent detected a change to a monitored settings file after approval, as a
+        first-party callback the customer must implement and export.
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'ConfigChange hook (fires per detected settings-file change)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CC-SETTINGS'
+          load_bearing: true
+          note: >-
+            A local callback, not an exported event; does not fire for managed settings arriving from
+            MDM or the claude.ai console. Evidence exists only if the customer implements and ships it.
+        - name: 'hook handler keys (type command|http|mcp_tool|prompt|agent, command, url, server)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CC-SETTINGS'
+          load_bearing: false
+          note: 'Describe the modified hook binding once a change is surfaced.'
+      details: >-
+        The ConfigChange hook runs for each settings-file change Claude Code detects across the
+        documented configuration paths (user, project, local, managed, hooks, and ~/.claude.json);
+        it is the only documented first-party agent-side signal for post-approval configuration
+        modification.
+      limitations:
+        - 'A local hook, not a shipped OTel event; evidence exists only if implemented and exported.'
+        - 'Does not fire for managed settings changed via MDM or the vendor console.'
+        - 'Names no non-agent writer process; attribution of the writer is EDR-only.'
+    - source: 'Claude Code OpenTelemetry (agent-performed writes)'
+      purpose: >-
+        Record that the agent itself wrote to a configuration path and how the write was permitted,
+        distinguishing an agent-driven change from a non-agent one.
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'claude_code.tool_result tool_name (Edit, Write, NotebookEdit), tool_parameters'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CC-OTEL'
+          load_bearing: true
+          note: 'Requires OTEL_LOG_TOOL_DETAILS=1; captures the agent-performed write to a config path.'
+        - name: 'claude_code.tool_decision decision_source (config, hook, user_permanent, user_temporary)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CC-OTEL'
+          load_bearing: false
+          note: 'Records how the write was allowed, separating a standing config grant from a user prompt.'
+      details: >-
+        tool_result and tool_decision capture an agent-performed Edit/Write to a watchlist
+        configuration path and the decision source that permitted it; they cover only writes the
+        agent makes itself, not those made by another process.
+      limitations:
+        - 'Opt-in content flag required; without it tool parameters are not recorded.'
+        - 'Covers only agent-performed writes, not a non-agent writer of the same file.'
+    - source: 'Cursor team audit log'
+      purpose: >-
+        Attribute an MCP/hook/rule/settings configuration change to a user and time in the Cursor
+        control plane.
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'audit event_type (mcp_server_config, team_hook, team_rule, team_command, team_settings)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CURSOR-AUDIT'
+          load_bearing: true
+          note: 'Via GET /teams/audit-logs, 30-day range, 20 req/min; records the change, not any invocation.'
+      details: >-
+        The audit-log stream records configuration-change event types for teams, retrievable through
+        the admin API within a 30-day window.
+      limitations:
+        - 'Team/Enterprise administration only; the page states no retention guarantee.'
+        - 'Records the control-plane change, never the later invocation of the changed setting.'
+    - source: 'Endpoint file and process telemetry'
+      purpose: >-
+        Establish that a specific process modified a configuration path and provide the writer
+        lineage no agent stream carries.
+      event_vocabulary: 'host-process-event'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'DeviceFileEvents (FolderPath, FileName, SHA256, PreviousFileName, InitiatingProcessCommandLine)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-DEFENDER-FILE'
+          load_bearing: true
+        - name: 'DeviceProcessEvents / Sysmon 1 (InitiatingProcessParentFileName, ProcessCommandLine, SHA256)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-SYSMON'
+          load_bearing: true
+      details: >-
+        DeviceFileEvents and Sysmon 11/2/23 record the write, rename, or delete of a configuration
+        path with content hash; DeviceProcessEvents and Sysmon 1 supply the writer process lineage;
+        Windows event 4663 adds object-access detail where a SACL and Audit File System are set.
+      limitations:
+        - 'Requires an endpoint sensor and, for 4663, a configured SACL and audit subcategory.'
+        - 'Records the writer but not whether the change was authorised.'
+
+detection:
+  scope: >-
+    Detection spans the approved configuration at rest, the post-approval write that mutates it, and
+    the later session that loads it. Two materially distinct strategies divide the path: one
+    attributes an unexpected or non-agent writer to a watchlist configuration path from host
+    telemetry, and one reads the agent's own config-change or control-plane audit event and
+    correlates it to a later load.
+  outcome_guardrails: >-
+    A write to a watchlist path establishes a modification, not that it was unauthorised or that it
+    ran. A native config-change event establishes the agent noticed a change, not who made it. A
+    later session load establishes use of the state. These stay distinct; "config file changed" and
+    "unauthorised agent tasking executed" are different alerts.
+  shared_normalization_context: >-
+    Canonicalise the configuration surface to a fixed watchlist of agent/MCP config and hook paths
+    (settings.json, managed-settings, hooks.json, ~/.claude.json, and product equivalents), and hash
+    the configuration content before and after so a change is a hash delta, not a timestamp touch.
+  shared_enrichment_context: >-
+    Join the configuration path to its writer process and parent, to an authorised-change record, and
+    to the next session that loads the state. A register of approved configuration versions helps
+    separate sanctioned changes; without it, an unexpected writer with no matching change record is
+    still meaningful.
+  strategies:
+    - id: 'STRAT-CONFIG-WRITE-ATTRIBUTION'
+      name: 'writer attribution on config paths'
+      objective: >-
+        Detect an unexpected or non-agent process modifying an approved agent/MCP configuration or
+        session-start hook without a matching authorised-change record.
+      incident_relevance: >-
+        Detects the procedure's deciding event: the post-approval write. It does not by itself
+        establish that a later session loaded or executed the modified state; that is corroborated on
+        a subsequent load.
+      detection_logic: >-
+        Select file-modification events on the watchlist configuration and hook paths, attach the
+        writer process and its parent, and raise when the writer is not the sanctioned config
+        tooling or approving user, or when no authorised-change record exists for the change window.
+        Treat a content-hash delta, not a mere access, as the trigger. Correlate a later agent
+        session load only as corroboration, never as the trigger.
+      minimum_evidence: >-
+        A content-changing write to a named watchlist path with the writer process lineage and the
+        absence of an authorised-change record. Without writer lineage, report a configuration change
+        on a watchlist path, not an attributed unauthorised modification.
+      correlation_context: >-
+        Correlate the write to writer lineage on the same host and to the next session load within
+        the estate's session cadence; prefer the content hash over the modification timestamp, which
+        a benign touch also moves.
+      detectors:
+        - detector_class: 'endpoint-file-and-process-integrity'
+          technologies:
+            - 'Microsoft Defender for Endpoint advanced hunting'
+            - 'Sysmon (events 1, 2, 11, 23)'
+            - 'File-integrity monitoring on the configuration paths'
+          contribution: 'Attributes a content change on a watchlist path to a writer process and parent.'
+          limitations: 'Requires a deployed sensor; does not itself know whether the change was authorised.'
+        - detector_class: 'siem-change-record-correlation'
+          technologies:
+            - 'Splunk'
+            - 'Elastic'
+            - 'Microsoft Sentinel'
+            - 'Google SecOps'
+          contribution: 'Joins the write to an authorised-change register and to the later session load.'
+          limitations: 'Depends on an authorised-change record existing and being forwarded.'
+      benign_explanations:
+        - explanation: >-
+            Sanctioned config-management tooling or the developer legitimately edits the same
+            configuration and hook paths.
+          distinguishing_context: >-
+            A matching authorised-change record, or the sanctioned tool as writer, separates the
+            legitimate change; the path alone does not.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding all writes to the configuration paths, or allowlisting the editor by name, would
+            also suppress a non-agent writer of the same file.
+        - explanation: >-
+            A managed-settings push from MDM or the vendor console changes the file through a
+            sanctioned channel.
+          distinguishing_context: >-
+            The MDM/console origin and its own change record distinguish it; note that this path fires
+            no local ConfigChange event, so its absence is not evidence of a stealthy change.
+          overlaps_incident_instance: false
+      blind_spots:
+        - description: 'Missing telemetry: managed-settings changed via MDM or console fire no local ConfigChange and may lack host writer lineage.'
+          routes_to: null
+        - description: 'Evasion: a write to a configuration path outside the monitored watchlist.'
+          routes_to: null
+        - description: 'Attribution limit: a change matching a forged or over-broad authorised-change record reads as sanctioned.'
+          routes_to: null
+      analyst_response: >-
+        Retrieve the watchlist path and its content-hash delta, identify the writer process and
+        parent, check for an authorised-change record in the window, determine whether the change
+        added a server, tool, or session-start hook, and check whether a later session loaded the
+        modified state.
+      safe_conclusion: >-
+        An approved agent configuration or hook was modified after approval by an unexpected writer;
+        execution of the modified state is established only by a later session load.
+    - id: 'STRAT-AGENT-CONFIG-CHANGE-EVENT'
+      name: 'native config-change and audit correlation'
+      objective: >-
+        Detect a post-approval configuration change through the agent's own config-change hook or a
+        control-plane audit event, correlated to a later session load.
+      incident_relevance: >-
+        Detects the change from the agent's or platform's own vantage point. It fires only where the
+        native signal is implemented and shipped and never for the MDM/console path, so its silence
+        is not evidence of no change.
+      detection_logic: >-
+        Consume the Claude Code ConfigChange hook output or the Cursor audit event for a
+        configuration change, and raise when the change adds or alters an MCP server, tool, or
+        session-start hook that was not part of the approved state. Where the agent performed the
+        write itself, read tool_decision decision_source to separate a standing config grant from an
+        interactive user approval. Correlate the change to the next session that loads it.
+      minimum_evidence: >-
+        A native config-change or audit event naming the changed configuration object, with the
+        change falling outside the approved state. Without the native event, this strategy does not
+        fire; fall back to writer attribution on the host.
+      correlation_context: >-
+        Correlate the audit or hook event to the later session load by configuration path and time;
+        the Cursor audit window is bounded to thirty days and records only the change, not its later
+        use.
+      detectors:
+        - detector_class: 'agent-native-config-event'
+          technologies:
+            - 'Claude Code ConfigChange hook and OTel tool_result/tool_decision'
+            - 'Cursor team audit log'
+          contribution: 'Reports a configuration change from the agent or platform vantage point.'
+          limitations: 'Opt-in and customer-shipped; never fires for MDM/console-managed settings.'
+      benign_explanations:
+        - explanation: >-
+            An approved configuration update performed through the agent or platform in the normal
+            workflow.
+          distinguishing_context: >-
+            Whether the changed object is within the approved state, and a matching change record,
+            separate the routine update; a change outside the approved state does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Suppressing all agent-performed config writes would hide an agent coerced into writing its
+            own configuration.
+      blind_spots:
+        - description: 'Missing telemetry: the native config-change signal is unimplemented or its output not shipped.'
+          routes_to: null
+        - description: 'Missing telemetry: MDM/console-managed settings changes fire no ConfigChange event.'
+          routes_to: null
+        - description: 'Attribution limit: the native event does not name a non-agent writer of the same file.'
+          routes_to: null
+      analyst_response: >-
+        Read the config-change or audit event, determine which configuration object changed and
+        whether it was within the approved state, check the decision source where the agent wrote it,
+        and pivot to host file/process telemetry for the writer where the change was not agent-made.
+      safe_conclusion: >-
+        A post-approval configuration change was reported by the agent or platform; identifying a
+        non-agent writer or confirming execution requires host telemetry and a later session load.
+
+detector_requirements:
+  required: >-
+    A fixed watchlist of agent/MCP configuration and session-start-hook paths; content hashing of
+    those paths so a change is a hash delta; writer process and parent lineage for a modification; an
+    authorised-change record to separate sanctioned changes; durable retention of configuration
+    provenance across at least one session cadence; and outcome-aware alert text that separates a
+    configuration change from confirmed unauthorised agent tasking.
+  optional: >-
+    The native Claude Code ConfigChange hook and the Cursor audit stream add an agent- or
+    platform-side view and change attribution where implemented, but neither gates host-side
+    detection and neither fires for MDM/console-managed settings.
+  correlation:
+    capability: >-
+      Aligned clocks across host file, process, and agent streams; a stable configuration path and
+      content hash carried across the write and the later load; and writer-process identity to bind a
+      modification to a principal.
+    window: >-
+      Post-approval write to next session load within the estate's session cadence; the Cursor audit
+      view is bounded to thirty days.
+  baselines:
+    - name: 'Approved agent configuration and hook versions'
+      window: '30-day provenance'
+      seeded_from: >-
+        Sanctioned change records and approved configuration releases; never seeded from the live
+        on-disk state after a suspected modification, which would enrol the tampered state as approved.
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on deployed
+    sensors, enabled logging, retained fields, and architecture. For this object, verification means
+    confirming that the configuration and hook paths are enumerated and monitored, that writer
+    lineage is retrievable on those paths, and that the native config-change signal (if relied on) is
+    implemented and shipped, since it does not fire for MDM/console-managed settings.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of the behavior; the cited reporting is not dated in the source for the behavior itself.'
+    - 'The exact configuration or hook object modified in each reported case, and whether a later session loaded it.'
+    - 'The retention window and plan requirement for the Cursor audit stream, which the fetched page does not state.'
+    - 'The canonical OpenClaw agent/MCP config and credential file paths, which the fetched CLI page does not document.'
+  assumptions:
+    - id: 'ASSUMPTION-WRITE-IS-THE-PROCEDURE'
+      verdict_changing: true
+      statement: >-
+        The deciding event is a post-approval write by a writer other than the approving user, not
+        the later hook execution. The sources report weaponisation of the hook system and a
+        dependency that modifies configuration, but publish no per-case ordering of write versus
+        load; this pack framed the write as the procedure from the source name and description, which
+        is reasoning from the behavior name to the mechanism. If wrong, the detection pivots from
+        writer attribution at modification time to execution at load time and the manifestation scope
+        shifts to a runtime-execution surface. Resolve it by reading a reported case's file-write and
+        session-load timeline, or by reproducing a post-approval hook change in a lab and recording
+        the order of the write and the next session load.
+  standing_negatives:
+    - statement: >-
+        No first-party agent page fetched for the telemetry audit documents an agent-side event that
+        identifies a non-agent process as the writer of a configuration change: the Claude Code and
+        Cursor pages describe the change event and audit fields but no writer-process attribution, so
+        writer identity is EDR-only.
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the Claude Code settings/hooks and Cursor admin-API documentation for a newly
+        documented config-change event that names the writing process.
+    - statement: >-
+        Managed-settings changes arriving from MDM or the claude.ai console do not fire the Claude
+        Code ConfigChange hook, per the settings documentation fetched for the audit.
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the Claude Code settings documentation for a change to which managed-settings sources
+        trigger ConfigChange.
+
+missing_states:
+  - id: 'MISSING_NATIVE_CONFIG_CHANGE_EVENT'
+    meaning: 'Missing telemetry: the agent config-change hook is unimplemented or unshipped, or the change arrived via MDM/console and fired nothing.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Fall back to host file/process telemetry on the watchlist paths; do not treat the absence of a
+      native config-change event as evidence that no change occurred.
+  - id: 'MISSING_WRITER_LINEAGE'
+    meaning: 'Attribution gap: a configuration change is seen on a watchlist path with no writer process or parent.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report a configuration change on a watchlist path and mark writer attribution incomplete; do
+      not attribute it to a non-agent actor without lineage.
+  - id: 'MISSING_AUTHORISED_CHANGE_RECORD'
+    meaning: 'Missing context: no register of authorised configuration changes exists to separate sanctioned from unsanctioned writes.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Treat an unexpected writer as the primary signal and escalate for manual change verification;
+      do not auto-clear a change for lack of a record to check it against.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'actor_or_explicit_missing_state'
+    - 'affected_config_path_and_content_hash_delta'
+    - 'writer_process_and_parent_when_available'
+    - 'changed_config_object_server_tool_or_hook'
+    - 'authorised_change_record_presence_or_absence'
+    - 'later_session_load_when_correlated'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'native_config_change_or_audit_event_id'
+      condition: 'when a native agent config-change hook or platform audit event is present'
+  recommended_title: 'Approved agent configuration or session-start hook modified after approval by an unexpected writer'
+  unsupported_title: 'Attacker achieved persistent code execution through a weaponised agent hook'
+
+evidence:
+  confirmed_incident_behavior: >-
+    Verified reporting documents malware/dependency activity that modifies Claude Code hooks or
+    agent-relevant configuration, alongside demonstrated weaponisation of the hook system and
+    evidence of approved-MCP post-approval mutation. That the deciding event is the post-approval
+    write rather than the later hook execution is this pack's framing of the procedure, registered in
+    missing_context.assumptions, not an ordering the sources state per case.
+  supported_conclusion: >-
+    The evidence supports that an approved agent/MCP configuration or session-start hook can be
+    modified after approval by a dependency or attacker and that the hook system can be weaponised to
+    run attacker commands on a later session. The behavior is detectable where a content change on a
+    watchlist configuration path is attributed to an unexpected writer with no authorised-change
+    record, and reportable as a configuration change from a native config-change or audit event alone.
+  unsupported_conclusions: >-
+    The evidence does not establish the number or identity of victims, that any specific victim
+    session loaded a modified state, or any objective beyond the modification itself. Confirmed
+    execution of the modified configuration, and any follow-on action, require host and agent
+    telemetry not carried by the cited sources.
+  procedure_boundary: >-
+    This procedure is the post-approval modification of an approved agent configuration or
+    session-start hook. The later execution of the modified state, and any command-and-control,
+    persistence, or destruction that execution performs, are separate behaviors and are not evidenced
+    by the modification alone. Injection-triggered config writes at write time are the adjacent
+    procedure DT-AAG1-AI-007.
+  references:
+    - id: 'REF-THREAT-LORD'
+      type: 'incident-procedure-primary-source'
+      title: "Claude Code's hook system just got weaponised"
+      publisher: 'Lord'
+      url: 'https://lord.technology/2026/05/02/claude-codes-hook-system-just-got-weaponised.html'
+      trust_tier: 'researcher'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary source for the weaponisation of the Claude Code hook system into attacker-run
+        commands; it does not enumerate victims or per-case write-versus-load ordering.
+    - id: 'REF-THREAT-SEMGREP'
+      type: 'incident-campaign-secondary-source'
+      title: 'Malicious dependency in pytorch-lightning used for AI training'
+      publisher: 'Semgrep'
+      url: 'https://semgrep.dev/blog/2026/malicious-dependency-in-pytorch-lightning-used-for-ai-training'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Supports the dependency vector that modifies Claude Code hooks or agent-relevant
+        configuration; it does not establish victim agent loads.
+    - id: 'REF-DETECT-ELASTIC'
+      type: 'detection-modeling-reference'
+      title: 'GenAI configuration modification (prebuilt rule)'
+      publisher: 'Elastic'
+      url: 'https://www.elastic.co/docs/reference/security/prebuilt-rules/rules/cross-platform/defense_evasion_genai_config_modification'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Corroborates that the GenAI configuration surface is treated as a monitored detection target;
+        it is a modeling reference, not evidence of a specific incident.
+    - id: 'REF-CC-SETTINGS'
+      type: 'telemetry-documentation'
+      title: 'Claude Code settings and hooks'
+      publisher: 'Anthropic'
+      url: 'https://code.claude.com/docs/en/settings'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the configuration paths, the ConfigChange hook and its MDM/console exclusion, and
+        hook handler keys used by the native config-change telemetry source; not an incident fact.
+    - id: 'REF-CC-OTEL'
+      type: 'telemetry-documentation'
+      title: 'Claude Code monitoring and OpenTelemetry reference'
+      publisher: 'Anthropic'
+      url: 'https://code.claude.com/docs/en/monitoring-usage'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents claude_code.tool_result/tool_decision fields and decision_source used to record an
+        agent-performed configuration write; not an incident fact.
+    - id: 'REF-CURSOR-AUDIT'
+      type: 'telemetry-documentation'
+      title: 'Cursor Admin API (team audit logs)'
+      publisher: 'Cursor'
+      url: 'https://cursor.com/docs/account/teams/admin-api'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the audit event_type values and the 30-day/20-req-min access limits used by the
+        Cursor audit telemetry source; not an incident fact.
+    - id: 'REF-DEFENDER-FILE'
+      type: 'telemetry-documentation'
+      title: 'DeviceFileEvents table (advanced hunting)'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-devicefileevents-table'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the file-event fields used to record a configuration-path modification.'
+    - id: 'REF-SYSMON'
+      type: 'telemetry-documentation'
+      title: 'Sysmon event reference'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/sysinternals/downloads/sysmon'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the process and file events used for writer lineage on configuration paths.'

@@ -1,0 +1,603 @@
+identity:
+  uuid: 'a8bf1293-3fcf-4789-8a98-5347137544c5'
+  id: 'DT-AAG1-AI-007'
+  aliases:
+    - 'P18'
+  name: 'Attackers use prompt injection to rewrite an agent MCP configuration'
+  incident: >-
+    Cursor CurXecute (CVE-2025-54135), responsibly disclosed research: injected content drives an
+    agent with configuration-write capability to add or change an MCP server that later auto-starts.
+  first_observed: '2025-07'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'ai-agent-harness'
+  secondary_attack_surfaces:
+    - 'submitted-content-ingest'
+    - 'host-filesystem'
+  behavior_classes:
+    - 'persistence'
+    - 'other'
+  behavior_classes_note: >-
+    injection-driven-agent-config-write: injected content causes an agent that holds
+    configuration-write capability to modify its own MCP settings, adding or changing a server that
+    later starts automatically, establishing persistence under the agent's identity.
+  tags:
+    - 'ai'
+    - 'prompt-injection'
+    - 'mcp'
+    - 'cursor'
+    - 'config-modification'
+
+behavior:
+  definition: >-
+    An attacker supplies injected content that causes an agent with configuration-write capability to
+    modify its MCP settings, adding or changing a server that later starts automatically.
+  detailed_definition: >-
+    The adversary controls content the agent ingests and uses that content to instruct the agent to
+    write its own configuration, rather than exploiting a memory-safety flaw. The boundary crossed is
+    from ingested, untrusted content to a durable change in the agent's trusted configuration state;
+    the possible outcomes range from an added MCP server that auto-connects to a redefined tool that
+    routes future actions through attacker infrastructure. The attempt ends when the injected content
+    reaches the agent; success begins when the agent writes the configuration and the new server
+    later starts. It is independent of agent product, configuration file format, and injection
+    carrier.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers an injection-driven write to an agent/MCP configuration and the later automatic start of
+      the added server; does not cover the initial delivery of the injected content, nor any action
+      the added server performs once running.
+    summary: >-
+      This can occur when an agent both ingests attacker-controllable content and holds the capability
+      to write its own configuration, and when a configured server is started automatically on a later
+      session. It requires content the agent treats as instructions and a configuration-write path the
+      agent will exercise; no memory-safety exploit or privilege escalation is needed, since the agent
+      writes its own trusted state.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      The configuration write and the subsequent server connection are observable where agent OTel
+      content flags are enabled or a control-plane audit stream exists, or where host file/network
+      telemetry covers the config path and the first outbound connection; the injected instruction
+      that caused the write is not observed in any product.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          The Claude Code attempt-then-effect chain (tool_decision, tool_result, mcp_server_connection)
+          is recorded only with OTEL_LOG_TOOL_DETAILS=1; the Cursor mcp_server_config audit is a
+          Team/Enterprise stream with no stated retention. Without those enablements the write is not
+          natively recorded.
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          Independent confirmation of the write and the first connection to the new server host relies
+          on endpoint file and network telemetry that exists only where a sensor is deployed.
+    summary: >-
+      The behavior is observable when a tool-driven write to an agent/MCP config path is recorded and
+      a new server registration or first outbound connection follows. Claude Code documents a
+      two-event attempt-then-effect chain in one product; a Cursor audit event records the config
+      change alone; a host file-write plus a first connection independently confirm it. A config write
+      with no subsequent server registration establishes a write, not persistence; a new connection
+      with no config-write linkage establishes egress, not this procedure.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      The config-write-then-new-server sequence is separable from benign scripted configuration
+      changes when the write lacks an approval and is followed by an unsanctioned server registration;
+      the injected content that triggered the write is not in any schema, so injection causation is
+      inferred from prompt/session ordering rather than read directly.
+    blocking_conditions:
+      - condition: 'cross-source-join-required'
+        note: >-
+          Establishing the sequence needs the tool-driven config write joined to the subsequent server
+          registration or first connection on conversation/session and config-path keys; neither the
+          write nor the connection alone establishes the behavior.
+      - condition: 'deciding-property-not-in-any-schema'
+        note: >-
+          The injected instruction that caused the write is logged by no product; injection causation
+          is structurally unavailable and can only be inferred from prompt/session ordering. The
+          write-then-new-server sequence itself survives without it, which is what answer_scope bounds.
+    summary: >-
+      Separation rests on the ordered pair of a tool-driven config write and a new server or tool
+      registration, with the write lacking an approval, since legitimate scripted changes also write
+      the config. Normalising the config path, requiring the new-server effect within a bounded
+      window, and treating a preceding untrusted retrieved carrier as corroboration are what make the
+      behavior distinguishable; a config write alone, or an inferred injection with no config effect,
+      is too weak to establish it.
+
+attack_surface_context:
+  surface: >-
+    An agent with configuration-write capability (e.g. Cursor, Claude Code) whose MCP settings live in
+    a file the agent can write (~/.claude.json, .claude/settings.json, .cursor/mcp.json-class paths)
+    and whose configured servers start automatically on a later session.
+  how_the_surface_works: >-
+    An agent ingests content (retrieved files, tool output, chat) and can act on it, including writing
+    its own configuration. MCP settings enumerate servers the agent connects to and tools it exposes;
+    a server added to that file is started automatically on the next session. Because the agent both
+    reads untrusted content and writes trusted configuration, content that reads as an instruction can
+    become a durable configuration change.
+  incident_processing_path: >-
+    Tenable reports (source-attested) that CurXecute, CVE-2025-54135, is an arbitrary-code-execution
+    issue in Cursor at or below version 1.21, fixed in 1.3.9, and that Cursor's own score differs from
+    Tenable's CVSSv3 8.5; SecurityWeek reports (source-attested) the coordinated disclosure. That the
+    execution path is specifically injected content causing the agent to write an MCP server that then
+    auto-starts, rather than a memory-safety bug, is this pack's reading of the CurXecute mechanism
+    consistent with the procedure name; the sources characterise the outcome as arbitrary code
+    execution without publishing the agent's per-write call path.
+  processing_stages:
+    - 'content-ingest'
+    - 'injected-instruction-interpreted'
+    - 'config-write-tool-call'
+    - 'mcp-config-modified'
+    - 'server-registration-persisted'
+    - 'next-session-start'
+    - 'server-auto-connect'
+    - 'first-outbound-connection'
+  stage_evidence: >-
+    The stage an event sits at fixes what it can prove: a tool_result at config-write-tool-call proves
+    the agent wrote the config; a server-registration or mcp_server_connection event proves a server
+    was added and started; a first outbound connection proves egress to the new host; none of these
+    proves the injected content, which is emitted at no stage.
+  trust_boundaries: >-
+    Untrusted ingested content into the agent's instruction context (the boundary the procedure
+    exploits: content is treated as tasking); agent instruction context into the trusted configuration
+    file (reached when the write tool runs); configuration into the running agent and its network
+    (reached when the added server auto-connects). Tenable characterises the result as arbitrary code
+    execution; the sources do not enumerate exploited victims beyond the disclosed research.
+  security_control_context: >-
+    An approval step may gate a tool-driven configuration write, and a version fix (Cursor 1.3.9)
+    removes the specific flaw; where present, approval decides before the write and the audit stream
+    records the change. Neither logs the injected instruction. Bypass representations include content
+    crafted to satisfy an auto-approval path, a write to a config path outside the monitored set, and
+    a server whose host is not yet on any threat-intel or sanctioned list.
+  practitioner_implication: >-
+    An implementer must discover which agents in the estate hold configuration-write capability and
+    their exact MCP config paths, whether OTel content flags are enabled to capture the write chain,
+    whether a control-plane audit stream exists and its retention, and whether host file and network
+    telemetry can independently confirm the write and the first connection to a newly configured host.
+
+threat_research:
+  why_it_matters: >-
+    An agent that both reads untrusted content and writes its own configuration turns a single
+    injection into durable persistence: an added MCP server auto-starts on every later session under
+    the agent's identity, giving the attacker a standing foothold without a memory-safety exploit.
+  threat_actor: >-
+    Unknown as a named group. CurXecute (CVE-2025-54135) was responsibly disclosed research rather
+    than an attributed in-the-wild campaign; the sources name no threat group.
+  campaign: >-
+    Cursor CurXecute (CVE-2025-54135), coordinated disclosure in July 2025, patched in Cursor 1.3.9.
+  victim: >-
+    Users of Cursor at or below version 1.21 with configuration-write-capable agents; the disclosure
+    demonstrates the mechanism rather than an enumerated set of exploited victims.
+  capability: >-
+    Injection-driven arbitrary code execution via an agent MCP configuration rewrite in Cursor, rated
+    CVSSv3 8.5 by Tenable (differing from the vendor's own score), affecting Cursor at or below 1.21
+    and fixed in 1.3.9, disclosed coordinated on 7 July 2025.
+  target: >-
+    The MCP configuration state of configuration-write-capable agents. The research demonstrates the
+    write-and-persist mechanism and code-execution outcome; it does not enumerate exploited
+    production victims.
+  victimology:
+    - 'Developer workstations running configuration-write-capable coding agents that auto-start MCP servers.'
+    - 'Teams whose agents ingest untrusted retrieved content in the same context they can write config from.'
+
+visibility:
+  telemetry_sources:
+    - source: 'Claude Code OpenTelemetry (attempt-then-effect chain)'
+      purpose: >-
+        Record the tool-driven configuration write and the subsequent connection of the newly added
+        MCP server as a two-event chain in one product.
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'claude_code.tool_result (tool_name Write/Edit, tool_input, tool_parameters, success, error_type)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CC-OTEL'
+          load_bearing: true
+          note: 'Requires OTEL_LOG_TOOL_DETAILS=1; values over 512 chars truncated, payload bound ~4 K.'
+        - name: 'claude_code.mcp_server_connection (status=connected, transport_type, server_scope, server_name)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CC-OTEL'
+          load_bearing: true
+          note: 'The effect half of the chain; requires the same content flag for server_name.'
+        - name: 'claude_code.tool_decision (decision accept/reject, source config/hook/user_permanent/user_temporary)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CC-OTEL'
+          load_bearing: false
+          note: 'Records whether the write was approved and how; separates a standing grant from a prompt.'
+      details: >-
+        The chain claude_code.tool_decision then claude_code.tool_result for the config write then
+        claude_code.mcp_server_connection for the newly added server is joinable by
+        session.id/prompt.id/event.sequence, giving a documented attempt-then-effect sequence within
+        one product.
+      limitations:
+        - 'Content flag required; without it tool_input, tool_parameters, and server_name are not recorded.'
+        - 'Values are truncated (over 512 chars) with a bounded payload, so long writes are clipped.'
+        - 'Does not record the injected content that caused the write.'
+    - source: 'Cursor team audit log'
+      purpose: >-
+        Record the MCP configuration change itself in the Cursor control plane, attributed to a user
+        and time.
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'audit mcp_server_config (event_id, timestamp, ip_address, user_email, event_type, event_data)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CURSOR-AUDIT'
+          load_bearing: true
+          note: 'Via GET /teams/audit-logs, 30-day range, 20 req/min; records the change, not any invocation.'
+      details: >-
+        The mcp_server_config event type records the configuration change with actor and time,
+        retrievable through the admin API within a 30-day window.
+      limitations:
+        - 'Team/Enterprise administration only; the page states no retention window or plan requirement.'
+        - 'Records the change only, never the later invocation, and not the injected trigger.'
+    - source: 'Endpoint file and network telemetry'
+      purpose: >-
+        Independently confirm the config-file write and the first outbound connection to the newly
+        configured server host.
+      event_vocabulary: 'host-process-event'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'DeviceFileEvents (FolderPath, FileName, SHA256, InitiatingProcessCommandLine)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-DEFENDER-FILE'
+          load_bearing: true
+        - name: 'DeviceNetworkEvents / Sysmon 3,22 (RemoteUrl, RemoteIP, RemotePort)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-DEFENDER-NET'
+          load_bearing: true
+      details: >-
+        DeviceFileEvents or Sysmon 11 record the write to the agent config path; DeviceNetworkEvents
+        or Sysmon 3/22 record the first outbound connection to the newly configured server host,
+        giving independent confirmation of both halves of the chain.
+      limitations:
+        - 'Requires an endpoint sensor on the agent host.'
+        - 'Does not tie the write to the specific injected content or, without the config join, to persistence.'
+    - source: 'Copilot Studio and M365 admin audit'
+      purpose: >-
+        Record platform-equivalent plugin/environment configuration changes for agents managed in the
+        Microsoft ecosystem.
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      details: >-
+        AIPluginOperationCreate/Update/Delete and EnvironmentVariableCreate/Update/Delete (BotId,
+        Operation, UserKey, UserType, CreationTime) and M365 admin operations such as CreatePlugin and
+        UpdateTenantSettings capture the platform-equivalent configuration change.
+      limitations:
+        - 'GitHub Copilot audit pages fetched document no MCP configuration event.'
+        - 'Agent 365 does not surface tool arguments (gen_ai.tool.call.arguments maps to --), so an Agent-365-monitored agent cannot show the config path written.'
+
+detection:
+  scope: >-
+    Detection spans the tool-driven write to an agent/MCP config path, the resulting server or tool
+    registration, and the first connection to the new host. Two materially distinct strategies divide
+    the path: one correlates the config write with the subsequent new-server registration in the agent
+    runtime, and one confirms the write and first connection independently on the host.
+  outcome_guardrails: >-
+    A config write establishes a change, not persistence. A new-server registration establishes
+    persistence, not that it was used. A first connection establishes egress, not that the config
+    caused it without the join. The injected content is proven by nothing; injection causation is
+    inferred, never read. "Config changed" and "malicious MCP server persisted and connected" are
+    different alerts.
+  shared_normalization_context: >-
+    Canonicalise the agent/MCP config path and the server/tool identity, and treat a preceding
+    untrusted retrieved carrier as corroboration rather than as the trigger, since the injected
+    content is not logged.
+  shared_enrichment_context: >-
+    Join the config write to the subsequent server registration or first connection on
+    conversation/session id, config path, and server URL/host, and to a change-approval record where
+    one exists. A rolling baseline of approved servers helps flag an unsanctioned addition; an
+    unapproved write followed by a new server is meaningful without one.
+  strategies:
+    - id: 'STRAT-CONFIG-WRITE-THEN-NEW-SERVER'
+      name: 'ordered config-write then new-server registration'
+      objective: >-
+        Detect a tool-driven write to an agent/MCP config path followed by a new server or tool
+        registration within a bounded window, where the write lacks an approval.
+      incident_relevance: >-
+        Detects the persistence-establishing sequence the disclosure demonstrates. It does not read
+        the injected content that caused the write; a preceding untrusted carrier is corroboration
+        only.
+      detection_logic: >-
+        Select tool-driven writes to an agent/MCP config path and pair each with a subsequent new
+        server URL or tool registration within the join window, on session and config-path keys. Raise
+        when the write lacks an approval decision and the added server is not on the sanctioned list.
+        Classify any preceding retrieved content only as corroboration; do not require it, since it is
+        not logged.
+      minimum_evidence: >-
+        A tool-driven config write joined to a subsequent new-server or tool registration, with the
+        write unapproved. Without the new-server effect, report an unapproved config write, not
+        established persistence; without the config-write linkage, report an egress event, not this
+        procedure.
+      correlation_context: >-
+        Correlate the write to the new-server registration within up to fifteen minutes, with an
+        explicit maximum gap of ten minutes, on conversation/session id and config path; the Cursor
+        audit view is bounded to thirty days and records the change without the connection.
+      detectors:
+        - detector_class: 'agent-runtime-sequence-correlation'
+          technologies:
+            - 'Claude Code OTel (tool_decision, tool_result, mcp_server_connection)'
+            - 'Cursor team audit log'
+            - 'Copilot Studio and M365 admin audit'
+          contribution: 'Pairs the config write with the new-server effect in the agent or platform.'
+          limitations: 'Opt-in content flags required; does not carry the injected trigger; Agent 365 hides tool arguments.'
+      benign_explanations:
+        - explanation: >-
+            Legitimate scripted or administrator configuration changes add or update an MCP server in
+            the normal workflow.
+          distinguishing_context: >-
+            An approval decision on the write and the added server being on the sanctioned list
+            separate the legitimate change; a config write matching an approved change is not this
+            procedure.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding all config-write-then-new-server sequences as routine automation would also
+            suppress the injection-driven write, which produces the same sequence.
+      blind_spots:
+        - description: 'Missing telemetry: no product logs the injected instruction; injection causation is inferred, not read.'
+          routes_to: null
+        - description: 'Missing telemetry: content flags disabled, so the write payload and server_name are not captured.'
+          routes_to: null
+        - description: 'Evasion: a write to an MCP config path outside the monitored set.'
+          routes_to: null
+      analyst_response: >-
+        Retrieve the config write and its decision, identify the added server URL/host and whether it
+        is sanctioned, confirm the first outbound connection to that host, look for a preceding
+        untrusted retrieved carrier as corroboration, and scope the agent's later actions through the
+        new server.
+      safe_conclusion: >-
+        An agent wrote its MCP configuration and a new server was registered without approval;
+        attributing the write to injected content requires prompt/session ordering, which is inferred
+        rather than logged.
+    - id: 'STRAT-HOST-WRITE-AND-FIRST-CONNECTION'
+      name: 'independent host confirmation'
+      objective: >-
+        Confirm the config-file write and the first outbound connection to the newly configured server
+        host from endpoint telemetry, independent of the agent runtime.
+      incident_relevance: >-
+        Confirms both halves of the sequence on the host where the agent runtime signal is absent or
+        content flags are disabled. A host write and connection must be tied to the config change to
+        attribute persistence.
+      detection_logic: >-
+        Select file-write events on the agent/MCP config paths and pair each with the first outbound
+        connection from the agent process to the newly configured server host. Raise when a write to a
+        config path is followed by a first connection to a host not previously seen for that agent and
+        not on the sanctioned list. Join to the agent runtime chain where it exists.
+      minimum_evidence: >-
+        A file-write to an agent/MCP config path with writer lineage and a first outbound connection
+        from the agent process to a newly configured host. Without the config-path write, report a
+        first connection to a rare host, not this procedure.
+      correlation_context: >-
+        Correlate the file write to the first connection on host and agent-process identity within the
+        session; prefer the config content hash over the modification timestamp.
+      detectors:
+        - detector_class: 'endpoint-file-and-network-analytics'
+          technologies:
+            - 'Microsoft Defender for Endpoint advanced hunting'
+            - 'Sysmon (events 11, 3, 22)'
+          contribution: 'Confirms the config write and the first connection to the new host on the endpoint.'
+          limitations: 'Requires a deployed sensor; does not carry the injected content or, alone, the persistence linkage.'
+      benign_explanations:
+        - explanation: >-
+            An agent legitimately connects to a newly added server that an administrator configured on
+            purpose.
+          distinguishing_context: >-
+            The added host being sanctioned and a matching approved config change separate the
+            legitimate connection; a first connection to an unsanctioned host after an unapproved write
+            does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Allowlisting the agent process wholesale, rather than by expected destination, would let a
+            connection to an attacker-configured host through.
+      blind_spots:
+        - description: 'Missing telemetry: no endpoint sensor on the agent host.'
+          routes_to: null
+        - description: 'Attribution limit: without the config join, a first connection reads as generic egress.'
+          routes_to: null
+      analyst_response: >-
+        Identify the config-file write and its writer, determine the first-connection destination and
+        whether it is sanctioned, join to the agent runtime chain where present, and scope subsequent
+        traffic to the new host.
+      safe_conclusion: >-
+        The agent config path was written and the agent made a first connection to a newly configured
+        host; tying the two as injection-driven persistence requires the config-write join and the
+        agent runtime sequence.
+
+detector_requirements:
+  required: >-
+    Canonicalisation of the agent/MCP config path and server/tool identity; capture of the tool-driven
+    config write and the subsequent server registration or first connection; a join across those on
+    conversation/session id, config path, and server host; durable retention across the write-to-load
+    gap; and outcome-aware alert text separating a config change from established, connected
+    persistence.
+  optional: >-
+    OTel content flags (OTEL_LOG_TOOL_DETAILS) capture the write payload and server_name, a
+    control-plane audit stream adds actor attribution, and a sanctioned-server baseline flags an
+    unapproved addition; none gates host-side confirmation of the write and first connection.
+  correlation:
+    capability: >-
+      Aligned clocks across agent runtime, control-plane audit, and endpoint streams; a stable config
+      path and server host carried across the write and the connection; and session and agent-process
+      identity to bind the write to its effect.
+    window: >-
+      Up to fifteen minutes from write to new-server registration, with an explicit maximum gap of ten
+      minutes; the Cursor audit view is bounded to thirty days.
+  baselines:
+    - name: 'Sanctioned MCP servers and approved config versions'
+      window: '30-day rolling'
+      seeded_from: >-
+        Approved server registrations and change records; never seeded from the live config after a
+        suspected injection-driven write, which would enrol the attacker server as sanctioned.
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on deployed
+    sensors, enabled logging, retained fields, and architecture. For this object, verification means
+    confirming that the agent's config-write and server-connection events are captured (content flags
+    enabled) or that host file and network telemetry can confirm both halves, since no product records
+    the injected content that triggered the write and Agent 365 does not expose tool arguments.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of exploitation in the wild; the source documents coordinated disclosure, not an in-the-wild first sighting.'
+    - 'The exact agent write call path from injected content to configuration change in the CurXecute research.'
+    - 'The retention window and plan requirement for the Cursor audit stream, which the fetched page does not state.'
+    - 'Whether the vendor CVSS score or Tenable''s 8.5 is authoritative, which the sources leave as differing assessments.'
+  assumptions:
+    - id: 'ASSUMPTION-INJECTION-DRIVES-CONFIG-WRITE'
+      verdict_changing: true
+      statement: >-
+        The CurXecute code-execution path is specifically injected content causing the agent to write
+        an MCP server that then auto-starts, rather than a memory-safety bug. Tenable characterises the
+        outcome as arbitrary code execution and names the MCP configuration surface, but publishes no
+        per-write call path; this pack read the mechanism from the procedure name and the CurXecute
+        description, which is reasoning from the outcome to the mechanism. If wrong, the ordered
+        config-write-then-new-server predicate is not the right signal and the manifestation scope
+        shifts to a memory-safety or a different execution surface. Resolve it by reading the CurXecute
+        technical write-up for the exploited write path, or by reproducing the disclosed case in a lab
+        and recording whether a config write mediates the execution.
+  standing_negatives:
+    - statement: >-
+        No product examined in the telemetry audit logs the injected content that caused the
+        configuration write: the Claude Code, Cursor, and Microsoft audit pages fetched document the
+        write and the connection but no field carrying the triggering instruction, so causation is
+        derived by joining prompt.id/session.id ordering.
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the agent OTel and control-plane audit documentation for a newly documented field that
+        carries the injected instruction alongside the resulting write.
+    - statement: >-
+        GitHub Copilot audit pages fetched document no MCP configuration event, and Agent 365 does not
+        surface tool arguments (gen_ai.tool.call.arguments maps to --), so an Agent-365-monitored agent
+        cannot show the config path written.
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the GitHub Copilot and Agent 365 observability references for a newly documented MCP
+        configuration event or tool-argument surfacing.
+
+missing_states:
+  - id: 'MISSING_INJECTION_TRIGGER_RECORD'
+    meaning: 'Structural gap: no product logs the injected instruction that caused the configuration write.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Infer injection causation from prompt/session ordering and a preceding untrusted carrier; report
+      the config-write-then-new-server sequence, not a proven injection.
+  - id: 'MISSING_CONTENT_FLAG'
+    meaning: 'Missing telemetry: OTel content flags are disabled, so the write payload and server_name are not captured.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Fall back to host file/network confirmation of the write and first connection; do not treat the
+      absent payload as evidence of no write.
+  - id: 'MISSING_NEW_SERVER_EFFECT'
+    meaning: 'Attribution gap: a config write is seen with no subsequent server registration or connection.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report an unapproved configuration write and mark persistence unestablished until a server
+      registration or first connection is observed.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'actor_or_explicit_missing_state'
+    - 'affected_config_path_and_server_identity'
+    - 'config_write_tool_call_and_approval_decision'
+    - 'new_server_registration_or_first_connection_when_present'
+    - 'preceding_untrusted_carrier_when_correlated'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'first_outbound_connection_destination'
+      condition: 'when a first connection to the newly configured server host is observed'
+  recommended_title: 'Agent wrote its MCP configuration and registered a new server without approval'
+  unsupported_title: 'Prompt injection gave an attacker full remote control of the developer workstation'
+
+evidence:
+  confirmed_incident_behavior: >-
+    Tenable reports CurXecute (CVE-2025-54135) as an arbitrary-code-execution issue in Cursor at or
+    below 1.21, fixed in 1.3.9, rated CVSSv3 8.5 by Tenable (differing from the vendor's own score),
+    with coordinated disclosure on 7 July 2025 reported by SecurityWeek. That the execution is
+    mediated specifically by injected content causing an MCP configuration write that then auto-starts
+    is this pack's reading of the CurXecute mechanism, registered in missing_context.assumptions, not
+    a call path the sources publish.
+  supported_conclusion: >-
+    The evidence supports that a configuration-write-capable agent can be driven to modify its MCP
+    settings and add an auto-starting server, and that this was disclosed as an arbitrary
+    code-execution issue in Cursor. The behavior is detectable where a tool-driven config write is
+    joined to a subsequent unsanctioned server registration or first connection, and reportable as an
+    unapproved config write from either signal alone.
+  unsupported_conclusions: >-
+    The evidence does not establish in-the-wild exploitation, a victim count, the injected content, or
+    any objective the added server performed once running. Confirmed persistence and follow-on action
+    require agent-runtime and network telemetry not carried by the disclosure sources, and injection
+    causation is inferred rather than proven.
+  procedure_boundary: >-
+    This procedure is the injection-driven write of an agent MCP configuration and the later automatic
+    start of the added server. The post-approval mutation of an already-approved configuration by a
+    non-agent writer is the adjacent procedure DT-AAG1-AI-006; any command-and-control or action the
+    added server performs is a separate behavior not evidenced by the write.
+  references:
+    - id: 'REF-THREAT-TENABLE'
+      type: 'incident-campaign-secondary-source'
+      title: 'FAQ: CVE-2025-54135, CVE-2025-54136 vulnerabilities in Cursor (CurXecute, MCPoison)'
+      publisher: 'Tenable'
+      url: 'https://www.tenable.com/blog/faq-cve-2025-54135-cve-2025-54136-vulnerabilities-in-cursor-curxecute-mcpoison'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary source for the CVE, the affected/fixed Cursor versions, the CVSSv3 8.5 assessment and
+        its divergence from the vendor score; it characterises the outcome as arbitrary code execution
+        without publishing the agent write call path.
+    - id: 'REF-THREAT-SECURITYWEEK'
+      type: 'incident-campaign-secondary-source'
+      title: 'Several vulnerabilities patched in AI code editor Cursor'
+      publisher: 'SecurityWeek'
+      url: 'https://www.securityweek.com/several-vulnerabilities-patched-in-ai-code-editor-cursor/'
+      trust_tier: 'news'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Supports the coordinated-disclosure and patch context; it does not establish the write call
+        path or in-the-wild exploitation.
+    - id: 'REF-CC-OTEL'
+      type: 'telemetry-documentation'
+      title: 'Claude Code monitoring and OpenTelemetry reference'
+      publisher: 'Anthropic'
+      url: 'https://code.claude.com/docs/en/monitoring-usage'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the tool_decision/tool_result/mcp_server_connection chain and its content-flag and
+        truncation behavior used by the agent-runtime telemetry source; not an incident fact.
+    - id: 'REF-CURSOR-AUDIT'
+      type: 'telemetry-documentation'
+      title: 'Cursor Admin API (team audit logs)'
+      publisher: 'Cursor'
+      url: 'https://cursor.com/docs/account/teams/admin-api'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the mcp_server_config audit event and the 30-day/20-req-min limits used by the
+        Cursor audit telemetry source; not an incident fact.
+    - id: 'REF-DEFENDER-FILE'
+      type: 'telemetry-documentation'
+      title: 'DeviceFileEvents table (advanced hunting)'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-devicefileevents-table'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the file-event fields used to confirm the agent config-path write.'
+    - id: 'REF-DEFENDER-NET'
+      type: 'telemetry-documentation'
+      title: 'DeviceNetworkEvents table (advanced hunting)'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-devicenetworkevents-table'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the network fields used to confirm the first connection to the new server host.'

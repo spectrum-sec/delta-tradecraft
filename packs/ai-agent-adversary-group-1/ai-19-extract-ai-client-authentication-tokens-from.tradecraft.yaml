@@ -1,0 +1,541 @@
+identity:
+  uuid: '82046b87-6cad-4138-81ea-52d1c698a06f'
+  id: 'DT-AAG1-AI-019'
+  aliases:
+    - 'P45'
+  name: 'Attackers extract AI-client authentication tokens from process memory'
+  incident: >-
+    AIKatz red-team research (Lumia): post-breach harvesting of authentication tokens from the memory
+    of GenAI desktop apps (Claude, Microsoft 365 Copilot, ChatGPT) to impersonate the user to the
+    model backend.
+  first_observed: '2025'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'other'
+  primary_attack_surface_note: >-
+    ai-desktop-client-process-memory: the live memory of an AI desktop client process, which holds the
+    backend session token an attacker reads to impersonate the user.
+  secondary_attack_surfaces:
+    - 'host-filesystem'
+    - 'identity-provider'
+  behavior_classes:
+    - 'credential-replay-from-outside-the-issuing-boundary'
+    - 'other'
+  behavior_classes_note: >-
+    ai-client-token-theft-from-process-memory: an attacker with host access reads an AI desktop
+    client's process memory to recover a backend authentication token, then replays it to impersonate
+    the user to the model backend.
+  tags:
+    - 'ai'
+    - 'token-theft'
+    - 'process-memory'
+    - 'desktop-client'
+    - 'impersonation'
+
+behavior:
+  definition: >-
+    An attacker reads process memory from an AI desktop client to recover authentication material, then
+    uses the token to impersonate the user to the model backend.
+  detailed_definition: >-
+    An adversary who already has code execution on a host reads the live memory of an AI desktop client
+    process, recovers a bearer token or session credential the client holds, and replays it from
+    outside the client to authenticate to the model backend as the user. The boundary crossed is the
+    client's process boundary, from which secret material is extracted, and then the authentication
+    boundary of the backend, which accepts the replayed token. The attempt is the memory read; success
+    begins when the recovered token authenticates a request the attacker issues. It is independent of
+    which client, which backend and which host operating system, and the theft itself emits no
+    application-side record.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers reading an AI client's process memory to recover a token and replaying it to the backend;
+      demonstrated in red-team research rather than a confirmed in-the-wild incident, and does not cover
+      the initial host compromise that precedes it.
+    summary: >-
+      This can occur when an attacker already has code execution on the host with rights to open the AI
+      client process or read its memory, the client holds a usable token in memory or in a file such as
+      the sign-in session store, and the backend accepts that token replayed from a different context.
+      Impersonation additionally requires that the token not be bound to the original device or session.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      The theft is observable only through host endpoint telemetry of process-memory access; the
+      subsequent impersonation is observable through provider audit where enabled, so coverage depends on
+      an endpoint sensor and on provider audit being turned on.
+    blocking_conditions:
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          The only telemetry of the theft is an endpoint sensor recording process-memory access or
+          handle opens against the client process; no AI vendor documents a memory-access or
+          client-integrity event, so a host without such a sensor records nothing of the theft.
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          Post-theft impersonation is visible in provider audit only where it is enabled: OpenAI audit
+          logs must be turned on by an organization owner, and Anthropic and Perplexity records require
+          the compliance or audit surfaces be provisioned.
+    summary: >-
+      The behavior is observable when an endpoint sensor records a process opening the AI client with
+      memory-read access, or a raw memory read against it, and when provider audit records a subsequent
+      session use from a new device or address. A process-access event alone establishes suspicious
+      access, not theft; a provider sign-in from a new address alone establishes a session change, not
+      its cause. Neither, without the other, ties the memory read to the impersonation.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Separable from routine process access when nonstandard memory access to an AI client process is
+      correlated with provider session use from a new device or address; legitimate debuggers, endpoint
+      security tools and remote support open the same handles and must be distinguished, not tuned out.
+    blocking_conditions:
+      - condition: 'cross-source-join-required'
+        note: >-
+          Separating theft-and-replay from benign process access needs the endpoint process-access event
+          joined to the provider sign-in from a new device or address; neither the endpoint nor the
+          provider stream alone establishes the sequence.
+    summary: >-
+      Separation rests on detecting a nonstandard process opening the AI client with memory-read access
+      or a raw memory read, then correlating a provider session use from a new device, address or
+      fingerprint within a bounded window. Because debuggers and security tooling also open process
+      handles, the signal is strengthened by suspicious process lineage and by the new-device session
+      use; a handle open with no downstream session change, or a session change with no preceding memory
+      access, is too weak to establish the behavior.
+
+attack_surface_context:
+  surface: >-
+    AI desktop clients (Claude, Microsoft 365 Copilot, ChatGPT) whose process memory and sign-in
+    session files hold backend authentication tokens, and the model backends that accept those tokens.
+  how_the_surface_works: >-
+    A desktop AI client signs the user in and keeps a bearer token or session credential to authenticate
+    requests to the model backend, holding it in process memory and, for some clients, in a sign-in
+    session file such as the documented client session store. The backend authorizes each request by the
+    token; if the token is not bound to the device or session, any holder can present it.
+  incident_processing_path: >-
+    Lumia reports (source-attested) that AIKatz harvests authentication tokens from the memory of GenAI
+    desktop apps, scanning allocated pages with a regex over process memory read via the process handle
+    on Windows or via the proc filesystem on Linux, and demonstrates backend impersonation against
+    Claude, Microsoft 365 Copilot and ChatGPT, including extracting a OneDrive or SharePoint JWT via M365
+    Copilot. That the documented client session file is the on-disk artifact an attacker targets
+    alongside memory is this pack's reading of the client documentation, consistent with the source's
+    memory-harvesting description.
+  processing_stages:
+    - 'host-compromise-upstream'
+    - 'ai-client-process-identification'
+    - 'process-handle-open-or-proc-read'
+    - 'memory-page-regex-scan'
+    - 'token-recovery'
+    - 'token-replay-to-backend'
+    - 'backend-session-impersonation'
+  stage_evidence: >-
+    The stage an event sits at fixes what it can prove: a process-handle open or raw memory read proves
+    access to the client's memory, not that a token was recovered; token recovery leaves no application
+    record; only a provider session use from a new context proves the token was replayed. The theft and
+    the replay sit in different streams, so only their correlation proves the whole.
+  trust_boundaries: >-
+    Host attacker into the AI client's process boundary (reached in the research: memory was read);
+    recovered token across the backend authentication boundary (reached in the research: impersonation
+    was demonstrated); original device binding, where present, would block replay (not bypassed in the
+    research where tokens were device-bound). The upstream host compromise is assumed, not part of this
+    procedure.
+  security_control_context: >-
+    Preventive control is process isolation, token binding to device or session, and short token
+    lifetimes: a token bound to the original device or promptly rotated resists replay, and the vendors
+    triaged the research as informational or as showing no boundary bypass on that basis. Detective
+    control is endpoint process-access telemetry and provider audit. Bypass representations include
+    reading memory with a legitimate-looking debugger or security tool, harvesting the on-disk session
+    file instead of memory, and replaying before the token expires.
+  practitioner_implication: >-
+    An implementer must discover which AI clients run on managed hosts, whether an endpoint sensor
+    records process-memory access and which action string it emits, whether provider audit is enabled to
+    show new-device session use, and what a normal device and location baseline per user is, before a
+    theft-and-replay correlation can be scored.
+  special_context:
+    topic: 'research-not-incident'
+    context: >-
+      This is a red-team research demonstration, not a confirmed in-the-wild incident. Anthropic closed
+      the report informational, Microsoft's response saw no boundary bypass, and OpenAI closed it
+      informational. The behavior is credible and reproducible per the research, but no victim, campaign
+      or actor is established, and the object models a demonstrated capability rather than an intrusion.
+
+threat_research:
+  why_it_matters: >-
+    A stolen client token lets an attacker act as the user against the model backend, including reaching
+    connected data such as OneDrive or SharePoint through M365 Copilot, without the user's password or a
+    second factor, and the theft itself leaves no application-side trace.
+  threat_actor: >-
+    Red-team researchers (Lumia), not an in-the-wild actor. AIKatz is a demonstrated post-breach
+    technique; no threat group is attributed, and the vendors triaged it as informational or as no
+    boundary bypass.
+  actor_class: 'red-team-research'
+  campaign: 'AIKatz research demonstration of GenAI desktop-client token harvesting; no operational campaign.'
+  victim: >-
+    None in the wild. The research demonstrated the technique against Claude, Microsoft 365 Copilot and
+    ChatGPT desktop clients; there is no documented victim organization.
+  capability: >-
+    Post-breach harvesting of authentication tokens from GenAI desktop app memory via a regex over
+    allocated pages, read through the proc filesystem on Linux or a process handle on Windows, enabling
+    backend impersonation, demonstrated against three clients including OneDrive or SharePoint JWT
+    extraction via M365 Copilot.
+  target: >-
+    AI desktop clients' in-memory tokens and the model backends that accept them. The research reached
+    impersonation against all three demonstrated clients; it did not establish any real-world use.
+  victimology:
+    - 'Managed and unmanaged hosts running AI desktop clients that keep backend tokens in process memory.'
+    - 'Organizations whose AI clients bridge to connected data such as OneDrive or SharePoint via the backend session.'
+  framework_mappings:
+    - framework: 'MITRE ATLAS'
+      id: 'AML.CS0036'
+      name: 'AIKatz'
+      evidence: >-
+        ATLAS case study AML.CS0036 records the AIKatz token-harvesting technique at YEAR (2025)
+        granularity; this pack carries it as the case-study mapping the source itself references, and
+        treats ATLAS as a curated derivative of the same Lumia report rather than an independent source.
+
+visibility:
+  telemetry_sources:
+    - source: 'Endpoint process-access telemetry (Sysmon and Defender)'
+      purpose: >-
+        Record a process opening the AI client with memory-read access, a raw memory read, or a remote
+        thread against it, establishing the memory-access half of the theft.
+      event_vocabulary: 'host-process-event'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'Sysmon Event ID 10 ProcessAccess (GrantedAccess, SourceImage, TargetImage)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-SYSMON'
+          load_bearing: true
+          note: 'The only precisely documented process-access event; 8 CreateRemoteThread and 9 RawAccessRead corroborate.'
+        - name: 'DeviceEvents ActionType / InitiatingProcessCommandLine / InitiatingProcessSHA256'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-DEFENDER-EVENTS'
+          load_bearing: true
+          note: 'The fetched Defender schema pages do not enumerate ActionType values, so the exact memory-access string cannot be asserted.'
+      details: >-
+        Sysmon 10 ProcessAccess records granted access to a target process; 8 CreateRemoteThread records
+        source, target and start address; 9 RawAccessRead, 25 ProcessTampering and 1 ProcessCreate add
+        context. Defender DeviceEvents and DeviceProcessEvents carry initiating-process command line,
+        hash and account.
+      limitations:
+        - 'Requires an endpoint sensor on the host.'
+        - 'The Defender schema pages fetched do not enumerate ActionType values, so the memory-access action string is not asserted.'
+        - 'Sysmon 10 is the only precisely documented process-access event across the fetched references.'
+    - source: 'Anthropic Compliance API'
+      purpose: 'Record post-theft session activity under an organization to catch replayed-session use.'
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'Activity.actor / created_at / type'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-ANTHROPIC-COMPLIANCE'
+          load_bearing: false
+          note: 'Activity types are unpublished, so token reuse cannot be identified by type; only actor and timing deltas.'
+      details: >-
+        GET /v1/compliance/activities (scope read:compliance_activities) returns Activity records with
+        actor, created_at, type and organization id; the client session store is documented as holding
+        sign-in session data, identifying the file an attacker targets.
+      limitations:
+        - 'The activity-type enumeration is unpublished, so token reuse cannot be identified by type.'
+        - 'Provides only actor, IP and timing deltas for post-theft session use.'
+    - source: 'OpenAI Platform audit logs'
+      purpose: 'Record sign-in and token events, including the actor session IP, for replayed-session detection.'
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      details: >-
+        GET /organization/audit_logs returns login.succeeded/failed, logout events, api_key and
+        service_account lifecycle and tenant.chatgpt_access_token.revoked, with actor.session.ip_address
+        and actor.session.user.email.
+      limitations:
+        - 'Must be enabled by an organization owner.'
+        - 'The fetched reference documents no retention period.'
+    - source: 'Perplexity and IdP session audit'
+      purpose: 'Record login origin for reuse of a stolen session from a new address, and the impersonated IdP session.'
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      details: >-
+        Perplexity login records ip_address, user_agent and session_id for reuse from a new address;
+        Entra audit activities and Okta event types cover the impersonated IdP session, and
+        DeviceNetworkEvents or Sysmon 3 cover the exfiltration channel.
+      limitations:
+        - 'Records session origin, not the memory theft that preceded it.'
+        - 'New-address session use is corroborating, not proof of theft on its own.'
+
+detection:
+  scope: >-
+    Detection spans the process-memory access against the AI client and the subsequent replayed-session
+    use at the provider. One strategy correlates a nonstandard memory access or handle open targeting an
+    AI client process with a provider session use from a new device or address; neither half alone is
+    the behavior.
+  outcome_guardrails: >-
+    A process-access or raw-memory-read event establishes access to the client's memory, not token
+    recovery. Token recovery leaves no application record. A provider session use from a new context
+    establishes a session change; only its correlation with the memory access establishes theft and
+    replay. Access, replay and impersonation stay distinct.
+  shared_normalization_context: >-
+    Normalize to the endpoint host, the target AI client process, the actor user, and the token or
+    session id where available, and treat a memory-read handle open and a raw memory read against the
+    client as one class of memory-access signal.
+  shared_enrichment_context: >-
+    Join the endpoint process-access event to the provider sign-in from a new device or address, to an
+    AI-client process inventory, and to a per-user normal-device and location baseline. A thirty-day
+    normal-device history is needed to judge a session use as new.
+  strategies:
+    - id: 'STRAT-MEMORY-ACCESS-TO-REPLAY-CORRELATION'
+      name: 'process-memory access to session-replay correlation'
+      objective: >-
+        Detect a nonstandard process-memory access or handle open targeting an AI client process,
+        correlated with provider session use from a new device, address or fingerprint.
+      incident_relevance: >-
+        Detects the harvesting-and-replay technique the research demonstrated. It detects suspicious
+        memory access plus a new-device session; it does not by itself prove a token was recovered, which
+        leaves no application record, so the correlation carries the conclusion.
+      detection_logic: >-
+        Select process-access, raw-memory-read and remote-thread events whose target is an AI client
+        process and whose initiating process is not an inventoried debugger or security tool, then
+        correlate a provider session use from a new device, address or fingerprint for the same user
+        within a bounded window. Raise confidence on suspicious process lineage and on the new-device
+        session use. Do not exclude memory access solely because the initiating process resembles a
+        debugger; distinguish by inventory and by the downstream session change.
+      minimum_evidence: >-
+        A memory-access event against an AI client process joined to a provider session use from a new
+        context for the same user. Without the provider join, report suspicious memory access to an AI
+        client; without the memory access, report a suspicious new-device session, not theft.
+      correlation_context: >-
+        Correlate on endpoint host, target process, actor user, token or session id where available, and
+        device or IP, over a window up to one hour with an explicit maximum gap of thirty minutes,
+        against a thirty-day normal-device history. Provider audit latency may delay the session-use half.
+      detectors:
+        - detector_class: 'endpoint-process-access-analytics'
+          technologies:
+            - 'Sysmon (events 1, 8, 9, 10, 25)'
+            - 'Microsoft Defender for Endpoint advanced hunting'
+            - 'Endpoint platforms with process-access telemetry'
+          contribution: 'Records memory-read access, raw reads and remote threads against the AI client process.'
+          limitations: 'Requires a sensor; ActionType values are not enumerated on the Defender pages fetched.'
+        - detector_class: 'provider-session-origin-correlation'
+          technologies:
+            - 'Provider audit correlation (Anthropic, OpenAI, Perplexity)'
+            - 'IdP sign-in analytics'
+          contribution: 'Flags a session use from a new device or address for the impersonated user.'
+          limitations: 'Provider audit must be enabled; token reuse cannot be typed where activity types are unpublished.'
+      benign_explanations:
+        - explanation: >-
+            Debuggers, endpoint security tools and remote-support software legitimately open process
+            handles and read memory of running applications.
+          distinguishing_context: >-
+            Suspicious process lineage together with a new-device provider session use for the same user
+            separates the theft-and-replay case; an inventoried debugger with no downstream session change
+            does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Allowlisting all handle opens by debugger-like processes would let a malicious harvester
+            disguised as a debugger through; distinguish by inventory and downstream session use.
+      blind_spots:
+        - description: 'Missing telemetry: no AI vendor documents a process-memory-access, handle-open or client-integrity event.'
+          routes_to: null
+        - description: 'Missing telemetry: Defender ActionType values are not enumerated on the schema pages, so the exact memory-access string is uncertain.'
+          routes_to: null
+        - description: 'Attribution limit: token recovery leaves no application record, so theft rests on the memory-access-to-replay correlation.'
+          routes_to: null
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: >-
+          A red-team demonstration with no in-the-wild frequency; per-estate volume depends on endpoint
+          coverage and debugger noise and is not derivable from the source.
+      safe_conclusion: >-
+        A nonstandard process accessed an AI client's memory and a provider session was used from a new
+        context; this indicates harvesting and suspected replay, and provider audit confirms the session use.
+
+detector_requirements:
+  required: >-
+    Endpoint process-access telemetry on hosts running AI clients; an AI-client process inventory to
+    identify targets and to separate inventoried debuggers and security tools; provider audit enabled to
+    show new-device session use; a join from the memory-access event to the provider session use; a
+    per-user normal-device baseline; and outcome-aware alert text that keeps memory access, replay and
+    impersonation distinct.
+  optional: >-
+    IdP sign-in analytics and network exfiltration telemetry add corroboration of the impersonated
+    session and the channel, but neither gates the endpoint-to-provider correlation.
+  correlation:
+    capability: >-
+      Aligned clocks across endpoint and provider streams; a stable user identity carried across them;
+      a token or session id where the provider exposes one; and retention long enough to hold a
+      normal-device history.
+    window: 'Up to one hour from the memory access with an explicit maximum gap of thirty minutes.'
+  baselines:
+    - name: 'Per-user normal devices and locations, and AI-client process inventory'
+      window: '30-day'
+      seeded_from: >-
+        Observed sanctioned devices and locations per user and a curated AI-client and debugger
+        inventory; never seeded from a window containing the theft, which would enrol the attacker's
+        device as normal.
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on deployed
+    sensors, enabled logging, retained fields and architecture. For this object, verification specifically
+    means confirming that an endpoint sensor records process-memory access on hosts running AI clients and
+    which action string it emits (the Defender pages do not enumerate ActionType, and Sysmon 10 is the
+    only precisely documented event), and that provider audit is enabled to surface new-device session use,
+    since no AI client emits a memory-access or integrity event.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of the technique beyond the 2025 granularity the ATLAS case study records.'
+    - 'The exact memory-access ActionType string in Defender, which the fetched schema pages do not enumerate.'
+    - 'The Anthropic activity-type enumeration, which is unpublished, so token reuse cannot be identified by type.'
+    - 'The OpenAI audit-log retention period, undocumented on the fetched reference.'
+    - 'Whether tokens are device-bound per client, which decides whether replay from a new device succeeds.'
+  assumptions:
+    - id: 'ASSUMPTION-SESSION-FILE-TARGET'
+      verdict_changing: false
+      statement: >-
+        The documented client sign-in session file is an on-disk artifact an attacker targets alongside
+        process memory. The source documents memory harvesting and the client documentation states the
+        file holds sign-in session data; this pack joined the two to name the file as a target, which is
+        reasoning from documentation to attacker behaviour. If wrong and the file holds no usable token,
+        the on-disk stage overstates the surface, though the memory-access-to-replay correlation is
+        unaffected. Resolve it by inspecting the client session file's contents for a usable backend token
+        in a lab.
+  standing_negatives:
+    - statement: >-
+        No fetched AI-vendor page documents a process-memory-access, handle-open or client-integrity
+        event: the compliance and audit references document post-session activity only, so the theft
+        itself has zero native AI telemetry and is visible only on the endpoint.
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the Anthropic, OpenAI and client documentation for a newly documented client-integrity or
+        memory-access event.
+
+missing_states:
+  - id: 'MISSING_ENDPOINT_TELEMETRY'
+    meaning: 'Missing telemetry: no endpoint sensor on the host running the AI client, so the memory access is unrecorded.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Do not claim theft; the theft has no native AI telemetry, so without endpoint coverage only a
+      new-device provider session may be visible, which is not proof of theft.
+  - id: 'MISSING_MEMORY_ACCESS_ACTIONTYPE'
+    meaning: 'Missing telemetry: the exact Defender memory-access ActionType string is not enumerated on the schema pages.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Anchor on Sysmon 10 ProcessAccess as the precisely documented event and treat the Defender action
+      string as an estate-verified value rather than an asserted one.
+  - id: 'MISSING_PROVIDER_AUDIT'
+    meaning: 'Missing telemetry: provider audit disabled, so post-theft session use is not visible.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report suspicious memory access to an AI client; do not claim replay or impersonation without the
+      provider session-use join.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'endpoint_host_and_actor_user'
+    - 'target_ai_client_process'
+    - 'initiating_process_and_lineage'
+    - 'observed_memory_access_event_type'
+    - 'provider_session_use_from_new_context_when_present'
+    - 'token_or_session_id_when_available'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'exfiltration_channel_destination'
+      condition: 'when network telemetry records the recovered token or data leaving the host'
+  recommended_title: 'Nonstandard process read an AI client''s memory, with suspected session replay at the provider'
+  unsupported_title: 'Attacker fully compromised the user''s cloud identity through the AI desktop client'
+
+evidence:
+  confirmed_incident_behavior: >-
+    Lumia reports that AIKatz harvests authentication tokens from the memory of GenAI desktop apps,
+    scanning allocated pages with a regex over memory read via a process handle on Windows or the proc
+    filesystem on Linux, and demonstrates backend impersonation against Claude, Microsoft 365 Copilot and
+    ChatGPT, including OneDrive or SharePoint JWT extraction via M365 Copilot. That the documented client
+    sign-in session file is an on-disk artifact targeted alongside memory is this pack's reading,
+    registered in missing_context.assumptions. This is red-team research, not an in-the-wild incident.
+  supported_conclusion: >-
+    The evidence supports that AI-client authentication tokens can be harvested from process memory and
+    replayed to impersonate the user to the model backend, demonstrated against three clients. The
+    behavior is detectable where a nonstandard memory access to an AI client is correlated with a
+    new-device provider session, and reportable as suspicious memory access from the endpoint alone.
+  unsupported_conclusions: >-
+    The evidence does not establish any in-the-wild use, victim or actor, a token-binding bypass (vendors
+    saw none), or full identity compromise. The theft leaves no application record, so impersonation rests
+    on the endpoint-to-provider correlation, and the upstream host compromise is out of scope.
+  procedure_boundary: >-
+    This procedure is the extraction of an AI-client token from process memory and its replay to the
+    backend. The prior host compromise that granted memory access, and any action taken with the
+    impersonated session, are separate behaviors; a new-device session alone is not evidence this
+    procedure occurred.
+  references:
+    - id: 'REF-THREAT-LUMIA'
+      type: 'incident-procedure-primary-source'
+      title: 'AIKatz'
+      publisher: 'Lumia Security'
+      url: 'https://www.lumia.security/blog/aikatz'
+      trust_tier: 'researcher'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary research source for the memory-harvesting technique, the regex-over-pages method, the
+        proc and process-handle read paths, and the demonstrated impersonation against three clients. It
+        establishes a research demonstration, not an in-the-wild incident or victim.
+    - id: 'REF-THREAT-ATLAS'
+      type: 'framework'
+      title: 'MITRE ATLAS case study AML.CS0036 (AIKatz)'
+      publisher: 'MITRE'
+      url: 'https://raw.githubusercontent.com/mitre-atlas/atlas-data/main/dist/ATLAS.yaml'
+      trust_tier: 'registry'
+      verification: 'not-resolved-out-of-scope'
+      citation_caveat: 'partial-use'
+      citation_caveat_note: >-
+        Only the AML.CS0036 case study and its YEAR (2025) granularity are relied on; ATLAS is a curated
+        derivative of the same Lumia report, not an independent source, so the claim survives on Lumia
+        alone and ATLAS adds only the framework mapping.
+      evidence_use: >-
+        Supports the framework mapping and the 2025 first-observed granularity; not relied on as
+        independent corroboration of the technique.
+    - id: 'REF-SYSMON'
+      type: 'telemetry-documentation'
+      title: 'Sysmon'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/sysinternals/downloads/sysmon'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents Sysmon events 1, 8, 9, 10 and 25 used by the endpoint process-access source, with 10
+        ProcessAccess the precisely documented memory-access event; supports no incident fact.
+    - id: 'REF-DEFENDER-EVENTS'
+      type: 'telemetry-documentation'
+      title: 'DeviceEvents table (advanced hunting)'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-deviceevents-table'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the DeviceEvents initiating-process fields used by the endpoint source and the absence
+        of an enumerated ActionType list; supports no incident fact.
+    - id: 'REF-ANTHROPIC-COMPLIANCE'
+      type: 'telemetry-documentation'
+      title: 'Compliance API'
+      publisher: 'Anthropic'
+      url: 'https://platform.claude.com/docs/en/manage-claude/compliance-api'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the per-actor Activity records, the unpublished activity-type enumeration, and the
+        client session-store file for the Anthropic telemetry source; supports no incident fact.
+    - id: 'REF-OPENAI-AUDIT'
+      type: 'telemetry-documentation'
+      title: 'Audit logs API'
+      publisher: 'OpenAI'
+      url: 'https://platform.openai.com/docs/api-reference/audit-logs'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the login, token and actor-session-IP fields and owner-enablement requirement used by
+        the OpenAI audit source; supports no incident fact.

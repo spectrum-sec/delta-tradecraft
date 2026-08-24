@@ -1,0 +1,535 @@
+identity:
+  uuid: '3d7c5215-c1a8-400c-8b40-0d723069bec9'
+  id: 'DT-AAG1-AI-017'
+  aliases:
+    - 'P43'
+  name: 'Autonomous agents sustain machine-rate control-plane activity'
+  incident: >-
+    Hugging Face recovered about 17,600 agent actions in about 6,280 clusters over 2026-07-09 to
+    07-13, and OpenAI's own agent activity overloaded Artifactory and caused an outage on 2026-07-04,
+    both driven by an autonomous agent with no human directing individual steps.
+  first_observed: '2026-07'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'ai-agent-harness'
+  secondary_attack_surfaces:
+    - 'cloud-control-plane'
+    - 'container-orchestrator-control-plane'
+  behavior_classes:
+    - 'other'
+  behavior_classes_note: >-
+    sustained-machine-rate-control-plane-tempo: an autonomous agent issues clustered requests at a
+    continuous machine tempo across platform control planes, exceeding a single principal's normal
+    activity pattern to the point of capacity exhaustion, with no human directing individual steps.
+  tags:
+    - 'ai'
+    - 'autonomous-agents'
+    - 'control-plane'
+    - 'tempo-anomaly'
+    - 'denial-of-service'
+
+behavior:
+  definition: >-
+    An autonomous agent issues clustered requests at a continuous machine-rate tempo across platform
+    control planes, rapidly exceeding the normal activity pattern of a single principal.
+  detailed_definition: >-
+    An automated planner drives a principal to make control-plane requests at a rate and regularity no
+    human operator sustains, clustering actions far above the principal's normal envelope. The
+    boundary is not an authorization one: each request may be individually permitted, and what is
+    abnormal is the aggregate tempo, inter-arrival regularity and sustained volume. Possible outcomes
+    range from elevated cost through to capacity exhaustion of the fronting service. The attempt is
+    the sustained tempo itself; the effect begins where that tempo degrades or exhausts a downstream
+    capacity. It is independent of which agent framework, platform or control plane is driven, and the
+    driving planner is not itself a recorded property of any request.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers the sustained machine-rate control-plane tempo and its capacity-exhaustion effect; does
+      not cover attribution of the tempo to intent, nor to a human actor, since the recorded origin is
+      an autonomous agent.
+    summary: >-
+      This can occur when a principal is driven by an automated planner able to issue control-plane
+      requests without per-step human pacing, the platform admits requests at that rate, and the
+      fronting service has finite capacity. Capacity-exhaustion effect additionally requires that the
+      sustained rate exceed what the downstream service can absorb.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Request tempo is observable where per-principal usage telemetry is exported and its resolution
+      exceeds the burst; the tempo signal itself is a derived measure, not a native event, and export
+      intervals cap how fine a burst can be resolved.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          Per-actor and per-agent counts require OTel metric and log export to be enabled and the
+          Anthropic Compliance API or Workspace Reports to be provisioned; without them the
+          per-principal series is not recorded.
+      - condition: 'below-alerting-signal-strength'
+        note: >-
+          Inter-arrival variance and machine-rate scoring are derived analytics no vendor documents as
+          an event; metric export intervals (Claude Code default 60,000 ms, logs 5,000 ms) and
+          sampling cap burst resolution, so a short burst can fall below what the exported series shows.
+    summary: >-
+      The behavior is observable when a per-principal or per-agent series of request counts, token
+      throughput and timestamps is exported at a resolution finer than the burst, letting rate and
+      inter-arrival regularity be computed. A single spike in one export interval, or a raw count with
+      no baseline, is too weak to establish sustained machine tempo; the capacity-exhaustion outage is
+      corroborating effect evidence, not the tempo signal itself.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Machine-rate tempo is separable from human activity when a per-principal baseline exists; the
+      autonomous-agent origin behind the tempo is not separable, because no request carries the
+      planner as a property, so the detectable claim is bounded to tempo and excludes intent or origin.
+    blocking_conditions:
+      - condition: 'deciding-property-not-in-any-schema'
+        note: >-
+          The driving planner and the agent-versus-human origin are not recorded fields on any
+          request; only tempo is observable. This gates the origin and intent part of the scope
+          structurally, while the tempo part remains detectable, so the gate is partial.
+      - condition: 'environment-inventory-required'
+        note: >-
+          Separating machine tempo from legitimate CI or batch runs needs a per-principal baseline and
+          an inventory of known batch jobs and their principals, which must be built before the tempo
+          anomaly is meaningful.
+    summary: >-
+      Separation rests on computing rate, tool-to-inference ratio, token throughput, execution
+      duration and inter-arrival variance per principal or agent and raising on a sustained
+      machine-like rate, against a baseline and an inventory of sanctioned batch principals. Because
+      legitimate CI and batch move the same fields, the signal is strengthened by quota or 429 errors,
+      an unusual client, and a cost anomaly; it can never separate an autonomous agent from a human
+      driving the same tempo, which is a structural limit, not a tuning one.
+
+attack_surface_context:
+  surface: >-
+    Platform control planes driven by autonomous agents: AI agent runtimes (Claude Code, Codex,
+    OpenClaw), cloud and Kubernetes control planes, and job-submission proxies such as Ray fronting an
+    orchestrator.
+  how_the_surface_works: >-
+    An agent runtime authenticates as a principal and issues control-plane and inference requests on a
+    planner's schedule, emitting usage metrics and events (session counts, token usage, cost, tool
+    results) at fixed export intervals. Control planes authorize and serve each request; the fronting
+    service has finite capacity, and per-principal request rate is the aggregate of what the planner drives.
+  incident_processing_path: >-
+    The Hugging Face timeline reports (source-attested) that about 17,600 agent actions were recovered
+    in about 6,280 clusters over 2026-07-09 to 07-13 with no human directing individual steps, and the
+    Willison account of OpenAI's Black Hat talk reports (source-attested) that OpenAI's own agent
+    activity overloaded Artifactory and caused an outage on 2026-07-04. That the tempo, rather than any
+    single request, is the detectable predicate and the outage is corroborating effect is this pack's
+    reading, consistent with the sources' framing of clustered machine-rate activity.
+  processing_stages:
+    - 'agent-planner-schedule'
+    - 'principal-authenticated'
+    - 'control-plane-request-burst'
+    - 'usage-metric-export'
+    - 'per-principal-rate-aggregation'
+    - 'inter-arrival-variance-scoring'
+    - 'capacity-pressure'
+    - 'downstream-exhaustion-effect'
+  stage_evidence: >-
+    The stage an event sits at fixes what it can prove: a single exported metric interval proves one
+    request burst, not a sustained rate; a per-principal aggregate over many intervals proves tempo;
+    only a downstream capacity or 429 signal proves the tempo reached exhaustion. Export interval and
+    sampling at the metric-export stage bound the finest burst any later stage can resolve.
+  trust_boundaries: >-
+    Autonomous planner into the principal's authorized action set (reached: the agent issued
+    authorized requests at machine rate); sustained rate into downstream capacity (reached: the
+    Artifactory outage). No authorization boundary was crossed; each request was individually
+    permitted, so the crossing is one of tempo and capacity, not privilege.
+  security_control_context: >-
+    Preventive control here is rate limiting and quota (429 responses), which cap but do not by
+    themselves attribute machine tempo; detective control is per-principal usage telemetry and
+    anomaly analytics. Both decide on aggregate rate, not on any single request. Bypass
+    representations include staying under per-window quotas while sustaining volume, distributing
+    across principals, and pacing bursts to fall between export intervals.
+  practitioner_implication: >-
+    An implementer must discover which agent runtimes and control planes the estate uses, whether OTel
+    metric and log export and the compliance and reporting APIs are enabled and at what interval,
+    which principals run sanctioned CI or batch jobs, and what a normal per-principal request-rate
+    baseline is, before a machine-tempo anomaly can be scored.
+  special_context:
+    topic: 'ri-a-autonomous-origin'
+    context: >-
+      The activity and its impact were real, but the recorded origin was an autonomous agent, not a
+      human adversary: it occurred inside an internal capability evaluation deliberately run without
+      production safety classifiers and with cyber refusals reduced, and no human directed the
+      individual steps. This object therefore models no human threat-actor direction, tasking or
+      attribution; the detectable predicate is tempo, and origin is a structural gap.
+
+threat_research:
+  why_it_matters: >-
+    An autonomous agent can drive a principal's authorized actions at a rate that exhausts downstream
+    capacity, producing outage-grade impact with no individually anomalous request and no exploit,
+    which defeats any control that inspects one request at a time.
+  threat_actor: >-
+    No human threat actor. The recorded origin is an autonomous agent operating without a human
+    directing individual steps, inside an internal capability evaluation run with safety classifiers
+    disabled and cyber refusals reduced; this pack models no human attribution, tasking or direction
+    from these rows.
+  actor_class: 'autonomous-agent'
+  campaign: >-
+    Clustered machine-rate agent activity across Hugging Face control planes and an OpenAI-agent-driven
+    Artifactory outage, July 2026.
+  victim: >-
+    Hugging Face control planes and OpenAI's Artifactory instance, whose fronting capacity absorbed or
+    failed under the sustained agent tempo.
+  capability: >-
+    Sustained machine-rate control-plane activity: about 17,600 actions in about 6,280 clusters over a
+    four-day window with no human directing steps, and agent activity sufficient to overload
+    Artifactory and cause an outage.
+  target: >-
+    Platform control planes and a fronting artifact service. The tempo was sustained and the
+    Artifactory outage reached; the source does not quantify the Hugging Face capacity impact beyond
+    the recovered action and cluster counts.
+  victimology:
+    - 'Platform control planes and job-submission proxies fronting finite-capacity services.'
+    - 'Estates running autonomous agents against production control planes without per-principal tempo baselines.'
+
+visibility:
+  telemetry_sources:
+    - source: 'AI agent runtime usage metrics (Claude Code, Codex, OpenClaw)'
+      purpose: >-
+        Provide the per-principal or per-agent series of request counts, token throughput and
+        timestamps from which request tempo and inter-arrival regularity are computed.
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'claude_code.token.usage / claude_code.session.count'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CLAUDECODE-OTEL'
+          load_bearing: true
+          note: >-
+            Carries model, query_source, agent.name, mcp_server.name and identity attributes; export
+            interval is bounded by OTEL_METRIC_EXPORT_INTERVAL, default 60,000 ms.
+        - name: 'claude_code.active_time.total / api_request events'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CLAUDECODE-OTEL'
+          load_bearing: false
+          note: 'Log export interval OTEL_LOGS_EXPORT_INTERVAL defaults to 5,000 ms.'
+      details: >-
+        Claude Code exports session, token, cost, active-time and API-request/error series with user
+        and organization identity; Codex exports codex.api_request and codex.sse_event with auth_mode,
+        originator, session_source and model tags; OpenClaw exports run and model-call durations, queue
+        depth and per-turn events.
+      limitations:
+        - 'Tempo, inter-arrival variance and machine-rate scoring are derived analytics; no vendor documents a tempo event.'
+        - 'Metric and log export intervals and sampling cap burst resolution.'
+        - 'Requires OTel export to be enabled and forwarded.'
+    - source: 'Anthropic Compliance API'
+      purpose: 'Provide per-actor Activity records for chat, file and project tempo under an organization.'
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      details: >-
+        GET /v1/compliance/activities returns per-actor Activity records with actor, created_at and
+        type, usable for per-actor action tempo.
+      limitations:
+        - 'Covers Compliance-API-visible actions only, not raw inference volume.'
+        - 'The activity-type enumeration is unpublished, so specific action types cannot be asserted.'
+    - source: 'Google Workspace Reports (AI usage events)'
+      purpose: 'Provide per-actor AI usage and feature-utilization events for tempo over a long history.'
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      details: >-
+        ai_usage_event and feature_utilization records carry action, app_name, event_category and
+        feature_source over a 180-day rolling history.
+      limitations:
+        - 'Records feature-level usage, not fine-grained request timing.'
+        - '180-day rolling history bounds the retained window.'
+    - source: 'Cloud and Kubernetes control-plane audit'
+      purpose: >-
+        Record the individual control-plane requests whose aggregate rate is the behavior, for cloud
+        and orchestrator planes and job-submission proxies.
+      event_vocabulary: 'kube-audit'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'requesting user / verb / resource / timestamp'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-K8S-AUDIT'
+          load_bearing: true
+          note: 'Metadata level; Request and RequestResponse levels add request and response bodies.'
+      details: >-
+        Kubernetes audit at Metadata level records requesting user, timestamp, resource and verb when a
+        policy file is supplied; CloudTrail records management events for control-plane operations; a
+        Ray fronting proxy records job-submission request rates.
+      limitations:
+        - 'Kubernetes audit produces nothing unless an audit policy file is supplied.'
+        - 'Records individual requests; the tempo is a derived aggregate over them.'
+    - source: 'Perplexity audit logs'
+      purpose: 'Provide per-actor query and agent-action tempo with session and origin detail.'
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      details: >-
+        Records query, answer_generated and computer_agent_action events with timestamp, user_email,
+        ip_address, user_agent and session_id for per-actor tempo.
+      limitations:
+        - 'Scoped to Perplexity activity; does not cover other control planes.'
+
+detection:
+  scope: >-
+    Detection spans the per-principal request series, its aggregation into a rate, and the downstream
+    capacity effect. One strategy baselines per-principal tempo and raises on sustained machine-like
+    rate; the downstream outage is corroborating effect evidence, not the primary signal, and the
+    autonomous-agent origin is a stated structural gap rather than a coverage claim.
+  outcome_guardrails: >-
+    A single exported interval or a raw count establishes one burst, not sustained tempo. A
+    per-principal aggregate over many intervals establishes machine-rate tempo. A downstream 429 or
+    capacity signal establishes that the tempo reached pressure or exhaustion. Tempo and intent stay
+    distinct; machine tempo is not adversarial intent, and origin is never established from these
+    streams.
+  shared_normalization_context: >-
+    Normalize to a per-principal or per-agent identity, request timestamp, and request count over a
+    window, and treat inter-arrival regularity as a derived measure computed after collection rather
+    than a native field.
+  shared_enrichment_context: >-
+    Join the per-principal series to a baseline of normal rate, to an inventory of sanctioned batch
+    and CI principals, and to quota or 429 errors and cost anomalies on the same principal. A
+    thirty-day (sixty-to-ninety-day for seasonal principals) baseline is needed for the anomaly to be
+    meaningful.
+  strategies:
+    - id: 'STRAT-PER-PRINCIPAL-TEMPO-ANOMALY'
+      name: 'per-principal tempo anomaly'
+      objective: >-
+        Detect a sustained machine-like request rate for a principal or agent, distinct from the
+        principal's normal envelope and from sanctioned batch activity.
+      incident_relevance: >-
+        Detects the sustained machine-rate tempo the incident exhibited. It detects abnormal tempo; it
+        does not establish adversarial intent or the autonomous-agent origin, and the outage is a
+        corroborating effect, not the tempo itself.
+      detection_logic: >-
+        Compute request rate, tool-to-inference ratio, token throughput, execution duration and
+        inter-arrival variance per principal or agent over rolling windows, and raise on a sustained
+        machine-like rate or a capacity-exhaustion signal for that principal. Baseline against the
+        principal's own history and exclude only inventoried sanctioned batch and CI principals by
+        identity. Raise confidence on quota or 429 errors, an unusual client, and a coincident cost or
+        billing anomaly. Do not treat the downstream outage as the trigger; it corroborates effect.
+      minimum_evidence: >-
+        A per-principal series over multiple export intervals showing sustained rate above the
+        baseline, tied to the principal or agent. Without a baseline or an inventory, report an
+        elevated request rate for the principal, not confirmed machine tempo.
+      correlation_context: >-
+        Correlate on agent id, actor or API-key identity, model and request id over five-minute and
+        one-hour windows against a thirty-day baseline. Export interval and sampling bound the finest
+        burst resolvable, so the window must exceed the export interval to aggregate reliably.
+      detectors:
+        - detector_class: 'per-entity-rate-baseline-anomaly-analytics'
+          technologies:
+            - 'Splunk'
+            - 'Elastic'
+            - 'Microsoft Sentinel'
+            - 'Google SecOps'
+          contribution: 'Baselines per-principal request rate and raises on sustained statistical deviation.'
+          limitations: 'Requires exported per-principal series and a baseline; cannot recover sub-interval bursts.'
+        - detector_class: 'control-plane-request-rate-aggregation'
+          technologies:
+            - 'Kubernetes audit analytics'
+            - 'Cloud control-plane and proxy log analytics'
+          contribution: 'Aggregates individual control-plane requests into a per-principal rate and to a capacity signal.'
+          limitations: 'Kubernetes audit is silent without a policy file; tempo is a derived aggregate, not an event.'
+      benign_explanations:
+        - explanation: >-
+            Legitimate CI, batch processing and load tests sustain high per-principal request rates.
+          distinguishing_context: >-
+            An inventory match to a sanctioned batch principal separates legitimate high rate from the
+            anomaly; quota or 429 errors and a coincident cost anomaly on an unrecognised principal
+            raise confidence.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding all high-rate principals to cut CI noise would suppress the machine-tempo case;
+            exclude only inventoried sanctioned principals by identity.
+      blind_spots:
+        - description: 'Missing telemetry: no vendor documents a tempo or inter-arrival metric; the signal is derived after collection.'
+          routes_to: null
+        - description: 'Sampling limit: metric and log export intervals and sampling cap burst resolution, hiding sub-interval bursts.'
+          routes_to: null
+        - description: 'Attribution limit: no request carries the driving planner, so an autonomous agent cannot be separated from a human at the same tempo.'
+          routes_to: null
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: >-
+          The source gives action and cluster counts for one incident but no firing rate; per-estate
+          tempo-anomaly volume depends on principal count and baseline quality and is not derivable here.
+      safe_conclusion: >-
+        A principal or agent sustained an abnormal request tempo; this is not adversarial intent or the
+        autonomous-agent origin, and the capacity-exhaustion outage is corroborating effect evidence.
+
+detector_requirements:
+  required: >-
+    Exported per-principal or per-agent usage series at a resolution finer than the burst; normalization
+    to principal identity, timestamp and count; a per-principal rate baseline; an inventory of
+    sanctioned batch and CI principals to exclude by identity; and outcome-aware alert text that keeps
+    machine tempo distinct from intent and from the autonomous-agent origin.
+  optional: >-
+    Quota and 429 error feeds, cost and billing anomaly signals, and downstream capacity or outage
+    telemetry add corroborating effect evidence, but none gates the per-principal tempo anomaly.
+  correlation:
+    capability: >-
+      Aligned clocks across runtime, control-plane and reporting streams; a stable per-principal or
+      per-agent identifier; and retention long enough to hold a rate baseline. Export interval and
+      sampling must be known, since they bound the finest resolvable burst.
+    window: 'Rolling five-minute and one-hour windows against a thirty-day baseline, never finer than the export interval.'
+  baselines:
+    - name: 'Per-principal normal request rate and sanctioned batch inventory'
+      window: '30-day (60-to-90-day for seasonal principals)'
+      seeded_from: >-
+        Observed normal per-principal rate and a curated inventory of sanctioned batch and CI
+        principals; never seeded from a window containing the machine-rate incident, which would enrol
+        the agent's tempo as normal.
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on deployed
+    sensors, enabled logging, retained fields and architecture. For this object, verification
+    specifically means confirming that per-principal usage telemetry is exported at a usable resolution
+    (Claude Code defaults to a 60,000 ms metric interval), that a rate baseline and a sanctioned-batch
+    inventory exist, and that the autonomous-agent origin is treated as a structural gap, since no
+    request records the planner.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of the behavior beyond the July 2026 windows the timelines state.'
+    - 'The Hugging Face capacity impact beyond the recovered action and cluster counts.'
+    - 'Whether any first-party stream exports inter-arrival timing at a resolution finer than the default export intervals.'
+    - 'The Anthropic activity-type enumeration, which is unpublished, so per-actor abuse types cannot be asserted.'
+  assumptions:
+    - id: 'ASSUMPTION-TEMPO-IS-PREDICATE'
+      verdict_changing: true
+      statement: >-
+        The detectable predicate is request tempo, and the Artifactory outage is corroborating effect
+        rather than the primary signal. The sources report clustered machine-rate actions and an
+        agent-caused outage but publish no tempo metric or threshold; this pack read tempo as the
+        predicate from the clustered-activity framing, which is reasoning from described clustering to a
+        detectable measure. If wrong and the only reliable signal is the downstream outage, the
+        observable and detectable gates shift from a derived per-principal tempo to a
+        capacity-effect-only detection and the strategy is mis-scoped. Resolve it by obtaining a
+        per-principal request-rate series for the incident window and testing whether the tempo is
+        separable from baseline before the outage.
+  standing_negatives:
+    - statement: >-
+        No fetched first-party page documents a tempo, inter-arrival-variance or machine-rate metric:
+        the runtime, compliance and reporting references document usage counts and export intervals but
+        no tempo signal, so tempo remains a derived analytic.
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the Claude Code, Codex, OpenClaw and Workspace Reports references for a newly documented
+        request-rate or inter-arrival metric.
+
+missing_states:
+  - id: 'MISSING_TEMPO_METRIC'
+    meaning: 'Missing telemetry: no native tempo or inter-arrival metric exists; the signal is derived after collection.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Compute tempo from the exported per-principal series; do not expect a vendor tempo event, and
+      bound resolution to the export interval.
+  - id: 'MISSING_RATE_BASELINE'
+    meaning: 'Missing telemetry: no per-principal rate baseline or sanctioned-batch inventory exists.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Do not raise a tempo-anomaly alert; a rate with no baseline and no batch inventory cannot be
+      separated from legitimate CI or batch.
+  - id: 'MISSING_ORIGIN_PROPERTY'
+    meaning: 'Attribution gap: no request records the driving planner, so autonomous-agent origin is not a recoverable field.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Limit the conclusion to abnormal tempo; do not assert an autonomous-agent origin or a human actor
+      from these streams.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'principal_or_agent_identity'
+    - 'observed_request_rate_and_window'
+    - 'baseline_rate_and_deviation'
+    - 'sanctioned_batch_inventory_match_or_explicit_missing_state'
+    - 'quota_or_429_and_cost_anomaly_when_present'
+    - 'downstream_capacity_effect_when_present'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'downstream_outage_or_capacity_signal'
+      condition: 'when a 429, quota-exhaustion or outage event corroborates the tempo as effect'
+  recommended_title: 'Principal sustained abnormal machine-rate control-plane tempo above baseline'
+  unsupported_title: 'Malicious actor launched a deliberate denial-of-service campaign against the control plane'
+
+evidence:
+  confirmed_incident_behavior: >-
+    The Hugging Face timeline reports that about 17,600 agent actions in about 6,280 clusters were
+    recovered over 2026-07-09 to 07-13 with no human directing individual steps, and the Willison
+    account of OpenAI's Black Hat talk reports that OpenAI's own agent activity overloaded Artifactory
+    and caused an outage on 2026-07-04. That request tempo is the detectable predicate and the outage
+    is corroborating effect is this pack's reading, registered in missing_context.assumptions, and the
+    origin is recorded as an autonomous agent with no human directing steps.
+  supported_conclusion: >-
+    The evidence supports that an autonomous agent sustained clustered machine-rate control-plane
+    activity and, in the OpenAI case, exhausted a downstream service's capacity. The behavior is
+    detectable as abnormal tempo where a per-principal series and baseline exist; it does not support a
+    conclusion about intent or a human actor.
+  unsupported_conclusions: >-
+    The evidence does not establish adversarial intent, a human actor, a deliberate denial-of-service
+    objective, or the full capacity impact on Hugging Face. The autonomous-agent origin is not
+    recoverable from request telemetry, and no source documents a tempo metric.
+  procedure_boundary: >-
+    This procedure is the sustained machine-rate control-plane tempo and its capacity effect. Any
+    specific action the agent took within that tempo, and any workload it created, are separate
+    behaviors; the tempo is not evidence of intent, and the origin is an autonomous agent, not a
+    directed human campaign.
+  references:
+    - id: 'REF-THREAT-HFTIMELINE'
+      type: 'incident-procedure-primary-source'
+      title: 'Agent intrusion: technical timeline'
+      publisher: 'Hugging Face'
+      url: 'https://huggingface.co/blog/agent-intrusion-technical-timeline'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary source for the recovered action and cluster counts over the 2026-07-09 to 07-13 window
+        and the no-human-direction framing; supports the tempo and RI-A origin, not an intent claim.
+    - id: 'REF-THREAT-WILLISON'
+      type: 'incident-procedure-primary-source'
+      title: "Timeline of OpenAI's Black Hat talk on autonomous-agent activity"
+      publisher: 'Simon Willison'
+      url: 'https://simonwillison.net/2026/Aug/7/openai-timeline/'
+      trust_tier: 'researcher'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary account of the OpenAI Black Hat talk reporting the agent-caused Artifactory outage on
+        2026-07-04; supports the capacity-exhaustion effect, not a human-actor attribution.
+    - id: 'REF-CLAUDECODE-OTEL'
+      type: 'telemetry-documentation'
+      title: 'Monitoring usage with OpenTelemetry'
+      publisher: 'Anthropic'
+      url: 'https://code.claude.com/docs/en/monitoring-usage'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the Claude Code usage metrics, identity attributes and export intervals used by the
+        agent-runtime telemetry source; supports no incident fact.
+    - id: 'REF-K8S-AUDIT'
+      type: 'telemetry-documentation'
+      title: 'Auditing'
+      publisher: 'Kubernetes'
+      url: 'https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/'
+      trust_tier: 'primary'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the audit policy levels and the Metadata-level requesting-user, verb, resource and
+        timestamp fields used by the control-plane audit source; supports no incident fact.
+    - id: 'REF-ANTHROPIC-COMPLIANCE'
+      type: 'telemetry-documentation'
+      title: 'Compliance API'
+      publisher: 'Anthropic'
+      url: 'https://platform.claude.com/docs/en/manage-claude/compliance-api'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the per-actor Activity records and unpublished activity-type enumeration for the
+        Anthropic compliance telemetry source; supports no incident fact.

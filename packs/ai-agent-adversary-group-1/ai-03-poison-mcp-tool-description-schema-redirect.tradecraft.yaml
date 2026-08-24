@@ -1,0 +1,518 @@
+identity:
+  uuid: 'b7271157-4753-492c-8d6e-525744bf5bbd'
+  id: 'DT-AAG1-AI-003'
+  aliases:
+    - 'P14'
+  name: 'Attackers poison an MCP tool description or schema to redirect an agent'
+  incident: >-
+    Invariant Labs MCP tool poisoning, demonstrated on Cursor: an <IMPORTANT> block hidden in a tool
+    description told the agent to read ~/.cursor/mcp.json and ~/.ssh material and smuggle it in a
+    sidenote argument, reproducible in any client that hides full tool descriptions.
+  first_observed: '2025'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'submitted-content-ingest'
+  secondary_attack_surfaces:
+    - 'ai-agent-harness'
+  behavior_classes:
+    - 'other'
+  behavior_classes_note: >-
+    tool-metadata-poisoning: hidden instructions placed in an MCP tool description or input schema
+    redirect the agent's tool selection or arguments to the attacker's benefit, without the user
+    seeing the poisoned metadata.
+  tags:
+    - 'ai'
+    - 'mcp'
+    - 'tool-poisoning'
+    - 'cursor'
+    - 'secret-exfiltration'
+
+behavior:
+  definition: >-
+    An attacker changes an MCP tool description or schema to include instructions the user cannot see,
+    causing the agent to select or use the tool in a way that benefits the attacker.
+  detailed_definition: >-
+    The adversary controls the metadata of a tool an agent can call, a description and input schema
+    the agent consumes when deciding which tool to use and how. The agent treats that metadata as
+    trustworthy guidance, so poisoning it crosses from untrusted published content into agent
+    behaviour, potentially reading local secrets and smuggling them into an argument, while the user
+    sees only an abbreviated or hidden description. The attempt ends when the poisoned metadata is
+    published or served; success begins when the agent ingests it and acts on the hidden instruction.
+    It is independent of MCP client, tool transport, and how the metadata was distributed.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers poisoning the tool description or schema and the agent acting on the hidden instruction,
+      including reading and smuggling local secrets; does not cover any onward use of the smuggled data.
+    summary: >-
+      This can occur when an attacker can set or change the description or input schema of a tool an
+      agent can call, the client presents the agent the full metadata while hiding or truncating it
+      from the user, and the agent follows imperative text in that metadata. Secret exfiltration
+      additionally requires that the agent has local read access and a tool argument into which the
+      data can be smuggled.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      That a tool definition changed, and in one path its description text, can be observed only where
+      an optional attribute or a change event is emitted; the poisoned schema body and a per-server
+      before/after comparison have no native capture and are customer-built.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          The one first-party surface carrying a description, Agent 365 gen_ai.tool.description, is an
+          optional developer-emitted attribute; Claude Code server identity needs OTEL_LOG_TOOL_DETAILS=1.
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          Whether any change event or server-connection telemetry exists depends on the client
+          deployed; MCP notifications/tools/list_changed is a protocol notification the spec does not
+          require the client to persist.
+      - condition: 'cross-source-join-required'
+        note: >-
+          Establishing that a captured description or schema is poisoned needs it hashed and diffed
+          against an approved baseline the estate must build itself.
+    summary: >-
+      The behavior is observable in fragments: Copilot Studio AIPluginOperation events prove a
+      plugin/tool definition changed without its text, Agent 365 optionally carries the description,
+      and Claude Code mcp_server_connection gives a per-session server inventory to diff. A
+      change event alone establishes that a definition changed, not that it is poisoned; a server
+      inventory establishes which servers connected, not their tool metadata. Establishing the
+      behavior needs the actual poisoned description or schema captured and compared, which no native
+      event provides.
+  detectable:
+    answer: 'no'
+    answer_scope: >-
+      From the documented logs the poisoned definition cannot be separated from a benign tool update:
+      the deciding evidence, the description and schema body, is not carried by any native event, so
+      only server-name and change-event signals remain and those do not reveal poisoning.
+    blocking_conditions:
+      - condition: 'deciding-property-not-in-any-schema'
+        note: >-
+          The poisoned description and schema body is the deciding property, and no evaluated product
+          natively captures a tool-schema payload or schema hash; Agent 365 documents only an optional
+          description attribute, and Copilot Studio change events exclude the text. No audit tier or
+          enablement switch produces the missing capture, so the gap is structural, not collection.
+    summary: >-
+      Nothing in the documented telemetry separates a poisoned description or schema from a routine
+      upgrade, because the text that would decide it is not captured natively and normal tool updates
+      are common. Separation would require customer-built capture and hashing of each tool's
+      description and schema, an approved baseline to diff against, and immutable change auditing, none
+      of which the evaluated products provide; without them a change event or a first-seen server is
+      too weak to establish the behavior.
+
+attack_surface_context:
+  surface: >-
+    MCP tool metadata, the description and input schema an agent consumes when selecting and calling
+    tools, demonstrated against Cursor and reproducible in any client that hides full descriptions.
+  how_the_surface_works: >-
+    An MCP server advertises tools via tools/list, returning name, description, and a JSON-Schema
+    inputSchema plus annotations, and can signal changes with notifications/tools/list_changed when it
+    declares listChanged. The agent reads the full description and schema to decide which tool to call
+    and with what arguments, while many clients show the user only a short or hidden form of the
+    description, so the agent and the user see different text.
+  incident_processing_path: >-
+    Invariant Labs reports (source-attested) that an <IMPORTANT> block embedded in a tool description
+    instructed the agent to read ~/.cursor/mcp.json and ~/.ssh material and pass it in a sidenote
+    argument, and that the attack reproduces in any client that hides full tool descriptions from the
+    user. That the poisoned description and the secret-bearing argument are two limbs of one procedure
+    is the source's own framing, which this pack keeps as a single object per its scope note.
+  processing_stages:
+    - 'tool-metadata-authoring'
+    - 'server-publication-or-update'
+    - 'tools-list-advertisement'
+    - 'agent-metadata-ingestion'
+    - 'hidden-instruction-following'
+    - 'local-secret-read'
+    - 'secret-smuggled-in-argument'
+  stage_evidence: >-
+    The stage instrumentation sits at fixes what it can prove: a change event proves a definition
+    changed, not its content; a server-connection record proves a server was used, not its tool
+    metadata; only a captured description or schema proves the poisoning, and only the local file read
+    and the argument value prove the secret was taken and smuggled, and neither is natively captured.
+  trust_boundaries: >-
+    Untrusted tool metadata into the agent's tool-selection context (reached: the agent acted on the
+    hidden instruction); the user's visibility boundary (reached: the poisoned text was hidden from
+    the user); the local filesystem and secret store into a tool argument (reached in the
+    demonstration: config and SSH material were read and smuggled). The spec states clients must treat
+    tool annotations as untrusted unless from a trusted server, a boundary the demonstration crosses.
+  security_control_context: >-
+    Client tool-confirmation and trusted-server policy decide whether poisoned metadata is acted on,
+    but a client that hides full descriptions denies the user the text needed to judge. The MCP spec
+    marks annotations untrusted from untrusted servers, yet does not require the client to log
+    metadata or its changes. Bypass representations include hiding instructions in the description
+    body, adding schema fields such as a sidenote argument, and changing metadata after an initial
+    trusted review.
+  practitioner_implication: >-
+    An implementer must discover whether any deployed client captures tool descriptions or schemas at
+    all, whether an approved baseline of tool metadata exists to diff against, and how server and tool
+    identity are recorded, because without customer-built schema capture the poisoned definition is
+    not separable from a benign update on the documented logs.
+
+threat_research:
+  why_it_matters: >-
+    An agent trusts tool metadata as guidance and often sees more of it than the user does, so a
+    poisoned description can turn a benign-looking tool into a channel that reads local secrets and
+    smuggles them out, with the deciding text hidden from the person approving the tool.
+  threat_actor: >-
+    Unknown. The behavior was demonstrated by Invariant Labs security research; no threat group is
+    attributed and there is no CVE.
+  campaign: 'Invariant Labs MCP tool poisoning research, demonstrated on Cursor (responsibly disclosed).'
+  victim: >-
+    Users of MCP clients that hide full tool descriptions, demonstrated on Cursor; the disclosure
+    targeted the client class rather than a named victim organisation.
+  capability: >-
+    A hidden <IMPORTANT> instruction in a tool description that made the agent read ~/.cursor/mcp.json
+    and ~/.ssh material and smuggle it in a sidenote argument, stated to reproduce in any client that
+    hides full descriptions; demonstrated as research, not observed in the wild.
+  target: >-
+    The agent's tool-selection and argument-construction path and the local secrets it can read.
+    Secret exfiltration was demonstrated; the source does not enumerate affected users or deployments.
+  victimology:
+    - 'MCP clients that present the agent full tool metadata while hiding or truncating it from the user.'
+    - 'Agents with local filesystem and secret access reachable from a tool argument.'
+
+visibility:
+  telemetry_sources:
+    - source: 'Microsoft Agent 365 execute_tool tool-description attribute'
+      purpose: >-
+        The one first-party surface that can carry the poisoned tool description text for later
+        comparison.
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'gen_ai.tool.description -> CloudAppEvents.RawEventData.ToolDescription'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-AGENT365-ATTR'
+          load_bearing: true
+          note: 'Optional developer-emitted attribute on execute_tool; absent unless the developer emits it.'
+        - name: 'gen_ai.tool.name -> ToolName, gen_ai.tool.server.name'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-AGENT365-ATTR'
+          load_bearing: false
+          note: 'Names the tool and MCP server the description belongs to.'
+      details: >-
+        execute_tool spans can carry the tool description alongside the tool and server name, giving
+        the only documented first-party path for the poisoned description text; the input schema body
+        is still not captured.
+      limitations:
+        - 'The description attribute is optional and often not emitted.'
+        - 'No product documents a captured tool-schema payload or schema hash.'
+    - source: 'MCP protocol tools/list and change notifications'
+      purpose: 'Define the tool metadata fields a client would hash and diff, and the change signal to react to.'
+      event_vocabulary: 'application-record'
+      tier: 'no-tier-model'
+      operational_viability: 'first-party-build'
+      details: >-
+        tools/list returns name, description, inputSchema (JSON Schema, default 2020-12), and
+        annotations; notifications/tools/list_changed fires when a server declares listChanged and its
+        tool list changes. The spec states clients must consider annotations untrusted unless from
+        trusted servers.
+      limitations:
+        - 'notifications/tools/list_changed is a protocol notification, not a persisted audit record.'
+        - 'Nothing in the spec requires the client to log tool metadata or its changes.'
+    - source: 'AI coding-agent server-connection telemetry (Claude Code)'
+      purpose: 'Give a per-session inventory of connected MCP servers to diff for a newly appearing server.'
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'claude_code.mcp_server_connection (status, transport_type, server_scope, is_plugin, plugin.name, server_name)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CLAUDE-OTEL'
+          load_bearing: false
+          note: 'server_name and error present only with OTEL_LOG_TOOL_DETAILS=1; carries no tool schema.'
+      details: >-
+        The connection event gives per-session server identity and transport to diff against a known
+        set, but no tool description or schema.
+      limitations:
+        - 'Carries server identity only, never the tool description or schema.'
+        - 'Server name is gated behind OTEL_LOG_TOOL_DETAILS=1.'
+    - source: 'Copilot Studio plugin/tool definition audit'
+      purpose: 'Prove that a plugin or tool definition was created, updated, or deleted, without its text.'
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'on-by-default'
+      details: >-
+        AIPluginOperationCreate/Update/Delete activities carry BotId and Power Platform fields such as
+        CreationTime, ID, ResultStatus, and Operation, establishing that a definition changed.
+      limitations:
+        - 'The description text and schema body are explicitly absent from these events.'
+        - 'A change is not evidence of poisoning; benign updates produce the same event.'
+    - source: 'Endpoint file and MCP server-side logging'
+      purpose: 'Record a locally stored server manifest change and any server-declared log messages.'
+      event_vocabulary: 'host-process-event'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      details: >-
+        DeviceFileEvents or Sysmon 11 record a change to a locally stored server manifest; MCP
+        logging/setLevel and notifications/message carry server-controlled messages where the server
+        declares the logging capability.
+      limitations:
+        - 'MCP server-side logging is server-controlled, not client-guaranteed.'
+        - 'A manifest file change shows a change, not the poisoned metadata content.'
+
+detection:
+  scope: >-
+    On the documented surfaces this behavior is not implementable as a standing rule: the poisoned
+    description and schema body is not natively captured, so no query separates it from a benign tool
+    update. The block therefore carries a single reformulated strategy, capture-and-diff of tool
+    metadata against an approved baseline, that names the derived telemetry an estate must build and
+    the weak change signals available in the meantime.
+  outcome_guardrails: >-
+    A definition-change event establishes that a tool definition changed, not that it is poisoned. A
+    server-connection record establishes a server was used, not its metadata. An optional captured
+    description establishes the text, and only a diff against an approved baseline can flag it as
+    changed. None of these, absent the captured schema and a baseline, establish that the agent was
+    redirected. These stay distinct.
+  shared_normalization_context: >-
+    Normalise each tool to a server identity, tool name, and a hash of its description and input
+    schema, and normalise a change to a before/after pair against an approved version rather than to
+    the raw notification.
+  shared_enrichment_context: >-
+    Where capture exists, join the tool-metadata hash to the MCP server URL or address, tool name, and
+    session, and enrich with signing or integrity metadata and an approved-server-and-schema
+    inventory. A 90-day-plus archive of captured metadata is recommended so a poisoning that predates
+    the baseline can still be found retrospectively.
+  strategies:
+    - id: 'STRAT-SCHEMA-CAPTURE-AND-DIFF'
+      name: 'tool-metadata capture and baseline diff'
+      objective: >-
+        Detect a change to a tool's description or input schema by capturing and hashing tool metadata
+        per server at session start and comparing it to an approved version.
+      incident_relevance: >-
+        Targets the poisoning directly, but only where the metadata is captured; on the documented
+        native logs it degrades to change-and-novelty signals that flag that a definition changed, not
+        that it is poisoned, so it does not by itself establish the behavior.
+      detection_logic: >-
+        Where a client or a server-side capture emits tool descriptions and schemas, hash each tool's
+        description and inputSchema at session start and raise on a diff from the approved baseline,
+        especially imperative or instruction-like description text or a new secret-bearing argument.
+        Where native capture is absent, fall back to Copilot Studio AIPluginOperation change events,
+        MCP tools/list_changed, and per-session server-inventory novelty as weak change indicators.
+        Do not treat a bare change event as poisoning.
+      minimum_evidence: >-
+        A captured tool description or schema that differs from an approved baseline for the same
+        server and tool. Without capture, only report that a tool definition changed or a new server
+        appeared, explicitly not that a poisoned definition was found.
+      correlation_context: >-
+        Correlate on MCP server URL or address, tool name, and schema hash, with session id where
+        instrumentation emits it; comparison is retrospective against a durable baseline rather than
+        real-time, and a 90-day-plus archive is recommended.
+      detectors:
+        - detector_class: 'schema-capture-and-integrity-diff'
+          technologies:
+            - 'Customer-built tool-metadata capture and hashing'
+            - 'Signed release metadata and integrity verification'
+            - 'SIEM durable lookups / KV / summary index'
+          contribution: 'Flags a tool description or schema that differs from an approved, signed baseline.'
+          limitations: 'Requires capture no evaluated product emits natively, plus a maintained baseline.'
+        - detector_class: 'definition-change-and-server-novelty'
+          technologies:
+            - 'Copilot Studio audit (AIPluginOperation*)'
+            - 'MCP tools/list_changed handling'
+            - 'Claude Code mcp_server_connection inventory diff'
+          contribution: 'Signals that a definition changed or a new server appeared.'
+          limitations: 'Cannot reveal the poisoned description or distinguish it from a benign upgrade.'
+      benign_explanations:
+        - explanation: >-
+            Normal tool and server upgrades change descriptions and schemas routinely, producing the
+            same change events and inventory novelty.
+          distinguishing_context: >-
+            A captured description or schema diff showing instruction-like text or a new secret-bearing
+            argument separates poisoning from an upgrade; a bare change or novelty signal does not.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Suppressing all definition-change events as upgrade noise would suppress the poisoning
+            change, which is indistinguishable from an upgrade without the captured text.
+      blind_spots:
+        - description: 'Missing telemetry: no product documents a captured tool-schema payload or schema hash.'
+          routes_to: null
+        - description: 'Missing telemetry: notifications/tools/list_changed is not a persisted audit record and need not be logged.'
+          routes_to: null
+        - description: 'Missing telemetry: Copilot Studio change events exclude the description and schema text.'
+          routes_to: null
+        - description: 'Missing telemetry: the Agent 365 description attribute is optional and often not emitted.'
+          routes_to: null
+      analyst_response: >-
+        Determine which MCP servers and tools the session used, retrieve any captured description or
+        schema and diff it against the approved baseline, inspect the tool for instruction-like text or
+        an unexpected secret-bearing argument, check for a preceding local secret read on the endpoint,
+        and confirm the server's provenance and signing.
+      safe_conclusion: >-
+        On the documented logs a poisoned tool definition or its effect cannot be reliably detected;
+        only a captured description or schema diffed against an approved baseline could establish it.
+
+detector_requirements:
+  required: >-
+    Customer-built capture and hashing of each tool's description and input schema; an approved,
+    ideally signed, baseline of tool metadata to diff against; immutable change auditing so a
+    post-review change is visible; server and tool identity normalisation; and outcome-aware alert
+    text that never reports a bare change event or server novelty as a confirmed poisoning.
+  optional: >-
+    Signed release metadata and integrity verification let a diff distinguish an authorised update
+    from a tampered one, and MCP server-side logging adds server-declared context, but neither is
+    guaranteed by the protocol and neither substitutes for the missing native schema capture.
+  correlation:
+    capability: >-
+      A durable store of captured tool metadata keyed by server URL or address, tool name, and schema
+      hash, aligned to session identity where available, so a current definition can be compared to an
+      approved prior one.
+    window: 'Retrospective against a 90-day-plus baseline; there is no real-time join to rely on.'
+  baselines:
+    - name: 'Approved MCP tool descriptions and schemas per server'
+      window: '90-day-plus archive'
+      seeded_from: >-
+        Signed or reviewed tool releases; never seeded from whatever a server currently advertises,
+        which would enrol a poisoned description as the approved baseline.
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on deployed
+    sensors, enabled logging, retained fields, and architecture. For this object, verification
+    specifically means confirming whether any deployed client or server-side hook captures tool
+    descriptions and schemas at all, since no evaluated product emits a schema payload or hash
+    natively and the detection is not implementable without that customer-built capture.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of the behavior; the cited research page is undated with Apr 7 and Apr 11 updates of an unstated year.'
+    - 'The claim rests on a single primary source; no independent replication was retrievable.'
+    - 'Which deployed clients, if any, capture tool descriptions or schemas for comparison.'
+    - 'Whether the demonstrated secret read and argument-smuggling reproduce on clients other than Cursor.'
+  assumptions:
+    - id: 'ASSUMPTION-SINGLE-PROCEDURE-SCOPE'
+      verdict_changing: false
+      statement: >-
+        The poisoned description and the secret-bearing sidenote argument are treated as one procedure
+        because the source demonstrates and frames them together. This pack keeps them in one object
+        rather than splitting the metadata poisoning from the exfiltration argument, which is a scope
+        choice following the source. If wrong, the object conflates two behaviors that should carry
+        separate manifestation and detection, mis-scoping coverage rather than inverting a verdict.
+        Resolve it by checking whether the source or a replication treats the description poisoning
+        and the argument exfiltration as independently exploitable.
+  standing_negatives:
+    - statement: >-
+        No evaluated product natively captures an MCP tool-schema payload or schema hash: the fetched
+        pages document only an optional Agent 365 description attribute and Copilot Studio change
+        events that exclude the description and schema text, and the MCP spec does not require the
+        client to persist tools/list_changed.
+      ref: 'REF-AGENT365-ATTR'
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the Agent 365 attribute reference, the Copilot Studio audit documentation, and the MCP
+        tools specification for a newly documented tool-schema capture or schema-hash field.
+
+missing_states:
+  - id: 'MISSING_SCHEMA_CAPTURE'
+    meaning: 'Missing telemetry: no native event captures the tool description or schema body to compare.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Do not claim a poisoned definition from change or novelty signals; state that detection requires
+      customer-built schema capture and an approved baseline.
+  - id: 'MISSING_APPROVED_BASELINE'
+    meaning: 'Missing capability: no approved baseline of tool descriptions and schemas exists to diff against.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Treat any captured metadata as unverifiable until a signed or reviewed baseline is established;
+      report change events only as changes.
+  - id: 'MISSING_CHANGE_PERSISTENCE'
+    meaning: 'Missing telemetry: tools/list_changed is not persisted and definition-change events omit the text.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Use change events only to trigger a re-capture and diff, not as evidence of poisoning on their own.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'actor_or_explicit_missing_state'
+    - 'mcp_server_and_tool_identity'
+    - 'captured_metadata_or_explicit_missing_state'
+    - 'baseline_diff_result_when_available'
+    - 'observed_change_or_novelty_signal'
+    - 'local_secret_read_or_argument_evidence_when_present'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'poisoned_description_or_schema_excerpt'
+      condition: 'when tool metadata was captured and a diff against the approved baseline is available'
+  recommended_title: 'Tool definition changed on an MCP server with no captured schema to confirm poisoning'
+  unsupported_title: 'Malicious MCP tool poisoning detected and blocked'
+
+evidence:
+  confirmed_incident_behavior: >-
+    Invariant Labs reports that an <IMPORTANT> block hidden in an MCP tool description instructed the
+    agent to read ~/.cursor/mcp.json and ~/.ssh material and pass it in a sidenote argument, and that
+    the attack reproduces in any client that hides full tool descriptions from the user. That the
+    description poisoning and the secret-bearing argument constitute one procedure is the source's own
+    framing, kept as a single object here per its scope, and noted in missing_context.assumptions.
+  supported_conclusion: >-
+    The evidence supports that a poisoned MCP tool description or schema can redirect an agent to read
+    and smuggle local secrets, hidden from the user, in any client that hides full descriptions,
+    demonstrated as research on Cursor. On the documented telemetry the poisoning is not reliably
+    detectable; only customer-built capture and hashing of tool descriptions and schemas diffed
+    against an approved baseline could establish it.
+  unsupported_conclusions: >-
+    The evidence does not establish in-the-wild use, a threat actor, affected users or deployments, or
+    that any deployed client captures the metadata needed to detect the behavior. It also does not
+    establish onward use of any smuggled secret, which requires telemetry not carried by the source.
+  procedure_boundary: >-
+    This procedure is the poisoning of the tool description or schema and the agent acting on the
+    hidden instruction, including reading and smuggling local secrets into an argument. Any later use
+    of the smuggled secret, additional tool calls, or account compromise is a separate behavior and is
+    not evidenced by the poisoning itself.
+  references:
+    - id: 'REF-THREAT-INVARIANTLABS'
+      type: 'incident-procedure-primary-source'
+      title: 'MCP Security Notification: Tool Poisoning Attacks'
+      publisher: 'Invariant Labs'
+      url: 'https://invariantlabs.ai/blog/mcp-security-notification-tool-poisoning-attacks'
+      trust_tier: 'researcher'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Single primary source for the hidden-instruction tool description, the ~/.cursor and ~/.ssh
+        read, the sidenote-argument smuggling, and the hidden-description reproduction. It does not
+        document in-the-wild use or affected deployments.
+    - id: 'REF-AGENT365-ATTR'
+      type: 'telemetry-documentation'
+      title: 'Agent 365 observability attribute reference'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability-attribute-reference'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the optional gen_ai.tool.description attribute and its ToolDescription mapping used
+        by the Agent 365 telemetry source and the standing negative; supports no incident fact.
+    - id: 'REF-MCP-TOOLS-SPEC'
+      type: 'telemetry-documentation'
+      title: 'Model Context Protocol server tools specification'
+      publisher: 'Model Context Protocol'
+      url: 'https://modelcontextprotocol.io/specification/2025-11-25/server/tools'
+      trust_tier: 'primary'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents tools/list fields, notifications/tools/list_changed, and the untrusted-annotations
+        statement used by the protocol telemetry source; supports no incident fact.
+    - id: 'REF-CLAUDE-OTEL'
+      type: 'telemetry-documentation'
+      title: 'Monitoring usage with OpenTelemetry (Claude Code)'
+      publisher: 'Anthropic'
+      url: 'https://code.claude.com/docs/en/monitoring-usage'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents claude_code.mcp_server_connection used for the server-inventory telemetry source;
+        supports no incident fact.
+    - id: 'REF-COPILOT-STUDIO-AUDIT'
+      type: 'telemetry-documentation'
+      title: 'Audit logging in Copilot Studio'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/microsoft-copilot-studio/admin-logging-copilot-studio'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the AIPluginOperation change activities and that they exclude the description and
+        schema text, used by the definition-change telemetry source; supports no incident fact.

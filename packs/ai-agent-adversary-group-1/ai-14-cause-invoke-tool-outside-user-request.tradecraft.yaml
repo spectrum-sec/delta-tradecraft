@@ -1,0 +1,511 @@
+identity:
+  uuid: 'ea7be2ec-4486-4a31-b46a-41969981abe3'
+  id: 'DT-AAG1-AI-014'
+  aliases:
+    - 'P34'
+  name: 'Attackers cause an agent to invoke a tool outside the user request'
+  incident: >-
+    GitHub MCP (Claude Desktop) and Supabase MCP (Cursor): responsibly disclosed research in which
+    injected instructions made the agent call tools the user never asked for, reading private repos and
+    opening a pull request, and reading an integration_tokens table because a ticket told it to.
+  first_observed: '2025'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'ai-agent-harness'
+  secondary_attack_surfaces:
+    - 'authorization-boundary'
+  behavior_classes:
+    - 'other'
+  behavior_classes_note: >-
+    unrequested-tool-invocation-via-indirect-injection: injected instructions in the agent's context
+    make it call a tool the user did not request, producing an unapproved external action; the deciding
+    property is deviation from the session's requested scope, not the tool call itself.
+  tags:
+    - 'ai'
+    - 'mcp'
+    - 'prompt-injection'
+    - 'tool-invocation'
+    - 'github'
+    - 'supabase'
+
+behavior:
+  definition: >-
+    An attacker injects instructions into agent context that make the agent call a tool the user did not
+    request, creating an unapproved external action.
+  detailed_definition: >-
+    The adversary controls content that enters the agent's context (an issue, a ticket, a document) and
+    uses it to induce a tool call outside the scope of what the user asked for. The boundary crossed is
+    from the user's requested task into an autonomous external action the user never authorized: the
+    agent's permissions are unchanged, but the set of actions it takes expands under injected direction.
+    Possible outcomes range from a read the user did not request to a state-changing external action.
+    The attempt ends when the unrequested call is issued; success begins when the tool executes it. The
+    deciding predicate is that the call falls outside the session's requested scope, which is a
+    comparison, not a property of any single event. It is independent of MCP client, tool, and target
+    system.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers an agent issuing a tool call outside the user's requested scope under injected direction;
+      does not cover the downstream effect of that call on the target system, which varies with the tool.
+    summary: >-
+      This can occur when an attacker can place instructions where the agent reads them, the agent has a
+      tool it is permitted to call, and the agent's autonomy lets it call that tool without a fresh user
+      request. The unapproved action requires only that the agent issue the call; whether an approval
+      prompt gates it depends on the client's permission configuration.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      The tool call and its approval decision are observable where tool telemetry is captured; whether the
+      call was *outside the user request* is not carried by any event and must be reconstructed against a
+      per-session requested scope. The invocation is observable; the deviation predicate is not.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          Tool-call arguments are captured only with Claude Code OTEL_LOG_TOOL_DETAILS=1; Agent 365
+          arguments and results are captured but not surfaced in advanced hunting, and M365 Copilot audit
+          contains no tool arguments or results.
+      - condition: 'deciding-property-not-in-any-schema'
+        note: >-
+          No product exposes a per-agent tool allowlist or a per-session requested-scope field, and
+          gen_ai.invoke_agent.tool_calls is not documented; the deciding property, that a call is outside
+          the user's request, exists in no schema and must be derived from a reconstructed baseline. The
+          invocation itself remains observable, so only the deviation predicate is structurally lost.
+    summary: >-
+      The behavior is observable in part: tool_decision and tool_result events record the invocation, the
+      tool name, the approval decision and its source, and (with tool details on) the arguments. What no
+      event records is whether the call was within the user's requested scope, so the deviation must be
+      reconstructed from a per-session requested-scope baseline the estate builds. A recorded tool call
+      establishes that the agent acted; establishing that it acted outside the request needs the derived
+      scope comparison, and Claude Code's tool_decision source of config does not even say which rule matched.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Separable from legitimate autonomy when a captured tool call falls outside a reconstructed per-session
+      requested scope, ideally with a missing approval or a sensitive argument; broad agent mandates and
+      legitimate autonomous workflows overlap and cannot be told apart without the scope baseline.
+    blocking_conditions:
+      - condition: 'environment-inventory-required'
+        note: >-
+          Separation requires a per-session requested-scope baseline and an approved agent-tool pairing map
+          that no product ships; the estate must build them before an out-of-scope call can be recognized.
+    summary: >-
+      Distinguishing an unrequested invocation from legitimate autonomy rests on comparing each tool call to
+      the session's requested scope and an approved agent-tool map, both reconstructed by the estate, and
+      raising when a call falls outside them, strengthened by an absent approval or a sensitive or
+      destructive argument. A call outside a well-built scope with no approval is distinguishable; a call
+      inside a broad but legitimate mandate, or one judged against no scope baseline, is not.
+
+attack_surface_context:
+  surface: >-
+    An MCP-capable agent (Claude Desktop with the GitHub MCP server, Cursor with the Supabase MCP server)
+    that reads task content and autonomously calls connected tools.
+  how_the_surface_works: >-
+    The client gives the model a set of connected tools and the content of the current task (issues,
+    tickets, files). The model decides which tools to call to satisfy the task, and the client may execute
+    calls automatically or gate them behind an approval prompt. Task content is trusted as context, so an
+    instruction embedded in an issue or ticket is read with the same authority as the user's own request,
+    letting injected text expand the set of calls the agent makes.
+  incident_processing_path: >-
+    Research reports (source-attested) that the GitHub MCP flow autonomously read private repositories and
+    opened a pull request after the user asked only to look at public issues, and that the Supabase MCP
+    agent read an integration_tokens table because a ticket instructed it to. That these actions were
+    outside the user's request is stated by the sources; that recognizing them requires a per-session
+    requested-scope baseline, rather than any single recorded field, is this pack's reading of why the
+    invocation alone is insufficient evidence.
+  processing_stages:
+    - 'injected-instruction-ingest'
+    - 'agent-context-assembly'
+    - 'tool-selection'
+    - 'approval-decision'
+    - 'tool-call-issued'
+    - 'tool-execution'
+    - 'target-system-effect'
+  stage_evidence: >-
+    The stage an instrument sits at fixes what it proves: a tool_decision event proves a call was issued and
+    whether it was approved, not whether it was requested; a target-system audit proves the external effect,
+    not the intent behind it; only a comparison against the session's requested scope proves the call was
+    unrequested.
+  trust_boundaries: >-
+    Untrusted task content into the agent's trusted instruction context (reached: the injected ticket or
+    issue steered tool selection); the user's requested scope into an expanded autonomous action set
+    (crossed: the agent acted beyond the request); agent permission boundary (not crossed: permissions were
+    unchanged, which is why this is scope deviation, not privilege escalation). The target-system effect was
+    reached in both demonstrations.
+  security_control_context: >-
+    Preventive controls decide at the tool boundary: an approval prompt gates a call, a per-tool or per-agent
+    allowlist restricts which tools run, and a requested-scope policy could reject calls outside the task.
+    These log an approval decision where captured, but no product ships a requested-scope or allowlist-deviation
+    field, so the deviation is not natively decided. Bypass representations include a broad standing mandate
+    that makes many calls in-policy, an auto-approve permission that issues no prompt, and framing the
+    injected instruction as part of the legitimate task.
+  practitioner_implication: >-
+    An implementer must discover which agents call tools autonomously and under what approval policy, whether
+    tool-detail capture is enabled, how a per-session requested scope can be reconstructed (from the user
+    prompt and task), what the approved agent-tool pairings are, and which target-system audit logs can
+    confirm the external effect, since no native field marks a call as unrequested.
+
+threat_research:
+  why_it_matters: >-
+    An agent that acts on task content can be redirected by anyone who can write into that content, turning a
+    shared issue or ticket into a way to make the agent take actions the user never authorized, using the
+    agent's own legitimate permissions.
+  threat_actor: >-
+    Unknown; both are responsibly disclosed research (Invariant Labs on the GitHub MCP flow, General Analysis
+    on the Supabase MCP flow) with no in-the-wild actor or group attribution.
+  campaign: >-
+    MCP unrequested-invocation research against the GitHub MCP server with Claude Desktop and the Supabase MCP
+    server with Cursor.
+  victim: >-
+    None in the wild; the demonstrations used the researchers' own repositories and Supabase project. The
+    exposed class is any team running an autonomous MCP agent over content that untrusted parties can write.
+  capability: >-
+    Researchers showed an agent autonomously reading private repositories and opening a pull request after
+    being asked only about public issues, and reading an integration_tokens table because a ticket told it to.
+    The demonstrations establish unrequested tool invocation with real external effects; they do not establish
+    a production victim.
+  target: >-
+    Private repositories and a credentials table, reached through the agent's own permitted tools. Reached in
+    the research setups; not shown against a third-party production tenant.
+  victimology:
+    - 'Teams running autonomous MCP or agentic clients over issues, tickets, or documents writable by others.'
+    - 'Agents granted broad standing tool mandates or auto-approve permissions.'
+
+visibility:
+  telemetry_sources:
+    - source: 'AI-runtime tool-decision and result capture (Claude Code / Cowork / Codex)'
+      purpose: >-
+        Record each tool invocation, its approval decision and source, and (with details on) its arguments,
+        so a call can be compared to the reconstructed requested scope.
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'claude_code.tool_decision (tool_name, tool_use_id, decision, tool_source, source, tool_parameters)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CLAUDE-OTEL'
+          load_bearing: true
+          note: >-
+            tool_parameters requires OTEL_LOG_TOOL_DETAILS=1; tool_result is emitted for executed calls but
+            not for rejected ones; source of config does not indicate which rule matched. Correlation via
+            session.id, prompt.id, event.sequence, message.uuid.
+      details: >-
+        Claude Cowork records whether each tool action was approved, rejected, or initiated automatically from
+        existing permissions; Codex codex.tool_decision records approved or denied and whether the decision came
+        from config versus the user, plus codex.tool_result.
+      limitations:
+        - 'Arguments require OTEL_LOG_TOOL_DETAILS=1; no requested-scope or allowlist field exists.'
+        - 'source=config does not say which rule matched the decision.'
+    - source: 'Agent 365 execute_tool spans and CloudAppEvents'
+      purpose: 'Attribute a tool invocation to an agent, server, and session across the Microsoft agent estate.'
+      event_vocabulary: 'application-record'
+      tier: 'request'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'execute_tool span (gen_ai.tool.name, server.address, gen_ai.conversation.id, microsoft.session.id)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-AGENT365'
+          load_bearing: true
+          note: >-
+            CloudAppEvents ActionType is ExecuteToolBySDK/ExecuteToolByGateway/ExecuteToolByMCPServer; tool
+            arguments and results are captured but not surfaced in advanced hunting.
+      details: >-
+        Agent 365 maps the execute_tool span to CloudAppEvents fields naming the tool, server, conversation,
+        and session; M365 Copilot RecordType 261 carries AISystemPlugin identity and grounding only.
+      limitations:
+        - 'Tool arguments and results are not queryable in advanced hunting.'
+        - 'M365 Copilot audit contains no tool arguments or results.'
+    - source: 'Target-system and endpoint effect telemetry'
+      purpose: 'Confirm the external effect of the unrequested call, proving effect rather than attempt.'
+      event_vocabulary: 'application-record'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      details: >-
+        The target system's own audit log records the effect (GitHub action with actor_is_agent and
+        agent_session_id, Artifactory DEPLOY or DELETE, Slack actor, action, and entity); DeviceProcessEvents
+        or DeviceNetworkEvents and Sysmon 1 or 3 record the external action on the agent host.
+      limitations:
+        - 'Proves the effect, not that the call was outside the user request.'
+        - 'Requires access to the target system''s audit log or endpoint telemetry.'
+
+detection:
+  scope: >-
+    Detection spans the tool invocation, its approval decision, and its effect on the target system. Two
+    materially distinct strategies divide the path: one compares each captured tool call to a reconstructed
+    per-session requested scope and approved agent-tool map, and one confirms the external effect in the
+    target system's own audit log.
+  outcome_guardrails: >-
+    A tool call outside the requested scope establishes an unrequested invocation attempt; a missing approval
+    raises confidence; a target-system audit entry establishes the effect. These stay distinct: "agent called
+    a tool the user did not request" and "the tool changed the target system" are different alerts, and a call
+    within a broad but legitimate mandate is neither.
+  shared_normalization_context: >-
+    Reconstruct a per-session requested scope from the user prompt and task, normalize tool names and target
+    actions into a canonical action, and classify each call against the requested scope and an approved
+    agent-tool pairing map.
+  shared_enrichment_context: >-
+    Join the tool-decision event, the approval state, and the target-system audit on agent id and version,
+    conversation id, tool call id, approval id, and user id. A rolling policy and version history supports
+    judging whether a call was in-policy; the requested-scope baseline is the deciding enrichment.
+  strategies:
+    - id: 'STRAT-INVOCATION-SCOPE-VIOLATION'
+      name: 'invocation scope violation'
+      objective: >-
+        Flag a tool call that falls outside the session's reconstructed requested scope or the approved
+        agent-tool map, raising severity on a missing approval or a sensitive argument.
+      incident_relevance: >-
+        Detects the unrequested invocation the research demonstrated. It establishes that a call fell outside
+        the request; it does not by itself prove the target-system effect, which the effect strategy confirms.
+      detection_logic: >-
+        For every captured tool call, require the tool name and action to be within the session's requested
+        scope and the approved agent-tool map, and raise on a call outside them or lacking an expected
+        approval event. Reconstruct the requested scope from the user prompt and task. Do not treat a broad
+        standing mandate as license: judge each call against the specific request, and flag a sensitive or
+        destructive argument even inside a broad mandate.
+      minimum_evidence: >-
+        A captured tool call, the reconstructed requested scope, and the approval state. Without the target
+        audit, report an attempted unrequested invocation, not a confirmed external effect.
+      correlation_context: >-
+        Key on agent id and version, conversation id, tool call id, and user id in real time on the single
+        call, against a rolling policy and version history. source=config does not say which rule matched, so
+        approval attribution is coarse.
+      detectors:
+        - detector_class: 'agent-policy-and-scope-analytics'
+          technologies:
+            - 'SIEM stateful correlation with durable lookup or KV state (Splunk, Elastic, Sentinel, Google SecOps)'
+            - 'Agent-runtime tool-decision logs (Claude Code, Codex, Agent 365)'
+          contribution: 'Compares each invocation to the reconstructed scope and approved agent-tool map.'
+          limitations: 'No native requested-scope or allowlist field; the scope baseline must be built by the estate.'
+      benign_explanations:
+        - explanation: >-
+            Broad agent mandates and legitimate autonomous workflows produce tool calls the user did not
+            explicitly enumerate.
+          distinguishing_context: >-
+            A call outside a well-reconstructed requested scope with no approval separates the malicious case; a
+            call inside a legitimate standing mandate does not, absent a sensitive argument.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Whitelisting an agent's whole tool set as in-mandate would pass any injected call as autonomous
+            workflow.
+      blind_spots:
+        - description: 'Missing telemetry: no native requested-scope or allowlist field; deviation is a derived analytic.'
+          routes_to: null
+        - description: 'Missing telemetry: Agent 365 arguments not queryable; M365 has no arguments or results.'
+          routes_to: null
+        - description: 'Evasion: an injected instruction framed as part of the legitimate task.'
+          routes_to: null
+      analyst_response: >-
+        Reconstruct what the user requested, identify the out-of-scope call and its arguments, check the
+        approval state and source, determine whether the target system recorded an effect, and find the
+        injected content that redirected the agent.
+      safe_conclusion: >-
+        The agent issued a tool call outside the session's reconstructed requested scope; the external effect
+        requires the target-system audit.
+    - id: 'STRAT-DOWNSTREAM-EFFECT-CONFIRMATION'
+      name: 'downstream effect confirmation'
+      objective: >-
+        Confirm that the unrequested tool call produced an external effect in the target system.
+      incident_relevance: >-
+        Detects the effect the invocation record cannot prove alone, such as an opened pull request or a
+        credentials-table read. A target-system effect must be tied to the agent call before it is attributed
+        to this procedure.
+      detection_logic: >-
+        Select target-system audit events attributable to an agent (GitHub actor_is_agent with
+        agent_session_id, Artifactory DEPLOY or DELETE, Slack action and entity) and correlate them to a tool
+        call flagged out-of-scope within a bounded window on session and agent identity. Raise on an
+        agent-attributed effect that matches an out-of-scope invocation.
+      minimum_evidence: >-
+        A target-system audit event attributable to the agent, joined to the out-of-scope tool call. Without
+        the invocation join, report an agent-attributed action in the target system, not an unrequested
+        invocation.
+      correlation_context: >-
+        Correlate within a bounded window on agent session id and the tool call id where the target carries an
+        agent session identifier. Where the target audit lacks agent identity, the join is by user and timing
+        and is weaker.
+      detectors:
+        - detector_class: 'target-system-audit-correlation'
+          technologies:
+            - 'GitHub agentic audit log events'
+            - 'Artifactory access log'
+            - 'Slack Audit Logs API'
+          contribution: 'Proves the external effect and, where present, the agent session behind it.'
+          limitations: 'Requires target-audit access; some targets carry no agent identity to join on.'
+      benign_explanations:
+        - explanation: >-
+            Agents legitimately make approved changes in target systems as part of sanctioned automation.
+          distinguishing_context: >-
+            A target effect matching an out-of-scope invocation separates the malicious case; an approved,
+            in-scope automation does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding all agent-attributed target changes as automation would dismiss the unrequested effect.
+      blind_spots:
+        - description: 'Missing telemetry: the target audit lacks agent identity to join to the invocation.'
+          routes_to: null
+        - description: 'Attribution limit: no invocation record captured, leaving only the target effect.'
+          routes_to: null
+      analyst_response: >-
+        Identify the target-system effect and its agent session, join it to the out-of-scope invocation, confirm
+        the arguments, and scope any further changes the agent made in the target.
+      safe_conclusion: >-
+        An agent produced an effect in a target system; attributing it to an unrequested invocation requires
+        the join to the flagged tool call.
+
+detector_requirements:
+  required: >-
+    Tool-decision and tool-result capture on the AI surface with approval state and, where possible, arguments;
+    reconstruction of a per-session requested scope from the user prompt and task; an approved agent-tool
+    pairing map; canonicalization of tool names and target actions; target-system audit access to confirm the
+    effect; a join from the invocation to the effect on agent and session identity; and outcome-aware alert
+    text separating an unrequested call from a confirmed target effect.
+  optional: >-
+    A rolling policy and version history and risk-based alerting per agent and session improve attribution of
+    which policy applied, but neither gates the scope comparison.
+  correlation:
+    capability: >-
+      Aligned clocks across the AI-runtime and target-system streams, a stable agent and session identity
+      carried into the target audit, and a reconstructed requested-scope baseline to decide deviation, since no
+      native field marks a call as unrequested.
+    window: 'Real time on the invocation; the target effect typically follows within seconds to minutes.'
+  baselines:
+    - name: 'Per-session requested scope and approved agent-tool map'
+      window: 'Per-session scope, plus a rolling 30-day approved-pairing map'
+      seeded_from: >-
+        The user prompt and task for the requested scope, and sanctioned agent-tool assignments for the map;
+        never seeded from observed agent calls, which would enrol an injected invocation as approved.
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on deployed sensors,
+    enabled logging, retained fields, and architecture. For this object, verification means confirming that
+    tool-decision capture (with arguments) is enabled, that a per-session requested scope can actually be
+    reconstructed, and that the target system's audit can be joined to the invocation, since no product ships a
+    requested-scope or allowlist-deviation field.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of the behavior; both cited research pages are undated in the catalog and dated here to 2025.'
+    - 'How reliably a per-session requested scope can be reconstructed from a real user prompt and task.'
+    - 'Whether any production team, as opposed to the research setups, experienced an unrequested invocation.'
+    - 'Which approval configuration each demonstration ran under, and whether a prompt was shown.'
+  assumptions:
+    - id: 'ASSUMPTION-SCOPE-DERIVATION'
+      verdict_changing: true
+      statement: >-
+        Recognizing an unrequested invocation requires a reconstructed per-session requested scope, because no
+        recorded field marks a call as outside the request. The sources state the actions were outside the
+        user's request but publish no requested-scope field; this pack inferred that the deviation must be
+        derived from a baseline, reasoning from the absence of a native field to a derived predicate. If wrong
+        and a native requested-scope or allowlist field does exist, the deciding-property-not-in-any-schema
+        blocking condition is incorrect and the observable answer strengthens. Resolve it by re-checking the
+        agent-runtime and Agent 365 schemas for a per-session requested-scope or per-agent allowlist field.
+  standing_negatives:
+    - statement: >-
+        No product exposes a per-agent tool allowlist or a per-session requested-scope field: the pages fetched
+        for the telemetry audit document tool-decision and execute_tool events but no allowlist or
+        requested-scope field, and gen_ai.invoke_agent.tool_calls is not documented on any page fetched.
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the Claude Code, Codex, and Agent 365 tool and observability documentation for a newly
+        documented requested-scope, allowlist, or tool-call-count field.
+
+missing_states:
+  - id: 'MISSING_REQUESTED_SCOPE_FIELD'
+    meaning: 'Missing telemetry: no native requested-scope or allowlist field, so deviation must be reconstructed.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Build the requested-scope baseline from the prompt and task and mark the deviation a derived analytic;
+      do not claim an out-of-scope call from a single event.
+  - id: 'MISSING_TOOL_ARGUMENTS'
+    meaning: 'Missing telemetry: tool arguments not captured (details off, or Agent 365/M365 not queryable).'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Judge scope on tool name and action alone and mark sensitive-argument scoring unavailable.
+  - id: 'MISSING_TARGET_AUDIT'
+    meaning: 'Missing telemetry: no target-system audit access to confirm the external effect.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report an attempted unrequested invocation from the AI-runtime record and mark the effect unconfirmed.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'actor_or_explicit_missing_state'
+    - 'agent_id_and_session'
+    - 'tool_name_and_action'
+    - 'reconstructed_requested_scope'
+    - 'approval_state_and_source'
+    - 'target_system_effect_when_confirmed'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'sensitive_or_destructive_argument'
+      condition: 'when tool arguments are captured and contain a sensitive or destructive value'
+  recommended_title: 'Agent invoked a tool outside the user''s requested scope'
+  unsupported_title: 'Attacker gained full control of the agent and the target systems'
+
+evidence:
+  confirmed_incident_behavior: >-
+    Research reports that the GitHub MCP flow autonomously read private repositories and opened a pull request
+    after the user asked only to look at public issues, and that the Supabase MCP agent read an
+    integration_tokens table because a ticket instructed it to. That recognizing these as unrequested requires
+    a per-session requested-scope baseline rather than any single recorded field is this pack's reading,
+    registered in missing_context.assumptions, not a claim the sources make about telemetry.
+  supported_conclusion: >-
+    The evidence supports that injected instructions in agent context can make an agent call tools outside the
+    user's request, producing real external effects using the agent's own permissions. The behavior is
+    detectable where a captured invocation is compared to a reconstructed requested scope and confirmed against
+    the target system's audit, and reportable as an attempted unrequested invocation from the AI-runtime record.
+  unsupported_conclusions: >-
+    The evidence does not establish an in-the-wild victim, privilege escalation (permissions were unchanged), or
+    that a requested-scope field exists to decide deviation natively. Those require a production baseline and
+    telemetry not carried by the cited research.
+  procedure_boundary: >-
+    This procedure is the invocation of a tool outside the user's requested scope. The upstream injection that
+    redirected the agent and the downstream use of whatever the tool returned or changed are separate behaviors
+    and are not evidenced by the call having been issued.
+  references:
+    - id: 'REF-THREAT-INVARIANTLABS'
+      type: 'incident-procedure-primary-source'
+      title: 'GitHub MCP vulnerability'
+      publisher: 'Invariant Labs'
+      url: 'https://invariantlabs.ai/blog/mcp-github-vulnerability'
+      trust_tier: 'researcher'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary source for the GitHub MCP agent autonomously reading private repos and opening a pull request
+        after being asked only about public issues. It does not document a requested-scope field or a production
+        victim.
+    - id: 'REF-THREAT-GENERALANALYSIS'
+      type: 'incident-procedure-primary-source'
+      title: 'Supabase MCP blog'
+      publisher: 'General Analysis'
+      url: 'https://generalanalysis.com/blog/supabase-mcp-blog'
+      trust_tier: 'researcher'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary source for the Supabase MCP agent reading an integration_tokens table because a ticket told it
+        to. It does not document a production victim.
+    - id: 'REF-CLAUDE-OTEL'
+      type: 'telemetry-documentation'
+      title: 'Monitoring usage with OpenTelemetry (Claude Code)'
+      publisher: 'Anthropic'
+      url: 'https://code.claude.com/docs/en/monitoring-usage'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the tool_decision and tool_result events, their decision and source fields, and the
+        OTEL_LOG_TOOL_DETAILS flag used by the AI-runtime telemetry source; supports no incident fact.
+    - id: 'REF-AGENT365'
+      type: 'telemetry-documentation'
+      title: 'Agent 365 observability attribute reference'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability-attribute-reference'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the execute_tool span and its CloudAppEvents mapping used by the Agent 365 telemetry source,
+        and that arguments are not surfaced in advanced hunting.

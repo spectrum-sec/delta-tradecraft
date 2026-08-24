@@ -1,0 +1,577 @@
+identity:
+  uuid: '47769928-f4c9-4b5c-9153-9298556c934b'
+  id: 'DT-AAG1-AI-027'
+  aliases:
+    - 'P62'
+  name: 'Browser-agent URL or omnibox input is accepted as a trusted user prompt'
+  incident: >-
+    OpenAI Atlas omnibox prompt injection, a responsibly disclosed proof-of-concept reported by
+    NeuralTrust in which an attacker-crafted URL typed or pasted into the agent omnibox is treated
+    as trusted user intent rather than untrusted web content.
+  first_observed: '2025'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'ai-agent-harness'
+  secondary_attack_surfaces:
+    - 'submitted-content-ingest'
+  behavior_classes:
+    - 'other'
+  behavior_classes_note: >-
+    input-origin-trust-confusion: a browser agent classifies attacker-crafted URL or omnibox text
+    as trusted user instruction rather than untrusted web content, so a URL-shaped payload is
+    executed with the authority of a user prompt.
+  tags:
+    - 'ai'
+    - 'browser-agent'
+    - 'omnibox'
+    - 'prompt-injection'
+    - 'atlas'
+
+behavior:
+  definition: >-
+    A browser agent treats attacker-crafted URL or omnibox input as trusted user intent rather than
+    untrusted web content, allowing the URL-shaped payload to influence navigation or action.
+  detailed_definition: >-
+    An adversary controls the text placed into a browser agent's combined address-and-prompt input.
+    The agent must decide whether that text is a user instruction it should obey or web-sourced
+    content it should merely act on; the behavior is the agent resolving that decision in the
+    attacker's favour, so content authored by an untrusted party crosses into the trusted-instruction
+    channel. The attempt ends when the crafted input is submitted; success begins when the agent
+    classifies it as user intent and lets it steer navigation or a subsequent action. It is
+    independent of which agent product, input widget, or downstream action is involved.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers an agent accepting crafted omnibox or URL input as trusted intent and acting on it; it
+      does not cover any specific downstream objective the redirected action then achieves.
+    summary: >-
+      This can occur where a browser agent exposes a combined address-and-prompt input, does not
+      separate user-typed instructions from URL-borne or web-sourced content, and lets the accepted
+      text influence navigation or an action. It requires only that an attacker get crafted
+      URL-shaped text into that input, by a crafted link, paste, or redirect.
+  observable:
+    answer: 'no'
+    answer_scope: >-
+      The navigation that results is observable in browser, DNS, and endpoint telemetry, and one
+      agent product records the query text; the deciding property, whether the input was classified
+      as trusted user intent versus untrusted web content, is recorded by no fetched product and is
+      therefore not observable as the behavior itself.
+    blocking_conditions:
+      - condition: 'deciding-property-not-in-any-schema'
+        note: >-
+          No fetched browser-agent or browser product documents an input-origin or
+          trust-classification field; whether the omnibox value was handled as user intent or as web
+          content exists in no schema and is a required derived field.
+      - condition: 'action-emits-no-record'
+        note: >-
+          The leading browser agent (ChatGPT Atlas) documents that it emits no Compliance API logs
+          and no SIEM or eDiscovery feed, so the classification decision produces no native record at
+          all on that product.
+    summary: >-
+      To observe the behavior itself an implementer would need a per-input origin-and-trust field
+      that no product emits. The resulting navigation can be read from Chrome risk-classified URL
+      events, DNS resolver records, or endpoint network events, and one product (Perplexity) records
+      the query text, but a navigation record establishes only that a page was visited, not that
+      crafted input was trusted as a prompt. A visited-URL event with no origin attribution, or an
+      agent-action record with no trust label, is too weak to establish this behavior.
+  detectable:
+    answer: 'no'
+    answer_scope: >-
+      A crafted-input trust misclassification cannot be separated from a legitimate user typing the
+      same URL or prompt, because the record that would distinguish them, the input's origin and the
+      agent's trust decision, is not emitted.
+    blocking_conditions:
+      - condition: 'deciding-property-not-in-any-schema'
+        note: >-
+          The field that separates attacker-originated input trusted as intent from a user's own
+          typed instruction is the input origin and trust classification, which is in no schema.
+      - condition: 'indistinguishable-from-legitimate'
+        note: >-
+          A user pasting a URL with instruction-like query or fragment content and the agent acting
+          on it is byte-identical, in every emitted record, to the malicious case.
+    summary: >-
+      Separation would require the agent to label each input with its origin and its trust decision
+      and to emit that label, then to correlate an untrusted origin with a resulting cross-domain
+      action. Without that field, benign URL navigation with instruction-shaped parameters and the
+      attack produce the same telemetry, so the reformulated question a detector can pursue is a
+      cross-domain navigation or action anomaly, not the trust misclassification directly.
+
+attack_surface_context:
+  surface: >-
+    A browser agent's combined address-and-prompt input (omnibox), and the classifier that decides
+    whether text there is a user instruction or web-sourced content.
+  how_the_surface_works: >-
+    A browser agent accepts natural-language instructions and URLs through one input field, resolves
+    what the user means, and then navigates or takes actions on their behalf. Because the same field
+    accepts both a destination to visit and an instruction to obey, the agent must classify each
+    entry; a URL can carry instruction-like text in its path, query, or fragment that the classifier
+    may read as intent.
+  incident_processing_path: >-
+    NeuralTrust reports (source-attested) that a crafted URL supplied to the ChatGPT Atlas omnibox is
+    accepted as a trusted user prompt rather than as untrusted web content, so its embedded
+    instructions steer the agent. That the deciding step is a single trust classification over the
+    omnibox value, rather than a later action-authorization check, is this pack's reading of the
+    described behavior, not a pipeline the disclosure enumerates.
+  processing_stages:
+    - 'attacker-crafts-url-or-omnibox-payload'
+    - 'payload-delivered-to-user-or-agent'
+    - 'omnibox-input-received'
+    - 'input-origin-and-trust-classification'
+    - 'accepted-as-user-intent'
+    - 'navigation-or-action-initiated'
+    - 'cross-domain-effect'
+  stage_evidence: >-
+    Instrumentation before the classification step could prove the input's origin, but no product
+    records it; instrumentation at navigation proves only that a page was visited. The one stage that
+    would prove the behavior, the trust classification, emits nothing, so every available event sits
+    downstream of the decision and can attest the effect but not the cause.
+  trust_boundaries: >-
+    Untrusted web-or-attacker content into the agent's trusted-instruction channel (reached in the
+    PoC: the crafted URL was accepted as intent); agent intent into navigation and action (reached:
+    the agent acted on the accepted input). Whether any specific privileged action was completed is
+    not established by the disclosure and is treated as unverified here.
+  security_control_context: >-
+    The preventive control is the agent's own input-origin and trust classifier: it should treat
+    omnibox URLs and web content as untrusted and only user-authored instructions as intent. It
+    decides in-process and, on the products fetched, emits no record of its verdict, so a
+    misclassification is neither blocked visibly nor logged. Bypass representations include
+    instruction text hidden in a URL path, query, or fragment, and redirect chains that place
+    attacker content into the omnibox.
+  practitioner_implication: >-
+    An implementer must discover which browser agent the estate runs and whether it emits any action
+    or query record at all (Atlas emits none; Perplexity records query text), whether Chrome
+    Enterprise reporting and endpoint or DNS telemetry cover the browsing hosts, and that no product
+    supplies an input-origin field, so any trust-classification signal must be built as client-side
+    instrumentation rather than read from a log.
+
+threat_research:
+  why_it_matters: >-
+    A browser agent that mistakes a URL for a user instruction lets any attacker who can get a link
+    in front of the agent redirect its trusted actions, converting ordinary web content into
+    commands executed with the user's browser authority, session, and reach.
+  threat_actor: >-
+    Unknown; the behavior was demonstrated by NeuralTrust researchers as a responsibly disclosed
+    proof-of-concept, with no in-the-wild actor or group attributed.
+  campaign: >-
+    NeuralTrust research disclosure of an OpenAI Atlas omnibox prompt-injection technique; no named
+    campaign or victim organization.
+  victim: >-
+    Users of AI browser agents that expose a combined address-and-prompt input; the source
+    demonstrates the class rather than naming a compromised organization.
+  capability: >-
+    A demonstrated proof-of-concept in which a crafted URL placed in the ChatGPT Atlas omnibox is
+    accepted as a trusted user prompt; the source shows the trust misclassification, not a measured
+    population of exploited users or a completed downstream objective.
+  target: >-
+    The omnibox trust-classification path of AI browser agents; targeted and demonstrated in a PoC,
+    with real-world exploitation neither claimed nor evidenced by the source.
+  victimology:
+    - 'Enterprises deploying AI browser agents with a combined URL-and-prompt input to end users.'
+    - 'Workflows where the agent takes authenticated actions in the same browser session as the user.'
+
+visibility:
+  telemetry_sources:
+    - source: 'ChatGPT Atlas (AI browser agent) enterprise data surface'
+      purpose: >-
+        Establish what audit evidence the leading browser agent emits for an omnibox input and its
+        trust classification.
+      event_vocabulary: 'none'
+      tier: 'not-applicable'
+      operational_viability: 'rejected-not-coverage'
+      fields:
+        - name: 'Compliance API log stream (documented absent)'
+          attestation: 'vendor-attested-absent'
+          attestation_ref: 'REF-ATLAS-ENTERPRISE'
+          load_bearing: false
+          note: >-
+            The enterprise page states Atlas does not emit Compliance API logs and does not integrate
+            with SIEM or eDiscovery, and that web browsing and agent-activity data may fall outside
+            enterprise retention; there is no field to carry this behavior.
+      details: >-
+        The vendor documents the absence of an audit surface: no Compliance API logs, no SIEM or
+        eDiscovery integration, and browsing and agent activity possibly outside enterprise
+        retention. No omnibox input-origin or trust-classification field is documented.
+      limitations:
+        - 'Emits no machine-readable audit record for omnibox input or its classification.'
+        - 'Some agent-activity and browsing data may not be retained at all.'
+    - source: 'Perplexity Comet browser-agent audit logs'
+      purpose: >-
+        Recover the query text and the fact that the agent performed an automated action, as the
+        only fetched first-party browser-agent action record.
+      event_vocabulary: 'application-record'
+      tier: 'request'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'comet_agent_action (uuid, timestamp, event_type, user_email, ip_address, user_agent, session_id, metadata)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-PERPLEXITY-AUDIT'
+          load_bearing: false
+          note: 'Records that an automated action occurred, not the input origin or trust decision.'
+        - name: 'query_str / query and answer_generated (full answer, model)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-PERPLEXITY-AUDIT'
+          load_bearing: true
+          note: 'Carries the omnibox or prompt text, but with no origin or trust-classification label.'
+      details: >-
+        Query events record the query string and answer_generated records the full answer and model;
+        comet_agent_action records that the agent performed an automated action with a standard
+        record envelope. None of these fields distinguishes trusted user intent from web content.
+      limitations:
+        - 'Records query text but no input-origin or trust-classification field.'
+        - 'First-party to Perplexity; does not cover other browser agents such as Atlas.'
+    - source: 'Chrome Enterprise reporting (browser events)'
+      purpose: 'Observe the navigation that results, where a visited URL is risk-classified.'
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'Suspicious Url / Unsafe site visit event values'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CHROME-REPORTING'
+          load_bearing: false
+          note: >-
+            Fires only on risk-classified URLs; generic visited-URL reporting is not among the
+            documented event values, and per-event field schemas are not published.
+      details: >-
+        Documented event values include Suspicious Url (medium-or-higher risk, Chrome 138+), Unsafe
+        site visit, Extension install, Login, and Password reuse; Data Protection events require
+        Chrome Enterprise Premium. These observe the destination, not the omnibox trust decision.
+      limitations:
+        - 'Only risk-classified URLs are reported; ordinary navigation is not.'
+        - 'Event names are documented but per-event field schemas are not.'
+    - source: 'DNS resolver and endpoint network telemetry for the navigation performed'
+      purpose: 'Attribute the outbound navigation the agent actually performed to a host and destination.'
+      event_vocabulary: 'flow-record'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'DeviceNetworkEvents RemoteUrl / RemoteIP / InitiatingProcessFileName'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-DEFENDER-NET'
+          load_bearing: false
+          note: 'Names the browser process and destination of the navigation, not the input trust decision.'
+      details: >-
+        DNS resolver query logs (query_name/srcaddr or queryName/sourceIP) and endpoint network
+        events (RemoteUrl, RemoteIP, initiating browser process), plus Sysmon 3/22, record the
+        navigation that followed acceptance of the input.
+      limitations:
+        - 'Records the navigation, not whether the input was trusted as a prompt.'
+        - 'Requires resolver query logging or an endpoint sensor on the browsing host.'
+
+detection:
+  scope: >-
+    The observable path runs from the crafted input, through the agent's trust classification, to a
+    resulting navigation or action. The deciding classification emits nothing, so coverage is a
+    reformulation: one strategy targets the trust decision through client-side instrumentation that
+    must be built, and one targets the downstream cross-domain navigation or action as an anomaly.
+  outcome_guardrails: >-
+    A query record or a visited-URL event establishes that input was received or a page visited, not
+    that the input was trusted as intent. A cross-domain action after an agent input establishes an
+    effect worth review, not a confirmed trust misclassification. "Suspicious input" and "confirmed
+    trusted-as-prompt" are different claims and must not be merged.
+  shared_normalization_context: >-
+    Canonicalize the omnibox value to its URL structure and extract instruction-like content from
+    path, query, and fragment; classify a subsequent action by whether its destination domain
+    differs from the input's apparent domain.
+  shared_enrichment_context: >-
+    Where an agent emits query or action records, join them to host DNS and network events on host,
+    time, and destination to reconstruct what the agent did after receiving the input. No available
+    join supplies the input's origin, which remains a derived or instrumented field.
+  strategies:
+    - id: 'STRAT-OMNIBOX-TRUSTED-INPUT'
+      name: 'trusted URL or omnibox input classification'
+      objective: >-
+        Flag URL-shaped omnibox input carrying instruction-like content that the agent classifies as
+        trusted user intent, preserving the input's provenance.
+      incident_relevance: >-
+        Targets the exact behavior the PoC demonstrated. On the products fetched it cannot be
+        implemented from native telemetry and requires client-side instrumentation that records each
+        input's origin and the agent's trust verdict.
+      detection_logic: >-
+        Where the agent can be instrumented, record for each omnibox entry its origin (typed, pasted,
+        or redirect-supplied) and the trust class the agent assigned, then raise when
+        attacker-originable input carrying instruction-like URL content is classified as user intent
+        or drives a cross-domain action. Preserve provenance on the alert. Do not treat mere presence
+        of query parameters as malicious; the predicate is untrusted origin trusted as intent.
+      minimum_evidence: >-
+        An instrumented record binding an input's untrusted origin to a trusted-intent classification.
+        Without instrumentation, only the query text and a later action are available, which supports
+        reporting suspicious input, not a confirmed misclassification.
+      correlation_context: >-
+        Bind the input event to any resulting navigation on host, agent session, and time; the
+        origin-to-trust link is instrumented, not recoverable from native logs.
+      detectors:
+        - detector_class: 'agent-input-provenance-instrumentation'
+          technologies:
+            - 'Client-side browser-agent instrumentation (first-party build)'
+            - 'Browser-agent policy or guardrail hooks where exposed'
+          contribution: 'Can record input origin and the agent trust decision the platforms do not emit.'
+          limitations: 'Must be built; unavailable as native telemetry on every product fetched.'
+        - detector_class: 'siem-agent-action-correlation'
+          technologies:
+            - 'Splunk'
+            - 'Microsoft Sentinel'
+            - 'Elastic'
+          contribution: 'Correlates recorded query or action text with resulting navigation where an agent emits it.'
+          limitations: 'Consumes query and action records but no origin or trust field; Atlas emits neither.'
+      benign_explanations:
+        - explanation: >-
+            A user deliberately types or pastes a URL whose query or fragment contains
+            instruction-like text and the agent acts on it as intended.
+          distinguishing_context: >-
+            An untrusted origin, a redirect-supplied input, or a cross-domain action the user did not
+            request separates the malicious case; instruction-shaped parameters alone do not.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding all inputs with query or fragment content to cut noise also suppresses the
+            attack, which is delivered exactly that way.
+      blind_spots:
+        - description: 'Missing telemetry: no product emits an input-origin or trust-classification field.'
+          routes_to: null
+        - description: 'Missing telemetry: ChatGPT Atlas emits no audit record at all for this path.'
+          routes_to: null
+        - description: 'Evasion: instruction text concealed in URL path, query, or fragment, or delivered by redirect.'
+          routes_to: null
+      analyst_response: >-
+        Recover the omnibox input text and any query record, determine the input's origin where
+        instrumentation exists, identify the resulting navigation and any cross-domain action, and
+        assess whether the action matched the user's stated intent.
+      safe_conclusion: >-
+        Attempt-level: crafted input was classified as trusted or drove navigation; a downstream
+        effect requires separate corroboration and native telemetry does not confirm the trust
+        decision.
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: >-
+          No source or estate measurement is available; on native telemetry the strategy cannot fire
+          at all, and volume under instrumentation depends on the built sensor.
+    - id: 'STRAT-CROSSDOMAIN-NAV-ANOMALY'
+      name: 'resulting cross-domain navigation or action anomaly'
+      objective: >-
+        Detect an agent-driven navigation or action to a domain unrelated to the user's apparent
+        intent, as the observable consequence of accepted input.
+      incident_relevance: >-
+        Detects a possible consequence of the behavior, not the trust misclassification itself. A
+        positive is an anomaly to investigate, not proof the input was trusted as a prompt.
+      detection_logic: >-
+        From browser risk-URL events, DNS resolver records, and endpoint network events, select
+        agent-process navigations and raise on a cross-domain redirect or action to an unexpected
+        destination shortly after an agent input, especially to a low-reputation or risk-classified
+        URL. Scope by the agent or browser process identity, not by user alone.
+      minimum_evidence: >-
+        A navigation or action attributed to the agent or browser process to an unexpected
+        destination, correlated in time with an agent input. Naming it a trust misclassification
+        requires the input-origin field this strategy does not have.
+      correlation_context: >-
+        Correlate within a short window on host, agent or browser process, and time; concurrent
+        unrelated browsing on the host weakens attribution to a specific input.
+      detectors:
+        - detector_class: 'browser-and-network-navigation-analytics'
+          technologies:
+            - 'Chrome Enterprise reporting'
+            - 'DNS resolver query logging (Route 53 Resolver, Cloud DNS)'
+            - 'Endpoint network telemetry (Microsoft Defender, Sysmon)'
+          contribution: 'Attributes the resulting navigation to a host and destination.'
+          limitations: 'Observes the effect only; carries no input origin or trust label.'
+      benign_explanations:
+        - explanation: >-
+            Legitimate agent tasks routinely navigate cross-domain and follow redirects to complete
+            a user request.
+          distinguishing_context: >-
+            A destination unrelated to any user request, or a risk-classified URL reached right after
+            an input, separates the suspicious case; ordinary cross-domain navigation does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Allowlisting the agent or browser process wholesale would suppress the malicious
+            navigation along with the benign ones.
+      blind_spots:
+        - description: 'Attribution limit: navigation telemetry cannot tie the action back to the input trust decision.'
+          routes_to: null
+        - description: 'Missing telemetry: generic visited-URL reporting is absent; only risk-classified URLs fire.'
+          routes_to: null
+      analyst_response: >-
+        Identify the agent or browser process, the destination reached, and its reputation; correlate
+        with any agent query record and the user's stated task; scope further navigation from the
+        host.
+      safe_conclusion: >-
+        An agent-driven navigation reached an unexpected destination after an input; attribution to a
+        trusted-as-prompt misclassification requires an input-origin field that is not emitted.
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: 'Depends on estate browsing baseline and which risk-URL and network streams are enabled.'
+
+detector_requirements:
+  required: >-
+    Canonicalization of the omnibox value to URL structure with extraction of instruction-like
+    path/query/fragment content; classification of an action as cross-domain relative to the input's
+    apparent domain; retention of any agent query or action record and of the resulting navigation;
+    and outcome-aware alert text that separates suspicious input and cross-domain navigation from a
+    confirmed trust misclassification.
+  optional: >-
+    Client-side agent instrumentation that records input origin and the trust verdict turns the
+    reformulated anomaly into a direct detection; it is the only thing that does, and it must be
+    built rather than enabled.
+  correlation:
+    capability: >-
+      Aligned clocks across agent, browser, DNS, and endpoint streams; a stable host and agent or
+      browser process identity; and, for the direct strategy, an instrumented origin-to-trust link
+      no native log provides.
+    window: 'Short, on the order of the agent turn between input and the resulting navigation.'
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on deployed
+    sensors, enabled logging, retained fields, and architecture. For this object, verification
+    specifically means confirming whether the browser agent emits any query or action record at all
+    (ChatGPT Atlas documents that it does not), whether Chrome Enterprise reporting and DNS or
+    endpoint telemetry cover the browsing hosts, and accepting that no product supplies the
+    input-origin field, so the direct strategy depends on instrumentation that does not ship.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of the behavior; the cited disclosure is undated in the catalog.'
+    - 'Whether any privileged downstream action was completed in the PoC beyond the trust misclassification.'
+    - 'The internal ordering and location of the agent trust-classification step in any product.'
+    - 'The per-event field schemas behind Chrome Enterprise reporting event names.'
+  assumptions:
+    - id: 'ASSUMPTION-SINGLE-TRUST-CLASSIFICATION'
+      verdict_changing: true
+      statement: >-
+        The deciding step is a single trust classification over the omnibox value rather than a later
+        action-authorization check. The disclosure describes crafted URL input being accepted as a
+        trusted user prompt but publishes no internal pipeline; this pack inferred the classification
+        step from that outcome, which is reasoning from a result to a mechanism. If wrong, the
+        observable gate is scoped to a step that does not exist as described and the direct strategy
+        instruments the wrong point. Resolve it by reading a browser agent's input-handling source
+        for where origin and trust are decided, or by instrumenting a reference agent and recording
+        the classification of one crafted omnibox input.
+  standing_negatives:
+    - statement: >-
+        No fetched browser-agent or browser product documents an omnibox input-origin or
+        trust-classification field, and ChatGPT Atlas documents that it emits no Compliance API logs
+        and no SIEM or eDiscovery feed; the enterprise and product pages fetched describe only
+        risk-classified URL events and query-text records, with no origin or trust field.
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the ChatGPT Atlas enterprise, Perplexity audit-log, and Chrome Enterprise reporting
+        documentation for a newly documented input-origin or trust-classification field.
+
+missing_states:
+  - id: 'MISSING_INPUT_ORIGIN_FIELD'
+    meaning: 'Missing telemetry: no product emits the input origin or the agent trust-classification decision.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Do not claim a trust misclassification from native telemetry; report at most suspicious input
+      or a cross-domain navigation anomaly, and mark the trust decision as instrumented-only.
+  - id: 'MISSING_AGENT_AUDIT_SURFACE'
+    meaning: 'Missing telemetry: the leading browser agent (ChatGPT Atlas) emits no audit record for this path.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      On Atlas, fall back entirely to host-side navigation, DNS, and endpoint telemetry and state
+      that no agent-side evidence exists.
+  - id: 'MISSING_NAVIGATION_ATTRIBUTION'
+    meaning: 'Attribution gap: a navigation record carries no link to the input that triggered it.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report the cross-domain navigation as an anomaly and mark the tie to a specific input as
+      inferred, not established.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'actor_or_explicit_missing_state'
+    - 'omnibox_input_text_and_url_structure'
+    - 'input_origin_when_instrumented_or_explicit_missing_state'
+    - 'agent_or_browser_process_and_session'
+    - 'resulting_navigation_or_action_destination'
+    - 'cross_domain_determination'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'trust_classification_verdict'
+      condition: 'when client-side agent instrumentation records the origin-to-trust decision'
+  recommended_title: 'Browser agent navigated cross-domain after accepting crafted omnibox input (trust decision not recorded)'
+  unsupported_title: 'Attacker hijacked the browser agent and completed account takeover via the omnibox'
+
+evidence:
+  confirmed_incident_behavior: >-
+    NeuralTrust reports a proof-of-concept in which a crafted URL supplied to the ChatGPT Atlas
+    omnibox is accepted as a trusted user prompt rather than as untrusted web content, so its
+    embedded instructions can steer the agent. That the deciding step is a single trust
+    classification over the omnibox value, and not a later authorization check, is this pack's
+    reading of the described behavior, registered in missing_context.assumptions, not a mechanism the
+    disclosure states.
+  supported_conclusion: >-
+    The evidence supports that a browser agent can classify attacker-crafted omnibox or URL input as
+    trusted user intent and act on it, as demonstrated in a responsibly disclosed PoC. A detector can
+    report suspicious crafted input or an anomalous cross-domain navigation; it cannot confirm the
+    trust misclassification from native telemetry because no product emits the deciding field.
+  unsupported_conclusions: >-
+    The evidence does not establish any completed downstream objective, a count of affected users,
+    real-world exploitation, or the internal classification pipeline. Those require agent-side
+    instrumentation or host telemetry the source does not carry.
+  procedure_boundary: >-
+    This procedure is the acceptance of crafted omnibox or URL input as trusted intent. Any specific
+    action the redirected agent then takes, and any account or data outcome, is a separate behavior
+    and is not evidenced by the input having been trusted.
+  references:
+    - id: 'REF-THREAT-NEURALTRUST'
+      type: 'incident-procedure-primary-source'
+      title: 'OpenAI Atlas omnibox prompt injection'
+      publisher: 'NeuralTrust'
+      url: 'https://neuraltrust.ai/blog/openai-atlas-omnibox-prompt-injection'
+      trust_tier: 'researcher'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary source for the PoC that a crafted omnibox URL is accepted as a trusted user prompt in
+        ChatGPT Atlas. It does not document a completed downstream objective, a victim count, or the
+        agent's internal classification pipeline.
+    - id: 'REF-ATLAS-ENTERPRISE'
+      type: 'telemetry-documentation'
+      title: 'ChatGPT Atlas for Enterprise'
+      publisher: 'OpenAI'
+      url: 'https://help.openai.com/en/articles/12603091-chatgpt-atlas-for-enterprise'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Attests the documented absence of an audit surface (no Compliance API logs, no SIEM or
+        eDiscovery, browsing/agent data possibly outside retention); supports the vendor-attested-absent
+        field and the standing negative, not any incident fact.
+    - id: 'REF-PERPLEXITY-AUDIT'
+      type: 'telemetry-documentation'
+      title: 'Perplexity audit logs'
+      publisher: 'Perplexity'
+      url: 'https://www.perplexity.ai/help-center/en/articles/11652747-audit-logs.html'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the comet_agent_action and query/answer_generated records used as the only
+        first-party browser-agent action telemetry; supports those fields' limitation that no
+        origin or trust label is present.
+    - id: 'REF-CHROME-REPORTING'
+      type: 'telemetry-documentation'
+      title: 'Chrome Enterprise reporting connector events'
+      publisher: 'Google'
+      url: 'https://support.google.com/chrome/a/answer/11375053?hl=en'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the Suspicious Url and related event values used to observe the resulting
+        navigation; supports the limitation that only risk-classified URLs are reported and field
+        schemas are unpublished.
+    - id: 'REF-DEFENDER-NET'
+      type: 'telemetry-documentation'
+      title: 'DeviceNetworkEvents table (advanced hunting)'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-devicenetworkevents-table'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the network fields used to attribute the resulting navigation to a browser process
+        and destination; supports the effect-only navigation telemetry, not the input trust decision.

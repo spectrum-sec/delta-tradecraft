@@ -1,0 +1,537 @@
+identity:
+  uuid: '20afc9d1-629b-4903-932e-2e7fd8b94e9d'
+  id: 'DT-AAG1-AI-011'
+  aliases:
+    - 'P30'
+  name: 'Attackers make an agent emit outbound URLs that carry data'
+  incident: >-
+    ForcedLeak (Salesforce Agentforce) and EchoLeak (Microsoft 365 Copilot): responsibly disclosed
+    research in which an injected instruction made the assistant emit an external URL whose
+    parameters carried CRM or mailbox data to an attacker-controlled host.
+  first_observed: '2025'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'application-ai-platform'
+  secondary_attack_surfaces:
+    - 'egress-control'
+  behavior_classes:
+    - 'exfiltration'
+    - 'other'
+  behavior_classes_note: >-
+    data-bearing-url-egress: the model or agent constructs a URL that encodes sensitive data in its
+    path or query, and rendering or fetching that URL is the exfiltration channel, distinct from the
+    injection that induced it.
+  tags:
+    - 'ai'
+    - 'exfiltration'
+    - 'prompt-injection'
+    - 'data-bearing-url'
+    - 'agentforce'
+    - 'copilot'
+
+behavior:
+  definition: >-
+    An attacker causes a model or agent to construct a URL containing encoded data; rendering or
+    fetching that URL sends the data to an attacker-controlled destination.
+  detailed_definition: >-
+    The adversary controls content the agent will read and induces the agent to place sensitive data
+    it can access into an outbound URL it emits. The boundary crossed is from data held inside the
+    assistant's context into an external network request: the encoded value leaves the trust zone the
+    moment the URL is resolved or fetched. Possible outcomes range from a single field to a
+    conversation's worth of data, bounded by what the agent can read and by URL length. The attempt
+    ends when the agent emits the data-bearing URL; success begins when a client, renderer, or the
+    agent itself resolves or fetches it and the destination receives the data. It is independent of
+    AI platform, rendering surface, serialization of the data, and network sensor.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers construction of a data-bearing URL by the agent and its resolution to an
+      attacker-controlled destination; does not cover the upstream injection that induced it, which
+      is a separate behavior.
+    summary: >-
+      This can occur when an attacker can place instructions where the agent reads them, the agent
+      can access data worth taking, and the agent's output is rendered or fetched in a context that
+      resolves external URLs (an auto-loaded image, a followed link, or an agent-side fetch).
+      Exfiltration requires only that the URL be resolved; a browser or client that auto-fetches
+      external images satisfies it without a user click.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      The emitted URL is observable where opt-in assistant-response capture is enabled and not
+      truncated past the URL; the resolution or fetch is observable where DNS, proxy, or endpoint
+      network telemetry exists. No single stream carries both halves.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          Assistant-response content is captured only under opt-in flags (Claude Code
+          OTEL_LOG_ASSISTANT_RESPONSES=1 with a 60 KB cap; Bedrock model-invocation logging is off by
+          default; M365 response text only via Graph getAllEnterpriseInteractions) and is truncated.
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          The resolution or fetch is recorded only where DNS resolver logs, a proxy, or endpoint
+          network telemetry cover the rendering host or client; a browser-side auto-fetch off a
+          managed endpoint may leave no record.
+      - condition: 'cross-source-join-required'
+        note: >-
+          Tying the emitted URL to the network resolution needs the AI-output stream joined to
+          DNS/proxy/endpoint telemetry on normalized URL and destination; neither stream alone proves
+          both emission and delivery.
+    summary: >-
+      The behavior is observable when the assistant response carrying the URL is captured and a
+      DNS/proxy/endpoint record shows the data-bearing host being resolved or fetched, correlated on
+      the normalized URL and destination. A captured response with the URL establishes emission but
+      not delivery; a network fetch of an unusual host establishes delivery but, without the output
+      linkage, not that the agent constructed it. No vendor documents a field that isolates a URL
+      inside model output, so URL extraction and entropy or allowlist scoring are derived analytics
+      over the raw response text.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Separable from benign linking when a high-entropy or encoded-parameter URL to a non-allowlisted
+      destination coincides with a proxy-confirmed fetch, ideally with a secret or DLP match in the
+      parameter; benign signed URLs and tracking links overlap and must not be excluded wholesale.
+    blocking_conditions:
+      - condition: 'cross-source-join-required'
+        note: >-
+          Separation rests on joining the output URL, its destination, and the confirming fetch, plus
+          a secret or sensitive-pattern match in the parameter; the URL string alone is too weak.
+    summary: >-
+      Distinguishing exfiltration from ordinary linking rests on normalizing the emitted URL,
+      classifying its destination against an allowlist, scoring parameter entropy or encoded
+      sensitive-pattern markers, and confirming a fetch to that destination. A high-entropy parameter
+      with a proxy-confirmed fetch and a secret match is distinguishable; a bare unusual URL with no
+      fetch, or a fetch with no output linkage, is not enough to establish the behavior.
+
+attack_surface_context:
+  surface: >-
+    An AI assistant or agent whose output is rendered or fetched in a context that resolves external
+    URLs (Salesforce Agentforce responses, Microsoft 365 Copilot rendered content, or an agent that
+    performs its own fetches).
+  how_the_surface_works: >-
+    The platform assembles a prompt from user input plus grounded content (CRM records, mailbox
+    items, retrieved documents), the model produces a response, and a client renders or acts on it.
+    Rendering surfaces auto-load referenced images and follow links; agentic surfaces may fetch URLs
+    directly. Grounded content is treated as data but is read by the model as instructions, so an
+    attacker who lands content in the grounding set can steer what the model emits.
+  incident_processing_path: >-
+    Research reports (source-attested) that ForcedLeak injected instructions into Agentforce grounding
+    so the agent emitted an image-tag request to an attacker CDN host with CRM data in query
+    parameters, and that EchoLeak relied on the Copilot client auto-fetching an external image URL
+    from the response. That the client's automatic image load, rather than a user action, was the
+    resolution step is stated for EchoLeak; that the same auto-load semantics applied to the ForcedLeak
+    image request is this pack's reading of the image-tag mechanism, not a client behavior the
+    ForcedLeak write-up enumerates.
+  processing_stages:
+    - 'attacker-content-placement'
+    - 'grounding-ingest'
+    - 'prompt-assembly'
+    - 'model-inference'
+    - 'url-construction-in-output'
+    - 'client-render-or-agent-fetch'
+    - 'dns-resolution'
+    - 'outbound-fetch-to-destination'
+  stage_evidence: >-
+    The stage that carries an instrument fixes what it can prove: a captured response proves the URL
+    was emitted, not that it resolved; a DNS or proxy record proves resolution or fetch, not that the
+    agent authored the URL; only the two joined on the normalized URL prove emission and delivery of
+    the same data-bearing request.
+  trust_boundaries: >-
+    Untrusted grounded content into the model's instruction context (reached: the injection steered
+    output); model context into an external network request via the emitted URL (reached where the
+    client auto-fetched or the agent fetched); rendering client to attacker destination (reached in
+    the reported research when the image auto-loaded). Whether a click was required is
+    surface-specific and, for the auto-loaded cases, was not.
+  security_control_context: >-
+    Preventive controls decide before the fetch: an egress proxy or destination allowlist can block
+    resolution of a non-sanctioned host, a content security policy can suppress external image loads,
+    and DLP can inspect outbound parameters where it sits inline. These log a block or an allow at
+    the network or rendering layer, not inside the AI output. Bypass representations include encoding
+    or chunking the data, using a look-alike or sanctioned-CDN destination, and splitting the payload
+    across multiple URLs below any single-request threshold.
+  practitioner_implication: >-
+    An implementer must discover which surface renders or fetches agent output and whether it
+    auto-loads external references, whether assistant-response capture is enabled and how far it
+    truncates, which DNS/proxy/endpoint stream covers the rendering host or client, and how a
+    normalized URL and destination can be carried across the AI-output and network streams to join
+    them.
+
+threat_research:
+  why_it_matters: >-
+    A rendered agent response looks like text but can carry an outbound request, turning any data the
+    agent can read into an exfiltration channel that needs no separate malware and often no user
+    click, only a resolved URL.
+  threat_actor: >-
+    Unknown; both cases are responsibly disclosed research (Noma Security on ForcedLeak, an academic
+    paper on EchoLeak) with no in-the-wild actor or group attribution.
+  campaign: >-
+    ForcedLeak against Salesforce Agentforce and EchoLeak against Microsoft 365 Copilot, disclosed in
+    September 2025.
+  victim: >-
+    None in the wild; the demonstrations targeted the researchers' own Agentforce and Copilot
+    tenants. The exposed class is any organization whose AI assistant reads sensitive data and whose
+    output surface resolves external URLs.
+  capability: >-
+    Researchers showed end-to-end exfiltration: an injected instruction produced an assistant URL
+    whose parameters carried CRM data (ForcedLeak) or that the client auto-fetched (EchoLeak),
+    delivering data to an attacker-controlled host. The demonstrations establish the channel, not a
+    quantified volume of data taken in production.
+  target: >-
+    Data readable by the assistant (CRM records for Agentforce, mailbox and grounded content for
+    Copilot), targeted through the response-side URL. Reached in the research tenants; not shown
+    against a third-party production tenant.
+  victimology:
+    - 'Enterprise AI assistants that ground on sensitive business data and render responses to a client.'
+    - 'Rendering surfaces that auto-load external images or follow links without user interaction.'
+
+visibility:
+  telemetry_sources:
+    - source: 'AI-runtime assistant-response capture (Claude Code / Cowork / OpenClaw / Bedrock / M365)'
+      purpose: >-
+        Carry the emitted response text so an out-of-band URL and its destination can be extracted and
+        scored before or alongside the network fetch.
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'claude_code.assistant_response (response, response_length, model, request_id, message.uuid)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CLAUDE-OTEL'
+          load_bearing: true
+          note: >-
+            Captured only with OTEL_LOG_ASSISTANT_RESPONSES=1 and truncated at a 60 KB default; a URL
+            past the cap is lost. Other products (Bedrock ModelInvocationLog.output, M365 Graph
+            getAllEnterpriseInteractions) carry the response text with their own gates and caps.
+      details: >-
+        Response-side capture varies by product: Claude Cowork emits prompt/response events after
+        admin OTLP configuration, OpenClaw emits gen_ai.output.messages with captureContent=true
+        (bounded and redacted), Bedrock ModelInvocationLog carries output.outputBodyJson (opt-in, 100
+        KB inline cap, no IP), and M365 exposes response text only via Graph getAllEnterpriseInteractions.
+      limitations:
+        - 'Capture is opt-in and truncated on every product that offers it.'
+        - 'No vendor documents a field that isolates a URL inside the output; extraction is derived.'
+        - 'Agent 365 gen_ai.output.messages is not surfaced in advanced hunting.'
+    - source: 'DNS and network telemetry for the resolution and fetch'
+      purpose: >-
+        Establish that the data-bearing host was resolved or fetched, proving delivery independent of
+        whether the AI output was captured.
+      event_vocabulary: 'flow-record'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'DeviceNetworkEvents (RemoteUrl, RemoteIP, RemotePort)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-DEFENDER-NET'
+          load_bearing: true
+          note: >-
+            Route 53 Resolver (query_name, srcaddr, rdata) or Cloud DNS (queryName, sourceIP) carry
+            the resolution; Sysmon 3/22 are the on-host equivalents where EDR is absent.
+      details: >-
+        DNS resolver logs record the resolution of the data-bearing host; endpoint or proxy network
+        events record the outbound fetch and its destination, which is where a rendering-triggered
+        image auto-fetch first becomes visible.
+      limitations:
+        - 'Rendering-triggered fetches appear only in network telemetry, not in any AI log.'
+        - 'A browser-side auto-fetch off a managed endpoint may leave no host record.'
+        - 'Without the AI-output join the fetch cannot be attributed to the agent.'
+    - source: 'Browser enterprise reporting (Chrome Enterprise)'
+      purpose: 'Record a browser-rendered navigation or unsafe-site visit for a data-bearing URL.'
+      event_vocabulary: 'application-record'
+      operational_viability: 'opt-in'
+      details: >-
+        Chrome Enterprise Suspicious URL events (Chrome 138+) and Unsafe site visit (Chrome 104+)
+        record a browser-rendered URL; content transfer detail requires Chrome Enterprise Premium.
+      limitations:
+        - 'Managed-browser only; covers no server-side or agent-side fetch.'
+        - 'Reports the URL visit, not that the agent authored it.'
+
+detection:
+  scope: >-
+    Detection spans the emitted URL in the assistant response, its destination, and the network
+    resolution or fetch that delivers the data. Two materially distinct strategies divide the path:
+    one inspects the URL and its destination in the AI output, and one confirms the outbound fetch in
+    DNS/proxy/endpoint telemetry, joined on the normalized URL.
+  outcome_guardrails: >-
+    An out-of-band URL in the output establishes emission, not delivery. A fetch to the destination
+    establishes delivery. A secret or DLP match in the parameter raises confidence that data was
+    carried. These stay distinct: "agent emitted a suspicious URL" and "data reached an attacker
+    host" are different alerts.
+  shared_normalization_context: >-
+    Canonicalize the emitted URL (decode percent-encoding, normalize host and path), classify the
+    destination against a sanctioned-destination allowlist, and score parameter entropy or length and
+    encoded sensitive-pattern markers rather than matching literal payload bytes.
+  shared_enrichment_context: >-
+    Join the normalized URL and destination across the AI-output and DNS/proxy/endpoint streams on
+    conversation id, output id, destination, and actor. A DLP or secret match in the parameter plus a
+    proxy-confirmed fetch is meaningful without a long baseline; a maintained allowlist of sanctioned
+    destinations prioritizes.
+  strategies:
+    - id: 'STRAT-AI-OUTPUT-URL-INSPECTION'
+      name: 'AI-output URL inspection'
+      objective: >-
+        Flag an out-of-band URL emitted in an assistant response whose parameters carry high-entropy
+        or encoded content to a non-allowlisted destination.
+      incident_relevance: >-
+        Detects the emission the incidents demonstrated. It establishes that the agent constructed a
+        data-bearing URL; it does not by itself establish that the URL resolved, which the network
+        strategy confirms.
+      detection_logic: >-
+        Extract URLs from captured assistant output, canonicalize them, and raise when a
+        destination is not on the sanctioned allowlist and a parameter shows high entropy or length or
+        an encoded sensitive-pattern marker. Associate the finding with the conversation and output
+        id and the destination. Do not exclude a destination merely because it resembles a known CDN;
+        look-alike and sanctioned-CDN hosts are a documented bypass.
+      minimum_evidence: >-
+        A captured assistant response containing a URL to a non-allowlisted destination with an
+        anomalous parameter. Without a confirming fetch, report a suspicious data-bearing URL emitted
+        by the agent, not confirmed exfiltration.
+      correlation_context: >-
+        Key on conversation id, output id, normalized URL, and destination so the emission can be
+        joined to a later fetch. Truncation of the response can drop a URL past the cap, weakening
+        recall.
+      detectors:
+        - detector_class: 'ai-output-content-analytics'
+          technologies:
+            - 'SIEM regex/entropy over assistant-response logs (Splunk, Elastic, Sentinel, Google SecOps)'
+            - 'DLP or secret-scanning over captured output'
+          contribution: 'Extracts and scores the URL from the highest-fidelity copy of the output.'
+          limitations: 'Depends on opt-in, truncated capture; no native URL field, so extraction is derived.'
+      benign_explanations:
+        - explanation: >-
+            Assistants legitimately emit signed URLs, tracking links, and encoded search queries with
+            high-entropy parameters.
+          distinguishing_context: >-
+            A non-allowlisted destination plus a secret or DLP match in the parameter separates
+            exfiltration; parameter entropy alone does not, because benign signed URLs share it.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding all high-entropy-parameter URLs to cut noise would also suppress the malicious
+            data-bearing URL, which is high-entropy by construction.
+      blind_spots:
+        - description: 'Missing telemetry: assistant-response capture off, or the URL truncated past the cap.'
+          routes_to: null
+        - description: 'Evasion: data split across multiple URLs or chunked below a single-request threshold.'
+          routes_to: null
+        - description: 'Evasion: a look-alike or sanctioned-CDN destination that passes the allowlist.'
+          routes_to: null
+      analyst_response: >-
+        Recover the full emitted URL and destination, decode the parameters, check for a secret or
+        sensitive-pattern match, determine whether a fetch to that destination occurred in network
+        telemetry, and identify the grounded content that carried the injection.
+      safe_conclusion: >-
+        The agent emitted an out-of-band, data-bearing URL to a non-allowlisted destination; delivery
+        is not established without a confirming fetch.
+    - id: 'STRAT-NETWORK-FETCH-CORRELATION'
+      name: 'network fetch correlation'
+      objective: >-
+        Confirm that the data-bearing host emitted by the agent was resolved or fetched, delivering
+        the encoded data to the destination.
+      incident_relevance: >-
+        Detects the delivery step, including the client image auto-fetch EchoLeak relied on. A network
+        fetch must be tied to the emitted URL before it is attributed to this procedure.
+      detection_logic: >-
+        Select DNS resolutions and outbound fetches to non-allowlisted destinations and correlate them
+        to a captured assistant URL on the normalized host and path within a bounded window. Raise on a
+        fetch to a destination that matches a data-bearing URL the agent emitted. Treat a
+        rendering-triggered auto-fetch as delivery even without a user action.
+      minimum_evidence: >-
+        A DNS or network record of resolution or fetch of the destination, joined to the emitted URL.
+        Without the AI-output join, report an outbound fetch to an unusual destination, not
+        agent-authored exfiltration.
+      correlation_context: >-
+        Correlate in real time on the single response, keying on normalized URL, destination, and
+        actor. Ingestion delay between the AI-output and network streams and browser-side fetches off
+        managed endpoints weaken the join.
+      detectors:
+        - detector_class: 'network-and-dns-analytics'
+          technologies:
+            - 'Route 53 Resolver / Cloud DNS query logs'
+            - 'Microsoft Defender DeviceNetworkEvents / Sysmon 3, 22'
+            - 'Egress proxy logs'
+          contribution: 'Proves the destination was resolved or fetched, independent of AI-log capture.'
+          limitations: 'Cannot attribute the fetch to the agent without the emitted-URL join.'
+      benign_explanations:
+        - explanation: >-
+            Rendering clients auto-fetch legitimate external images and assistants emit links users
+            follow, producing benign outbound fetches.
+          distinguishing_context: >-
+            A fetch to a non-allowlisted destination that matches an agent-emitted high-entropy URL
+            separates the malicious case; an approved image host does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Allowlisting a CDN wholesale would pass a look-alike or sanctioned-CDN destination used to
+            carry the data.
+      blind_spots:
+        - description: 'Missing telemetry: a browser-side auto-fetch off a managed endpoint with no host record.'
+          routes_to: null
+        - description: 'Attribution limit: no network stream carries the AI conversation identity to link the fetch.'
+          routes_to: null
+      analyst_response: >-
+        Identify the resolved or fetched destination, recover the full URL, join it to the captured
+        assistant output, decode the carried parameters, and scope what data the agent could read into
+        them.
+      safe_conclusion: >-
+        A data-bearing host was resolved or fetched; attributing it to the agent requires the join to
+        the emitted URL.
+
+detector_requirements:
+  required: >-
+    Assistant-response capture on the AI surface with retention long enough to join to network events;
+    URL extraction and canonicalization from that output; classification of destinations against a
+    sanctioned allowlist and scoring of parameter entropy, length, and encoded sensitive-pattern
+    markers; DNS/proxy/endpoint network telemetry covering the rendering host or client; a join from
+    the emitted URL to the confirming fetch on normalized URL and destination; and outcome-aware alert
+    text that separates a suspicious emitted URL from confirmed delivery.
+  optional: >-
+    Inline DLP or secret scanning of outbound parameters and browser enterprise reporting add a
+    data-carried signal and a rendered-navigation record, but neither gates the core output-plus-fetch
+    correlation.
+  correlation:
+    capability: >-
+      Aligned clocks across the AI-output and network streams, a normalized URL and destination
+      carried end to end, and conversation or session identity to bind an emission to its fetch.
+    window: 'Real time within a single response; the fetch typically follows emission within seconds.'
+  baselines:
+    - name: 'Sanctioned outbound destinations'
+      window: 'Maintained allowlist, reviewed on change'
+      seeded_from: >-
+        Approved integrations and known-good CDNs; never seeded from observed agent output, which
+        would enrol an attacker destination the moment it is first emitted.
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on deployed
+    sensors, enabled logging, retained fields, and architecture. For this object, verification means
+    confirming that assistant-response capture is enabled and not truncating past the URL, that DNS or
+    network telemetry covers the rendering host or client, and that a normalized URL can be carried
+    across both streams, since no native field isolates a URL in model output.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of the behavior; the cited disclosures are dated 2025 but the catalog fixes no exact date.'
+    - 'Whether the ForcedLeak client auto-fetched the image or required an action, versus the auto-fetch stated for EchoLeak.'
+    - 'The machine-readable schema, field names, and retention of assistant-response capture on each product.'
+    - 'Whether any production tenant, as opposed to the research tenants, emitted a data-bearing URL.'
+  assumptions:
+    - id: 'ASSUMPTION-RENDER-AUTOFETCH'
+      verdict_changing: true
+      statement: >-
+        The ForcedLeak image request resolved through the same automatic client image-load semantics
+        stated for EchoLeak. The ForcedLeak write-up describes an image-tag request to an attacker CDN
+        with data in parameters but does not enumerate the client behavior that fetched it; this pack
+        inferred the auto-load from the image-tag mechanism, reasoning from the artifact type to the
+        client behavior. If wrong, the observable path for ForcedLeak requires a user action and the
+        no-click framing of manifestation.possible narrows to EchoLeak only. Resolve it by reading the
+        ForcedLeak client render path or reproducing the response in the Agentforce client and
+        recording whether the image auto-loaded.
+  standing_negatives:
+    - statement: >-
+        No vendor documents a telemetry field that isolates a URL inside model output: the AI-runtime
+        pages fetched for the telemetry audit expose the raw response text (opt-in and truncated) but
+        no extracted-URL field, so URL detection is a derived analytic.
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the Claude Code, Cowork, OpenClaw, Bedrock, and M365 assistant-output documentation
+        for a newly documented extracted-URL or outbound-reference field.
+
+missing_states:
+  - id: 'MISSING_OUTPUT_CAPTURE'
+    meaning: 'Missing telemetry: assistant-response capture is off or the URL is truncated past the cap.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Fall back to network telemetry: report an outbound fetch to a non-allowlisted destination
+      without agent attribution, and do not claim the agent emitted the URL.
+  - id: 'MISSING_NETWORK_TELEMETRY'
+    meaning: 'Missing telemetry: no DNS/proxy/endpoint record covers the rendering host or client.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report a suspicious data-bearing URL emitted by the agent and mark delivery unconfirmed; do not
+      claim the data reached the destination.
+  - id: 'MISSING_URL_JOIN_KEY'
+    meaning: 'Attribution gap: the network stream carries no AI conversation identity to link a fetch to an emission.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Correlate on normalized URL and destination alone, and mark agent attribution inferred rather
+      than established.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'actor_or_explicit_missing_state'
+    - 'conversation_and_output_id'
+    - 'emitted_url_and_destination'
+    - 'parameter_entropy_or_secret_match'
+    - 'network_fetch_confirmation_when_present'
+    - 'rendering_host_or_client_when_available'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'carried_data_classification'
+      condition: 'when a secret or DLP match is present in the URL parameter'
+  recommended_title: 'Agent emitted an outbound URL carrying encoded data to a non-allowlisted destination'
+  unsupported_title: 'Attacker exfiltrated the full CRM database through the agent'
+
+evidence:
+  confirmed_incident_behavior: >-
+    Research reports that ForcedLeak made Agentforce emit an image-tag request to an attacker CDN host
+    with CRM data in query parameters, and that EchoLeak relied on the Copilot client auto-fetching an
+    external image URL from the response. That the ForcedLeak image resolved through the same
+    automatic client image-load stated for EchoLeak is this pack's reading, registered in
+    missing_context.assumptions, not a client behavior the ForcedLeak source enumerates.
+  supported_conclusion: >-
+    The evidence supports that an injected instruction can make an enterprise AI assistant emit a URL
+    carrying data it can read to an attacker-controlled destination, and that the URL can be resolved
+    without a user click on an auto-loading surface. The behavior is detectable where an out-of-band
+    data-bearing URL in the output is correlated with a confirming network fetch, and reportable as a
+    suspicious emitted URL from the AI output alone.
+  unsupported_conclusions: >-
+    The evidence does not establish any in-the-wild victim, the volume of data taken in production, or
+    that a specific third-party tenant was exfiltrated. Those require production telemetry not carried
+    by the cited research.
+  procedure_boundary: >-
+    This procedure is the emission of a data-bearing URL and its resolution to a destination. The
+    upstream injection that induced the emission, and any use of the exfiltrated data afterward, are
+    separate behaviors and are not evidenced by a URL having been emitted.
+  references:
+    - id: 'REF-THREAT-NOMA'
+      type: 'incident-procedure-primary-source'
+      title: 'ForcedLeak: agent risks exposed in Salesforce Agentforce'
+      publisher: 'Noma Security'
+      url: 'https://noma.security/blog/forcedleak-agent-risks-exposed-in-salesforce-agentforce/'
+      trust_tier: 'researcher'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary source for the ForcedLeak image-tag URL, the CRM data in query parameters, and the
+        attacker CDN destination. It does not enumerate the client fetch behavior or any in-the-wild
+        victim.
+    - id: 'REF-THREAT-ARXIV'
+      type: 'incident-procedure-primary-source'
+      title: 'EchoLeak (arXiv 2509.10540)'
+      publisher: 'arXiv'
+      url: 'https://arxiv.org/html/2509.10540v1'
+      trust_tier: 'researcher'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary source for the Copilot client auto-fetching an external image URL from the response as
+        the resolution step; supports the no-click framing for EchoLeak, not the ForcedLeak client path.
+    - id: 'REF-CLAUDE-OTEL'
+      type: 'telemetry-documentation'
+      title: 'Monitoring usage with OpenTelemetry (Claude Code)'
+      publisher: 'Anthropic'
+      url: 'https://code.claude.com/docs/en/monitoring-usage'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the assistant-response event, its opt-in flag, and the 60 KB truncation used by the
+        AI-output telemetry source; supports no incident fact.
+    - id: 'REF-DEFENDER-NET'
+      type: 'telemetry-documentation'
+      title: 'DeviceNetworkEvents table (advanced hunting)'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-devicenetworkevents-table'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the RemoteUrl/RemoteIP/RemotePort fields used to confirm the outbound fetch.'

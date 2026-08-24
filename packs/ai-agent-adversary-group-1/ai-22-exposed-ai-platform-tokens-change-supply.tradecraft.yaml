@@ -1,0 +1,628 @@
+identity:
+  uuid: '6df7a0d2-b5fd-40eb-a748-827876b238c1'
+  id: 'DT-AAG1-AI-022'
+  aliases:
+    - 'P53'
+  name: 'Attackers use exposed AI-platform tokens to change supply-chain assets'
+  incident: >-
+    Lasso Security responsibly disclosed roughly 1,500 exposed Hugging Face API tokens across GitHub
+    and Hugging Face, some write-scoped, granting access to 723 organizations including meta-llama,
+    BLOOM, and Pythia.
+  first_observed: '2023-11'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'application-ai-platform'
+  secondary_attack_surfaces:
+    - 'self-hosted-artifact-repository-manager'
+  behavior_classes:
+    - 'credential-replay-from-outside-the-issuing-boundary'
+    - 'other'
+  behavior_classes_note: >-
+    supply-chain-asset-tampering-via-write-scoped-platform-token: a valid write-scoped AI-platform
+    token, obtained after exposure outside its issuing boundary, is used to modify models, datasets,
+    organization resources, or connected artifact-repository assets that downstream consumers trust.
+  tags:
+    - 'ai'
+    - 'model-supply-chain'
+    - 'huggingface'
+    - 'token-exposure'
+    - 'supply-chain-attack'
+
+behavior:
+  definition: >-
+    An attacker obtains an exposed AI-platform token with write rights and uses it to modify models,
+    datasets, organization resources, or connected software-supply-chain assets.
+  detailed_definition: >-
+    The adversary holds a bearer credential that was leaked outside the boundary that issued it and
+    still carries write scope on a platform whose artifacts downstream consumers pull and load. Using
+    it, the adversary crosses from possession of a secret into authorized-looking mutation of shared
+    supply-chain assets: publishing or altering a model or dataset, creating a repository under a
+    trusted organization, or changing organization settings and membership. The attempt ends at
+    possession of a write-scoped token; success begins when a write operation lands against an asset a
+    consumer trusts. It is independent of registry product, token format, and mirror technology.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers use of an exposed write-scoped platform token to mutate a supply-chain asset; does not
+      cover any downstream consumer executing the tampered asset, which is a separate behavior.
+    summary: >-
+      This can occur when a token with write scope is exposed where an attacker can read it (a public
+      or breached code host, a build log, a shared secret store), the token has not been revoked or
+      expired, and the platform honours it for write operations against models, datasets,
+      organizations, or mirrored artifacts. No further privilege escalation is required; the token
+      already carries the authority.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      The write effect on the asset is recorded where the platform's audit tier is enabled;
+      attributing that effect to a specific exposed token additionally requires joining the platform
+      audit to a secret-scanning finding, because per-token usage is not itself an audited surface.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          Hugging Face audit logs record repository, secret, organization, and membership changes only
+          on Team and Enterprise plans; Vertex Admin Activity is always on but covers only managed
+          resources, and Artifactory audit must be retained for mirrored assets.
+      - condition: 'cross-source-join-required'
+        note: >-
+          Tying a recorded write to a leaked token needs the secret-scanning or code-host token
+          finding joined to the platform audit on token fingerprint, actor, and object; neither stream
+          alone establishes that the acting token was the exposed one.
+    summary: >-
+      The behavior is observable when a platform audit entry records a write (repository create or
+      settings change, secret change, dataset write, membership or role change) and, separately, a
+      secret-scanning or code-host token event establishes that a write-scoped token was exposed. A
+      write entry alone establishes a change but not that it used a leaked token; a secret-scanning hit
+      alone establishes exposure but not use. Content-scan badges (ClamAV ok/infected, pickle-import)
+      establish that an asset changed at commit but not who or which token drove it.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Separable from routine token use when a leak-to-use temporal link, write scope, and a new source
+      IP or previously-unseen object coincide; a rotated CI token or an internally leaked-then-used
+      test token overlaps and must not be tuned out on token-reuse alone.
+    blocking_conditions:
+      - condition: 'cross-source-join-required'
+        note: >-
+          Distinguishing malicious use from benign use rests on correlating the exposure event with
+          subsequent write-scoped platform use on token fingerprint and object; a single stream cannot
+          separate a leaked-then-abused token from ordinary automation.
+    summary: >-
+      Separation rests on correlating an exposed-token finding with a subsequent write-scoped
+      operation from a new IP, account, or object, within a bounded window. Normalizing to a token
+      fingerprint and treating write scope plus first-seen object as raising confidence is what makes
+      it distinguishable; a write with no exposure link, or an exposure with no subsequent use, is too
+      weak to establish the behavior. Test tokens, revoked tokens, and CI rotation are the benign
+      patterns that overlap.
+
+attack_surface_context:
+  surface: >-
+    A hosted AI model-and-dataset platform (Hugging Face Hub, with Google Vertex as a managed
+    variant) and its long-lived API tokens, plus any internal artifact repository (Artifactory) that
+    mirrors the platform's assets.
+  how_the_surface_works: >-
+    The platform issues user and organization API tokens with read or write scopes that authorize
+    programmatic operations: creating and modifying repositories, pushing model and dataset files,
+    managing secrets and variables, and changing organization membership and settings. Consumers and
+    CI pull these assets by name and version and load them. Tokens are frequently embedded in code,
+    notebooks, and pipelines, which is where they leak.
+  incident_processing_path: >-
+    Lasso Security reports (researcher-attested) that it found roughly 1,500 exposed Hugging Face
+    tokens across GitHub and Hugging Face, that some were write-scoped, that they granted access to
+    723 organizations, write access to 14 datasets, the ability to create a repository in the
+    meta-llama organization, and the ability to manipulate existing models and download private
+    models. That any attacker actually exercised these tokens is not stated by the source; this pack
+    treats the demonstrated write capability as the procedure and its exploitation as unproven, which
+    is the source's own framing.
+  processing_stages:
+    - 'token-issuance-with-write-scope'
+    - 'token-embedding-in-code-or-pipeline'
+    - 'token-exposure-on-a-reachable-host'
+    - 'token-harvest-by-a-third-party'
+    - 'write-scoped-platform-call'
+    - 'supply-chain-asset-mutation'
+    - 'content-scan-at-commit'
+    - 'downstream-consumer-pull'
+  stage_evidence: >-
+    The stage an event sits at fixes what it can prove: a secret-scanning hit proves exposure, not
+    use; a platform audit write proves mutation, not which token drove it; a content-scan badge proves
+    an asset changed, not who changed it; only the join of exposure to a write-scoped operation on the
+    same fingerprint ties the mutation to the leaked credential.
+  trust_boundaries: >-
+    Issuing boundary to the outside (reached: tokens were exposed on public hosts); exposed credential
+    into the platform's write path (demonstrated as reachable by the research, not shown exercised by
+    an attacker); platform asset into downstream consumers (not evidenced as reached in this incident).
+    The write capability was proven; a completed malicious write was not.
+  security_control_context: >-
+    The platform decides on token scope at each API call and logs lifecycle and administrative events
+    (token approval, rotation, repository and organization changes) to an audit surface gated to paid
+    tiers; it does not audit per-token usage. Content scanning (ClamAV, pickle-import) decides at
+    commit and surfaces only ok/infected badges and displayed imports. Code hosts run secret scanning
+    that can flag an exposed token but is a control, not a queryable event schema. Bypass
+    representations include using a token before rotation, using a read token to stage a separate
+    write path, and mutating a mirror the platform audit never sees.
+  practitioner_implication: >-
+    An implementer must discover which platform tokens carry write scope, whether the estate is on a
+    Hugging Face tier that emits audit logs at all, whether Vertex or an Artifactory mirror is in
+    scope, how secret-scanning findings are forwarded, and how a token fingerprint can be carried from
+    the exposure event to the platform audit so a write can be attributed to a specific leaked token.
+
+threat_research:
+  why_it_matters: >-
+    A write-scoped platform token is a single credential that mutates assets thousands of consumers
+    trust and load; one exposed token under a top-level model organization can poison a widely pulled
+    supply chain without any exploit, only authentication.
+  threat_actor: >-
+    Unknown. The exposure was found and disclosed by Lasso Security researchers; the source names no
+    actor and does not assert that any attacker used the tokens.
+  campaign: 'Lasso Security research disclosure of exposed Hugging Face API tokens (published Dec 2023 or earlier).'
+  victim: >-
+    Hugging Face organization and user token holders, and the consumers of the Llama, BLOOM, and
+    Pythia ecosystems whose assets the exposed tokens could write.
+  capability: >-
+    Demonstrated (not exercised): access to 723 organizations, write access to 14 datasets, the
+    ability to create a repository in the meta-llama organization, and the ability to manipulate
+    existing models and download private models, via write-scoped tokens exposed across GitHub and
+    Hugging Face. The source explicitly does not state that attackers used the tokens.
+  target: >-
+    Write-scoped model and dataset assets under major AI organizations. Reachability of the write path
+    was demonstrated; a completed malicious mutation was not documented.
+  victimology:
+    - 'Organizations that publish models and datasets under shared AI-platform tokens.'
+    - 'Consumers and pipelines that pull public model/dataset assets and internal mirrors of them.'
+
+visibility:
+  telemetry_sources:
+    - source: 'Hugging Face audit logs (Team and Enterprise plans)'
+      purpose: >-
+        Record the write effect on platform assets and attribute repository, secret, organization, and
+        membership changes to an actor and time.
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'who / action type / change description / location / anonymized IP / date-time'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-HF-AUDIT'
+          load_bearing: true
+          note: >-
+            Entries are described by category, not by machine-readable event names or field
+            identifiers, and no retention period is stated.
+      details: >-
+        Covers security token rotation, the token-approval system, SSO logins and joins, repository
+        create/delete/move/duplicate/settings changes, secrets and variables handling, and
+        organization and membership changes; the full log is downloadable as JSON from organization
+        settings.
+      limitations:
+        - 'Team and Enterprise plans only; absent on free organizations.'
+        - 'No per-token usage record (token id, scope, or source IP per API call).'
+        - 'No machine-readable event names, field identifiers, or stated retention.'
+    - source: 'Hugging Face content scanning (ClamAV and pickle-import)'
+      purpose: 'Signal that a supply-chain asset changed at commit, the only content-level change signal.'
+      event_vocabulary: 'none'
+      operational_viability: 'on-by-default'
+      fields:
+        - name: 'malware badge (ok / infected); displayed pickle imports'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-HF-SCAN-MALWARE'
+          load_bearing: false
+          note: 'Surfaced only as UI badges and displayed import lists; no actor, token, or schema.'
+      details: >-
+        ClamAV scans each commit and sets per-file ok/infected badges; pickle-import scanning
+        highlights suspicious imports on pushed files.
+      limitations:
+        - 'Establishes that content changed, not who or which token changed it.'
+        - 'Best-effort by the vendor''s own statement; no schema, timestamps, or retention.'
+    - source: 'Google Vertex AI Admin Activity audit logs'
+      purpose: 'Record managed model and dataset resource changes on the Vertex variant of the surface.'
+      event_vocabulary: 'cloud-management-event'
+      tier: 'no-tier-model'
+      operational_viability: 'on-by-default'
+      details: >-
+        Admin Activity logs are always on and record resource-changing operations on
+        aiplatform.googleapis.com; they cover managed model/dataset changes but not Hugging Face assets.
+      limitations:
+        - 'Applies only where models/datasets are managed in Vertex, not on Hugging Face.'
+        - 'Does not carry the exposed-token exposure event; join to a secret-scanning finding is external.'
+    - source: 'Code-host audit and secret scanning (GitHub Enterprise)'
+      purpose: 'Establish that a write-scoped token was exposed and carry its lifecycle for correlation.'
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'action / actor / token_id / token_scopes / hashed_token / programmatic_access_type / repo / @timestamp'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-GH-AUDIT'
+          load_bearing: true
+        - name: 'personal_access_token.request_created / access_granted / access_revoked / expiration_limit_set'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-GH-AUDIT'
+          load_bearing: false
+      details: >-
+        Enterprise audit records token-scoped operations and personal-access-token lifecycle events;
+        secret scanning can flag an exposed token but is a control, not a queryable first-party schema.
+      limitations:
+        - 'Secret scanning is a control; no first-party secret-scanning event schema was fetched.'
+        - 'Carries the exposure, not the platform-side write; the join across the two is required.'
+    - source: 'Artifactory audit trail and access log (mirrored assets)'
+      purpose: 'Record write operations against assets mirrored from the platform into an internal repository.'
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'Event Type (C/U/D) / Event (USR/GRP/PRM/TKN) / Data Changed / User / User IP'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-ARTIFACTORY-AUDIT'
+          load_bearing: false
+        - name: 'access log DEPLOY / DELETE / CONFIGURATION_CHANGE'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-ARTIFACTORY-AUDIT'
+          load_bearing: false
+      details: >-
+        access-security-audit.log records security and token events with a Data-Changed field; the
+        access log records DEPLOY/DELETE/CONFIGURATION_CHANGE for mirrored artifacts.
+      limitations:
+        - 'Only where the estate mirrors platform assets internally.'
+        - 'Does not see writes that land directly on the public platform.'
+    - source: 'Identity-provider audit for the token or client credential (Entra, Okta)'
+      purpose: 'Corroborate creation or change of a credential used to reach the platform, where one is federated.'
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      details: >-
+        Entra "Add service principal credentials" and Update application, and Okta
+        app.oauth2.client.lifecycle.update, record credential lifecycle for a federated client.
+      limitations:
+        - 'Only relevant where platform access is federated through an IdP client, not a native token.'
+        - 'Records credential lifecycle, not the platform-side write it enables.'
+
+detection:
+  scope: >-
+    Detection spans the exposed token, its use against the platform, and the resulting asset mutation.
+    Two materially distinct strategies divide the path: one correlates a secret-scanning or code-host
+    exposure finding with subsequent write-scoped platform use, and one flags an anomalous write
+    operation in the platform audit against a new object, IP, or actor independent of any exposure
+    finding.
+  outcome_guardrails: >-
+    An exposure finding establishes that a token was leaked, not that it was used. A platform write
+    establishes a mutation, not that a leaked token drove it. Only the join of the two on token
+    fingerprint and object establishes tampering by an exposed credential. "Token exposed" and
+    "supply-chain asset changed by an exposed token" are different alerts.
+  shared_normalization_context: >-
+    Canonicalize the token to a stable fingerprint or id, and the asset to a model/dataset URI and
+    organization; treat write scope and a first-seen object or source IP as confidence raisers rather
+    than as the finding on their own.
+  shared_enrichment_context: >-
+    Join token fingerprint/id, repository/commit, source IP, platform account, scope, and object id
+    across secret scanning, code-host audit, and platform audit. A rolling 30-day token-use history,
+    per token and per platform account, helps establish first-seen; it is enrichment, not a
+    precondition for the exposure-to-use join.
+  strategies:
+    - id: 'STRAT-EXPOSED-TOKEN-USE-CORRELATION'
+      name: 'exposed-token to platform-use correlation'
+      objective: >-
+        Detect a write-scoped platform operation shortly after, and attributable to, a token found
+        exposed by secret scanning or a code-host finding.
+      incident_relevance: >-
+        Detects the documented capability turning into use. The incident proved the write capability
+        but not exploitation, so a positive here would be the first evidence of actual use.
+      detection_logic: >-
+        Match a secret-scanning or code-host finding for a platform token to subsequent platform-audit
+        write activity on the same token fingerprint or account. Raise on write-scoped use from a new
+        source IP or account, or against a model, dataset, or organization not previously written by
+        that token, within a bounded window of the exposure. Do not require content-scan flags; a
+        write to a trusted asset is the effect whether or not the content scanner objects.
+      minimum_evidence: >-
+        An exposure finding naming a token fingerprint and a platform-audit write on the same
+        fingerprint or account. Without the platform-side write, report an exposed write-scoped token,
+        not a completed tampering.
+      correlation_context: >-
+        Correlate on token fingerprint/id, platform account, source IP, and object id, within a window
+        up to 24 hours (explicit maximum gap 24 hours), against a rolling 30-day token-use history per
+        token and account. Revocation or rotation between exposure and use lowers, but does not erase,
+        the link.
+      detectors:
+        - detector_class: 'cross-source-secret-and-audit-correlation'
+          technologies:
+            - 'Splunk'
+            - 'Elastic'
+            - 'Microsoft Sentinel'
+            - 'Google SecOps'
+          contribution: 'Joins the exposure finding to the platform write on a shared token fingerprint.'
+          limitations: 'Depends on secret scanning and platform audit both being forwarded and time-aligned.'
+        - detector_class: 'registry-native-audit'
+          technologies:
+            - 'Hugging Face audit logs (Team/Enterprise)'
+            - 'Google Vertex Admin Activity'
+            - 'JFrog Artifactory audit'
+          contribution: 'Carries the write effect on the asset with actor and time.'
+          limitations: 'Tier-gated on Hugging Face; carries no per-token usage field to bind the write to a token.'
+      benign_explanations:
+        - explanation: >-
+            CI and automation rotate and reuse write-scoped tokens routinely, producing writes from new
+            runners and IPs.
+          distinguishing_context: >-
+            A prior exposure finding for that fingerprint, and a write to a first-seen object,
+            separate abuse from routine rotation; token reuse alone does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding all writes from CI source ranges would suppress a leaked CI token used from a
+            similar range.
+        - explanation: >-
+            A developer legitimately using a token that a scanner also flagged (a false-positive or
+            self-owned exposure).
+          distinguishing_context: >-
+            Ownership of the exposing repository and the account match; a write from an unrelated
+            account or new IP does not.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Allowlisting every scanner-flagged token as owner-benign would suppress a genuinely
+            leaked one.
+      blind_spots:
+        - description: 'Missing telemetry: free-tier Hugging Face organizations emit no audit log, so the write is unseen.'
+          routes_to: null
+        - description: 'Attribution limit: the platform audits no per-token usage, so the write cannot be bound to a token without the exposure join.'
+          routes_to: null
+        - description: 'Evasion: a token used before the scanner indexes the exposure leaves no exposure finding to join.'
+          routes_to: null
+      analyst_response: >-
+        Retrieve the token fingerprint and its exposure location, identify the write operations on that
+        fingerprint or account, determine whether the source IP, account, and object are new, check
+        content-scan badges on any changed asset, and scope other assets that token could reach.
+      safe_conclusion: >-
+        A write-scoped platform token was exposed and used to write a platform asset; whether the write
+        was malicious depends on the account, IP, and object novelty established by the join.
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: >-
+          Volume depends on secret-scanning finding rate and platform-audit availability in the estate;
+          the source gives neither a rate nor a population.
+    - id: 'STRAT-PLATFORM-WRITE-ANOMALY'
+      name: 'anomalous platform write operation'
+      objective: >-
+        Detect a write against a model, dataset, or organization from a new IP, account, or against a
+        first-seen object in the platform audit, independent of any exposure finding.
+      incident_relevance: >-
+        Detects the effect side of the behavior where no exposure finding exists to correlate. It
+        cannot by itself attribute the write to a leaked token; it flags an anomalous write for review.
+      detection_logic: >-
+        Baseline write-scoped platform-audit operations per account and object, and raise on a write
+        from a previously-unseen source IP or account, a repository creation under a sensitive
+        organization, or a settings, secrets, or membership change out of pattern. Enrich with
+        content-scan badges on any changed asset. This is a reformulation for estates that have platform
+        audit but no forwarded secret scanning.
+      minimum_evidence: >-
+        A platform-audit write entry against a sensitive object with actor, IP, and time, out of the
+        account's established pattern. Absent an exposure link, report an anomalous write, not
+        confirmed exposed-token tampering.
+      correlation_context: >-
+        Baseline per platform account and object over a rolling window; a first-seen IP or object is
+        the anomaly signal. Concurrent legitimate onboarding or migration weakens the anomaly.
+      detectors:
+        - detector_class: 'registry-native-audit'
+          technologies:
+            - 'Hugging Face audit logs (Team/Enterprise)'
+            - 'Google Vertex Admin Activity'
+          contribution: 'Carries the write with actor, IP, and object for per-account baselining.'
+          limitations: 'Tier-gated; no per-token field, so attribution to a token is out of reach here.'
+      benign_explanations:
+        - explanation: >-
+            Legitimate onboarding, migration, or a new maintainer produces writes from new IPs and
+            accounts against new objects.
+          distinguishing_context: >-
+            A change-management record or a known maintainer separates onboarding from abuse; a
+            first-seen IP with no such record does not.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Suppressing all first-write-to-new-object events would hide the very repository-creation
+            step the research demonstrated.
+      blind_spots:
+        - description: 'Missing telemetry: no audit on free-tier organizations.'
+          routes_to: null
+        - description: 'Attribution limit: an anomalous write cannot be tied to an exposed token without the exposure join.'
+          routes_to: null
+      analyst_response: >-
+        Identify the acting account and IP, determine whether the object and IP are first-seen for that
+        account, look for a change-management record, inspect content-scan badges on changed assets, and
+        pivot to secret scanning to see whether a matching token was exposed.
+      safe_conclusion: >-
+        An out-of-pattern write landed against a sensitive platform asset; attributing it to an exposed
+        token requires an exposure finding to join.
+
+detector_requirements:
+  required: >-
+    A stable token fingerprint or id carried from the exposure finding to the platform audit;
+    canonicalization of assets to a model/dataset URI and organization; a forwarded platform audit
+    tier that records write operations at all; retention of exposure findings and platform writes long
+    enough to span the leak-to-use window; and outcome-aware alert text that keeps "token exposed"
+    distinct from "asset written by an exposed token".
+  optional: >-
+    Content-scan badges on changed assets, a Vertex or Artifactory audit for managed and mirrored
+    variants, and IdP audit for federated clients each add corroboration but none gates the
+    exposure-to-use join.
+  correlation:
+    capability: >-
+      Aligned clocks across secret scanning, code-host audit, and platform audit; a token fingerprint
+      that survives the crossing from exposure to use; and per-account, per-object baselining to detect
+      a first-seen write.
+    window: 'Up to 24 hours from exposure to use, with an explicit maximum gap of 24 hours.'
+  baselines:
+    - name: 'Per-token and per-account write-use history'
+      window: '30-day rolling'
+      seeded_from: >-
+        Observed platform-audit writes per token fingerprint and account; never seeded from a window
+        that already contains the exposed token''s abusive writes, which would normalize them.
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on deployed
+    sensors, enabled logging, retained fields, and architecture. For this object, verification
+    specifically means confirming that the platform's audit tier is enabled and forwarded, that secret
+    scanning findings are queryable with a token fingerprint, and that per-token usage is understood to
+    be absent from the platform audit so attribution rests on the cross-source join.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of the behavior; the publication date is softened to "Dec 2023 or earlier" because no fetched page states it.'
+    - 'Whether any exposed token was actually used by an attacker; the source demonstrates capability only.'
+    - 'The machine-readable event names, field identifiers, and retention of the Hugging Face audit log.'
+    - 'Whether estates in scope hold Hugging Face tiers that emit audit logs at all.'
+  assumptions:
+    - id: 'ASSUMPTION-WRITE-EFFECT-IS-AUDITED'
+      verdict_changing: true
+      statement: >-
+        A completed write by an exposed token surfaces as a repository, secret, organization, or
+        membership change in the Hugging Face audit log. The docs describe these categories, but the
+        source demonstrated only capability and this pack infers that exercising the capability would
+        produce a matching audit entry. If wrong, STRAT-EXPOSED-TOKEN-USE-CORRELATION has no
+        platform-side event to join and observable narrows to the exposure finding alone. Resolve it by
+        performing an authorized write with a test token and confirming the resulting audit entry and
+        its fields.
+  standing_negatives:
+    - statement: >-
+        Hugging Face publishes no per-token usage audit: the audit-log documentation fetched for this
+        object lists token lifecycle and approval events but no record of token id, scope, or source IP
+        per API call, so a write cannot be bound to a token from platform telemetry alone.
+      ref: 'REF-HF-AUDIT'
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the Hugging Face Hub audit-log documentation for a newly documented per-token usage
+        event carrying token id, scope, or source IP.
+
+missing_states:
+  - id: 'MISSING_PLATFORM_AUDIT_TIER'
+    meaning: 'Missing telemetry: the organization is on a Hugging Face tier that emits no audit log.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Do not claim a platform write occurred; limit the conclusion to the exposure finding and any
+      mirror or Vertex audit that does exist.
+  - id: 'MISSING_PER_TOKEN_USAGE'
+    meaning: 'Attribution gap: the platform audits no per-token usage, so a write carries no token id.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Attribute the write to a token only through the exposure join; otherwise report an anomalous
+      write with the token attribution marked incomplete.
+  - id: 'MISSING_EXPOSURE_FINDING'
+    meaning: 'Missing telemetry: no forwarded secret-scanning finding for the acting token.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Fall back to the platform-write-anomaly strategy and mark that exposed-token attribution could
+      not be established.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'actor_or_explicit_missing_state'
+    - 'affected_token_fingerprint_and_scope'
+    - 'affected_model_dataset_or_org_resource'
+    - 'observed_platform_write_operation'
+    - 'source_ip_and_account_context'
+    - 'leak_to_use_temporal_link_when_present'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'exposure_finding_location'
+      condition: 'when a secret-scanning or code-host finding is joined to the write'
+    - field: 'content_scan_badge'
+      condition: 'when a changed asset carries a ClamAV or pickle-import result'
+  recommended_title: 'Write-scoped AI-platform token used to change a supply-chain asset after exposure'
+  unsupported_title: 'Attacker poisoned the Llama model supply chain'
+
+evidence:
+  confirmed_incident_behavior: >-
+    Lasso Security reports finding roughly 1,500 exposed Hugging Face tokens across GitHub and Hugging
+    Face, some write-scoped, granting access to 723 organizations, write access to 14 datasets, the
+    ability to create a repository in the meta-llama organization, and the ability to manipulate
+    existing models and download private models. The source states this as demonstrated capability;
+    that any attacker used the tokens is not asserted, and this pack carries the exploitation as
+    unproven rather than reading use into the finding.
+  supported_conclusion: >-
+    The evidence supports that write-scoped AI-platform tokens were exposed at scale and would permit
+    mutation of trusted supply-chain assets. A detector can emit "an exposed write-scoped token was
+    used to write a platform asset" only when an exposure finding is joined to a platform-audit write
+    on the same fingerprint; absent the write, it may report an exposed write-scoped token.
+  unsupported_conclusions: >-
+    The evidence does not establish that any token was used, that any asset was actually tampered, the
+    identity of any attacker, or any downstream consumer executing a poisoned asset. Those require
+    platform-write and downstream-execution telemetry the cited source does not carry.
+  procedure_boundary: >-
+    This procedure is the exposure of a write-scoped token and its use to mutate a supply-chain asset.
+    A consumer later pulling and executing a tampered asset is a separate behavior, and the write
+    capability shown here is not evidence that such execution occurred.
+  references:
+    - id: 'REF-THREAT-LASSO'
+      type: 'incident-procedure-primary-source'
+      title: '1,500 Hugging Face API tokens were exposed, leaving millions of Meta-Llama, Bloom and Pythia users vulnerable'
+      publisher: 'Lasso Security'
+      url: 'https://www.lasso.security/blog/1500-huggingface-api-tokens-were-exposed-leaving-millions-of-meta-llama-bloom-and-pythia-users-for-supply-chain-attacks'
+      trust_tier: 'researcher'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary source for the exposed-token counts, the 723 organizations, the write access to 14
+        datasets, the meta-llama repository creation, and the model manipulation and private-model
+        download. It explicitly does not state that attackers used the tokens.
+    - id: 'REF-HF-AUDIT'
+      type: 'telemetry-documentation'
+      title: 'Audit logs'
+      publisher: 'Hugging Face'
+      url: 'https://huggingface.co/docs/hub/en/audit-logs'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the Team/Enterprise audit categories and JSON export supporting the platform-audit
+        telemetry source, and the absence of a per-token usage record cited in the standing negative.
+    - id: 'REF-HF-SCAN-MALWARE'
+      type: 'telemetry-documentation'
+      title: 'Malware scanning'
+      publisher: 'Hugging Face'
+      url: 'https://huggingface.co/docs/hub/en/security-malware'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the ClamAV ok/infected badge used as the content-change signal.'
+    - id: 'REF-HF-SCAN-PICKLE'
+      type: 'telemetry-documentation'
+      title: 'Pickle scanning'
+      publisher: 'Hugging Face'
+      url: 'https://huggingface.co/docs/hub/en/security-pickle'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the pickle-import scan on pushed files as a content-change signal.'
+    - id: 'REF-VERTEX-AUDIT'
+      type: 'telemetry-documentation'
+      title: 'Vertex AI audit logging'
+      publisher: 'Google'
+      url: 'https://cloud.google.com/vertex-ai/docs/general/audit-logging'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents Admin Activity logging on aiplatform.googleapis.com for the managed-platform variant.'
+    - id: 'REF-GH-AUDIT'
+      type: 'telemetry-documentation'
+      title: 'Audit log events for your enterprise'
+      publisher: 'GitHub'
+      url: 'https://docs.github.com/en/enterprise-cloud@latest/admin/monitoring-activity-in-your-enterprise/reviewing-audit-logs-for-your-enterprise/audit-log-events-for-your-enterprise'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the token_id/token_scopes/hashed_token and personal_access_token lifecycle fields
+        used to establish token exposure for the correlation join.
+    - id: 'REF-ARTIFACTORY-AUDIT'
+      type: 'telemetry-documentation'
+      title: 'Audit trail log and access log'
+      publisher: 'JFrog'
+      url: 'https://docs.jfrog.com/administration/docs/audit-trail-log'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the audit-trail and access-log fields for writes against mirrored artifacts.'
+    - id: 'REF-IDP-AUDIT'
+      type: 'telemetry-documentation'
+      title: 'Entra audit activities and Okta event types'
+      publisher: 'Microsoft and Okta'
+      url: 'https://learn.microsoft.com/en-us/entra/identity/monitoring-health/reference-audit-activities'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents credential-lifecycle events for a federated client that reaches the platform.'

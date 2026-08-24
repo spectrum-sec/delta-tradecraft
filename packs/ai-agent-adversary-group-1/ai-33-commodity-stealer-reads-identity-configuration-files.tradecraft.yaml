@@ -1,0 +1,544 @@
+identity:
+  uuid: '858e4328-300f-4330-b627-11c71c41f4a7'
+  id: 'DT-AAG1-AI-033'
+  aliases:
+    - 'P68'
+  name: 'A commodity stealer reads agent identity and configuration files from disk'
+  incident: >-
+    Koi reported a commodity infostealer that reads OpenClaw AI agent identity, token, and
+    configuration files from disk as part of its collection set.
+  first_observed: '2026'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'host-filesystem'
+  secondary_attack_surfaces:
+    - 'ai-agent-harness'
+  behavior_classes:
+    - 'collection'
+    - 'other'
+  behavior_classes_note: >-
+    agent-identity-file-read-from-disk: a commodity stealer process reads an AI agent's identity,
+    token, or configuration files at rest on disk, collecting material that may carry session and
+    credential state, independent of any subsequent use of that material.
+  tags:
+    - 'ai'
+    - 'agent'
+    - 'infostealer'
+    - 'credential-theft'
+    - 'configuration-files'
+
+behavior:
+  definition: >-
+    A commodity stealer reads agent identity, token, or configuration files from disk.
+  detailed_definition: >-
+    A stealer process on the host opens and reads the files where an AI agent keeps its identity,
+    session, token, and configuration state, treating them as one more collection target alongside
+    browser and application secrets. The boundary crossed is from files at rest under one process's
+    ownership into another process's read. The attempt ends at the read of the files; success as
+    usable theft begins only if the material carries live credential or session state and is later
+    used. It is independent of agent product, file path layout, and endpoint sensor.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers a non-owning process reading the agent's identity and configuration files at rest; does
+      not cover whether the files held live secrets or whether the material was later used.
+    summary: >-
+      This can occur when an AI agent stores identity, token, or configuration state in files on disk
+      and a process with read access to those paths reads them. Usable theft additionally requires the
+      files to contain live session or credential material and that material to be replayed elsewhere.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      A file read is observable only where file-access auditing is configured for the target paths;
+      no AI/agent product emits any event when its own identity or configuration files are read by
+      another process.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          Windows event 4663 is generated only where the target object's SACL contains a matching ACE
+          and the Audit File System subcategory is enabled; neither is configured by default, so the
+          read record exists only where auditing was turned on for these paths.
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          Endpoint file telemetry (DeviceFileEvents, Sysmon) records the stealer process and its file
+          activity only where a sensor is deployed, and the fetched DeviceFileEvents schema documents
+          no read ActionType, so a bare read may not surface even with a sensor present.
+    summary: >-
+      The read is observable when file-access auditing on the agent paths or an endpoint sensor
+      records a process opening those files, with process lineage to attribute the read. A native AI
+      product record is not available at all; the agent emits nothing when its own files are read. A
+      subsequent identity-misuse record at the provider (compliance or audit-log APIs) establishes use
+      of the identity, not that it was taken from disk; a read event with no process attribution is too
+      weak to name the reader.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Separable from the agent legitimately reading its own configuration when a non-agent process
+      reads multiple identity paths, or when the read is joined to follow-on identity misuse; a single
+      read by an expected process overlaps benign operation.
+    blocking_conditions:
+      - condition: 'cross-source-join-required'
+        note: >-
+          Distinguishing theft from routine access needs the file-read event joined to process lineage
+          (a non-agent reader) and, where available, to provider-side identity-misuse records; neither
+          the read nor the misuse record alone separates the behavior.
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          The separating read evidence depends on the same SACL and Audit File System configuration or
+          endpoint sensor that gates observability.
+    summary: >-
+      Separation rests on process identity and breadth: a process that is not the agent reading several
+      of the agent's identity and configuration files, ideally staged or followed by an upload, is
+      distinguishable, while the agent reading its own configuration is not. Normalizing the target
+      paths to an agent-identity class and requiring a non-owning reader across multiple files is what
+      makes it separable; a single read with no reader attribution, or a provider misuse record with no
+      disk evidence, is too weak to establish the disk read.
+
+attack_surface_context:
+  surface: >-
+    The on-disk files where AI agents keep identity, session, token, and configuration state, such as
+    the Claude Code settings and configuration files and the OpenClaw and ClawHub state directories.
+  how_the_surface_works: >-
+    AI agents persist configuration and sign-in state in predictable files under the user's home
+    directory: Claude Code documents settings files and a configuration file it describes as holding
+    global configuration, sign-in session data, MCP server configurations, and per-project state, with
+    an environment variable that relocates the home-directory files; OpenClaw and ClawHub keep a state
+    directory, skill directories, and provenance and token files. Any process with read access to
+    these paths can read them.
+  incident_processing_path: >-
+    Koi reports (source-attested) that a commodity infostealer collects OpenClaw AI agent files as
+    part of its theft set. That the deciding event for this procedure is the read of the identity and
+    configuration files at rest, with usable theft and later use held as separate corroboration, is
+    this pack's framing carried from the catalog rather than a per-file read call path the report
+    publishes. The specific Claude Code and OpenClaw paths are the vendors' documented inventory, not
+    a claim that each was read in the reported incident.
+  processing_stages:
+    - 'stealer-execution-on-host'
+    - 'agent-path-enumeration'
+    - 'identity-configuration-file-read'
+    - 'local-staging'
+    - 'exfiltration'
+    - 'provider-side-identity-use'
+  stage_evidence: >-
+    The stage an event sits at fixes what it can prove: a file-read event proves a read, not that the
+    file held a live secret; a staged copy proves collection; an upload proves exfiltration; a
+    provider-side identity-misuse record proves use of the identity, not that it came from disk.
+  trust_boundaries: >-
+    Files at rest under the agent's ownership into a non-owning process's read (reached where the
+    stealer reads them); host into external network (reached where the collected files are uploaded).
+    Whether the read yielded live, replayable credentials is not established by the read alone.
+  security_control_context: >-
+    File-system ACLs, per-object SACLs, and EDR file-read policy decide and record access where
+    configured; by default the agent paths carry no SACL, so a read leaves no 4663, and the fetched
+    endpoint schema documents no read ActionType. Credential-guard and token-binding controls reduce
+    the value of stolen files by making session material non-replayable off-host. Bypass
+    representations include reading files with normal user rights, copying rather than opening in place,
+    and blending the read into a broad stealer sweep of many application secrets.
+  practitioner_implication: >-
+    An implementer must discover which agent products are installed and their exact identity and
+    configuration paths, whether file-access auditing or an endpoint sensor covers those paths, which
+    processes legitimately read them, and whether provider-side compliance or audit-log APIs are
+    available to corroborate later identity misuse.
+
+threat_research:
+  why_it_matters: >-
+    Agent identity and configuration files can carry sign-in session data, tokens, and MCP server
+    configurations, so a commodity stealer that adds them to its sweep can convert an ordinary
+    infection into takeover of the victim's AI agent identity and its connected services.
+  threat_actor: >-
+    A commodity infostealer, as reported by Koi; the report characterises stealer malware rather than
+    attributing a named group.
+  campaign: 'Koi-reported commodity infostealer collecting OpenClaw AI agent files.'
+  victim: >-
+    Users of the affected OpenClaw AI agent tooling whose on-disk agent files fall within the
+    stealer's collection set, as characterised by the report.
+  capability: >-
+    A commodity stealer that reads and collects OpenClaw AI agent identity and configuration files from
+    disk alongside its other theft targets.
+  target: >-
+    The on-disk identity, token, and configuration files of AI agent tooling. The report establishes
+    collection of these files; whether the collected material was live and later used is not quantified
+    by the source.
+  victimology:
+    - 'Workstations running AI agent tooling that persists identity and session state in home-directory files.'
+    - 'Users whose agent files carry live session data or tokens for connected AI services and MCP servers.'
+
+visibility:
+  telemetry_sources:
+    - source: 'AI/agent product documentation of on-disk identity and configuration paths'
+      purpose: >-
+        Enumerate the target files an agent keeps on disk, so that reads of those specific paths can be
+        classified as agent-identity access; the products document the paths, not read events.
+      event_vocabulary: 'none'
+      tier: 'not-applicable'
+      operational_viability: 'first-party-build'
+      fields:
+        - name: '~/.claude.json and Claude Code settings files (settings.json, settings.local.json, managed-settings.json)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CC-SETTINGS'
+          load_bearing: true
+          note: >-
+            The vendor documents ~/.claude.json as holding global configuration, sign-in session data,
+            MCP server configurations, and per-project state; CLAUDE_CONFIG_DIR relocates the
+            home-directory files. This is an inventory of targets, not a read event.
+        - name: 'OpenClaw and ClawHub state (~/.openclaw and profile/env variants, skills directories, .clawhub provenance and lock files)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-OPENCLAW-CLI'
+          load_bearing: true
+          note: 'Documented state and provenance paths; an inventory of targets, not a read event.'
+      details: >-
+        Claude Code additionally documents instruction and memory files and plugin manifests under the
+        home and project directories; OpenClaw documents managed and personal skill directories and a
+        ClawHub CLI token and configuration path. No AI product emits an event when these files are read
+        by another process.
+      limitations:
+        - 'No AI/agent product logs reads of its own identity or configuration files: a total native gap.'
+        - 'The path list is an inventory that an estate must assemble; it is not itself telemetry.'
+    - source: 'Host file-access auditing (Windows Security event 4663)'
+      purpose: 'Record a process opening the agent identity and configuration files, where object auditing is configured.'
+      event_vocabulary: 'kernel-audit'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'Subject / Object / Accesses / Access Mask / Process Name'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-EVENT-4663'
+          load_bearing: true
+          note: >-
+            Generated only where the object''s SACL contains a matching ACE and the Audit File System
+            subcategory (or Audit Registry / Audit Kernel Object) is enabled.
+      details: >-
+        Event 4663 records the subject process, the object accessed, and the access mask when a
+        configured object is accessed, giving both the reader and the read where auditing is on.
+      limitations:
+        - 'Requires a per-object SACL and the Audit File System subcategory; neither is on by default.'
+        - 'Volume can be high on broadly audited paths, so auditing is usually scoped narrowly.'
+    - source: 'Endpoint file and process telemetry (DeviceFileEvents, DeviceProcessEvents, Sysmon)'
+      purpose: 'Attribute file activity and staging to the stealer process and record any subsequent upload.'
+      event_vocabulary: 'host-process-event'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'DeviceFileEvents ActionType / FileName / FolderPath / SHA256 / InitiatingProcessFileName / InitiatingProcessCommandLine'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-DEFENDER-FILE'
+          load_bearing: true
+          note: >-
+            The fetched schema documents no read ActionType, so an open-for-read may not surface; file
+            create and modify (staging copies) and process lineage are the reliable columns.
+      details: >-
+        DeviceFileEvents and Sysmon event 11 record staged copies of collected files, DeviceProcessEvents
+        and Sysmon event 1 record the stealer process and its lineage, Sysmon event 9 records raw-access
+        reads, and network or DNS records show the upload of the collected set.
+      limitations:
+        - 'No documented read ActionType on the fetched DeviceFileEvents schema; a plain read may be invisible.'
+        - 'Requires a deployed sensor on the host.'
+    - source: 'Provider-side identity-use records (Anthropic Compliance API, OpenAI audit logs)'
+      purpose: 'Corroborate later use of the stolen identity at the provider, as effect evidence for the disk read.'
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      details: >-
+        The Anthropic Compliance API returns activity records with actor and type and requires a
+        read:compliance_activities scope; OpenAI audit logs carry login and API-key events with actor
+        session IP. These evidence use of the identity, not that credentials were taken from disk.
+      limitations:
+        - 'Shows subsequent identity use, not the disk read; the two must be joined by inference.'
+        - 'The Anthropic page publishes no enumeration of type values beyond an example.'
+
+detection:
+  scope: >-
+    Detection spans the read of the agent identity and configuration files, the stealer process that
+    performs it, and the later use of the stolen identity at the provider. Two materially distinct
+    strategies divide the path: one detects a non-agent process reading multiple agent identity paths on
+    the host, and one corroborates with provider-side identity-misuse records.
+  outcome_guardrails: >-
+    A file read establishes access to the file, not that it held a live secret. A staged copy or upload
+    establishes collection and exfiltration. A provider-side identity-misuse record establishes use of
+    the identity, not that it came from this disk read. These must stay distinct; "agent files were
+    read" and "agent identity was stolen and used" are different alerts.
+  shared_normalization_context: >-
+    Canonicalize the agent identity and configuration paths for each installed product into one
+    agent-identity-file class (accounting for CLAUDE_CONFIG_DIR and OpenClaw profile and environment
+    variants), so a read is classed by target rather than by a single literal path.
+  shared_enrichment_context: >-
+    Join the file-read or file event to process lineage (is the reader the agent or another process),
+    to any staging and upload, and where available to provider-side identity-misuse records on the
+    same user and a following time window.
+  strategies:
+    - id: 'STRAT-NONAGENT-IDENTITY-FILE-READ'
+      name: 'non-agent identity-file read'
+      objective: >-
+        Detect a process that is not the owning agent reading one or more of the agent's identity and
+        configuration files, especially several such files in a short window.
+      incident_relevance: >-
+        Detects the collection behaviour the incident performs. It does not by itself establish that the
+        files held live secrets or that the identity was used; those are corroborated separately.
+      detection_logic: >-
+        Where file-access auditing or endpoint file telemetry covers the agent identity paths, raise
+        when a process outside the expected agent and tooling set accesses one or more agent-identity
+        files, and raise more strongly when several distinct identity or configuration files are read or
+        staged by one process in a short window. Classify the reader by image against the expected agent
+        processes; do not exclude by user account alone, since the stealer runs as the user.
+      minimum_evidence: >-
+        A file access or staging event on an agent-identity path attributed to a process outside the
+        expected agent set. Without breadth or follow-on, report a non-agent read of an agent identity
+        file, not confirmed credential theft.
+      correlation_context: >-
+        Correlate reads and staging across the agent identity paths on host and process identity within
+        a short window (this pack's convention up to ten minutes), and to any subsequent upload. A
+        legitimate backup or sync tool reading many files weakens attribution and must be classified.
+      detectors:
+        - detector_class: 'endpoint-file-and-process-analytics'
+          technologies:
+            - 'Microsoft Defender for Endpoint advanced hunting'
+            - 'Windows Security auditing (event 4663 with object SACLs)'
+            - 'Sysmon (events 1, 9, 11)'
+          contribution: 'Attributes reads and staging of agent identity files to a specific process.'
+          limitations: 'Depends on SACLs or a sensor; the fetched DeviceFileEvents schema documents no read ActionType.'
+      benign_explanations:
+        - explanation: >-
+            The agent itself, backup and sync tools, and security agents legitimately read the same
+            configuration and identity files.
+          distinguishing_context: >-
+            A process outside the expected agent, backup, and security set reading multiple identity
+            files separates the suspicious case; the agent reading its own configuration does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding reads by any user-owned process, or by broad backup allowlists, would suppress the
+            stealer, which runs as the same user and touches the same files.
+      blind_spots:
+        - description: 'Missing telemetry: no SACL and no endpoint sensor on the agent paths, so no read is recorded.'
+          routes_to: null
+        - description: 'Missing telemetry: a plain open-for-read that surfaces under no documented DeviceFileEvents ActionType.'
+          routes_to: null
+        - description: 'Evasion: raw-disk or volume-shadow reads that bypass file-open auditing.'
+          routes_to: null
+      analyst_response: >-
+        Identify the reading process and its lineage, enumerate which agent identity files it touched
+        and whether it staged or uploaded them, determine whether it is an expected agent, backup, or
+        security tool, and pivot to provider-side records for any following identity use.
+      safe_conclusion: >-
+        A process outside the expected agent set read one or more agent identity files; whether live
+        credentials were taken and used is not established without corroboration.
+    - id: 'STRAT-PROVIDER-IDENTITY-MISUSE-CORRELATION'
+      name: 'provider-side identity-misuse corroboration'
+      objective: >-
+        Detect use of a possibly-stolen agent identity at the provider and tie it back to a host disk
+        read of the agent identity files.
+      incident_relevance: >-
+        Detects the effect the disk read enables, not the read itself. A provider misuse signal must be
+        joined to a host read before it is attributed to this procedure.
+      detection_logic: >-
+        Select provider-side identity-use records (compliance activities, login and API-key events)
+        showing use of the agent identity from an unexpected location or context, and join to a host
+        file-read or staging event on the same user's agent identity files within a bounded window.
+        Raise on the correlated pair; a provider record alone indicates identity use of unknown origin.
+      minimum_evidence: >-
+        A provider-side identity-use record joined to a host read or staging of the same user's agent
+        identity files. Without the host join, report identity use of unestablished origin, not disk
+        theft.
+      correlation_context: >-
+        Join on user identity and a following time window from host read to provider use; account for
+        provider audit-log retention and query limits, and for clock differences between host and
+        provider streams.
+      detectors:
+        - detector_class: 'identity-and-audit-correlation'
+          technologies:
+            - 'Anthropic Compliance API'
+            - 'OpenAI audit logs API'
+            - 'SIEM correlation across host and provider streams'
+          contribution: 'Establishes that the agent identity was used, and where joined, that a disk read preceded it.'
+          limitations: 'Provider records show use, not origin; retention and query caps bound the join window.'
+      benign_explanations:
+        - explanation: >-
+            The user legitimately signs in and uses the agent identity from new devices or locations.
+          distinguishing_context: >-
+            A provider use with no corresponding legitimate host activity, joined to a non-agent read of
+            the identity files, separates the misuse; ordinary new-device sign-in does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Treating all new-location identity use as benign would discard the very signal this strategy
+            joins to a host read.
+      blind_spots:
+        - description: 'Missing telemetry: provider audit-log retention shorter than the gap to the host read.'
+          routes_to: null
+        - description: 'Attribution limit: a provider use record carries no evidence the credential came from disk.'
+          routes_to: null
+      analyst_response: >-
+        Retrieve the provider identity-use records for the affected user, determine whether the use is
+        explained by legitimate activity, and join to any host read or staging of the agent identity
+        files on the same user within the retention window.
+      safe_conclusion: >-
+        The agent identity was used at the provider and, where joined to a host read of the identity
+        files, that use was preceded by a disk read of those files.
+
+detector_requirements:
+  required: >-
+    An assembled inventory of each installed agent's identity and configuration paths, canonicalized
+    into one class; file-access auditing (object SACLs plus Audit File System) or endpoint file
+    telemetry on those paths; process-lineage attribution that separates the agent and expected tools
+    from other readers; and outcome-aware alert text that distinguishes a file read from confirmed and
+    used credential theft.
+  optional: >-
+    Provider-side compliance and audit-log access adds corroboration of later identity use, and
+    raw-access read auditing (Sysmon event 9) catches readers that bypass file-open auditing; neither
+    gates the host read strategy.
+  correlation:
+    capability: >-
+      Aligned clocks across host and provider streams; stable user identity across them; process lineage
+      on the host to name the reader; and provider retention long enough to cover the gap from disk read
+      to identity use.
+    window: 'Up to ten minutes to group reads and staging on the host; provider joins bounded by audit-log retention.'
+  baselines:
+    - name: 'Expected readers of agent identity paths'
+      window: '30-day'
+      seeded_from: >-
+        Observed agent, backup, sync, and security processes that legitimately read the paths; never
+        seeded during a suspected compromise window, which would enrol the stealer as expected.
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on deployed
+    sensors, enabled logging, retained fields, and architecture. For this object, verification
+    specifically means confirming that the agent identity paths are covered by an object SACL or an
+    endpoint sensor and that reads carry process lineage, since no AI product logs reads of its own
+    files and the fetched DeviceFileEvents schema documents no read ActionType.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of the behavior; the source is undated in the catalog and only a coarse year is defensible.'
+    - 'Which specific agent identity files the reported stealer read, beyond the report''s OpenClaw framing.'
+    - 'Whether the collected files held live, replayable session or token material in the reported cases.'
+    - 'The full enumeration of Anthropic compliance activity type values, which the vendor page does not publish.'
+  assumptions:
+    - id: 'ASSUMPTION-READ-IS-DECIDING-EVENT'
+      verdict_changing: false
+      statement: >-
+        The deciding event for this procedure is the read of the agent identity and configuration files
+        at rest, with usable theft and later use held as separate corroboration. The source reports
+        that the stealer collects OpenClaw agent files but publishes no per-file read call path; this
+        pack framed the read as the boundary from the catalog. If wrong only in scope, the strategies
+        remain aimed at file access but the minimum-evidence floor may over- or under-count which paths
+        constitute the behavior. Resolve it by reading the stealer''s file-access list or reproducing
+        its collection routine in a lab and recording which agent paths it opens.
+  standing_negatives:
+    - statement: >-
+        No AI/agent product emits any event when its own identity or configuration files are read by
+        another process: the settings, memory, plugin, and OpenClaw documentation read for the audit
+        describe the file paths and their contents, with no read or access event schema.
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the Claude Code settings and OpenClaw CLI references for a newly documented file-access
+        or self-read event on the agent identity and configuration files.
+
+missing_states:
+  - id: 'MISSING_NATIVE_FILE_READ_EVENT'
+    meaning: 'Missing telemetry: no AI product records reads of its own identity or configuration files.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Rely on host file-access auditing or endpoint telemetry for the read; never infer a read from AI
+      product telemetry, which carries none.
+  - id: 'FILE_AUDIT_NOT_CONFIGURED'
+    meaning: 'Missing telemetry: no object SACL and no endpoint sensor cover the agent identity paths.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Do not claim the read; limit any conclusion to provider-side identity use if that is separately
+      observed.
+  - id: 'MISSING_LIVE_SECRET_CONFIRMATION'
+    meaning: 'Attribution gap: a read is recorded but whether the file held live credentials is unknown.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report a read of an agent identity file and mark usable theft as unestablished pending
+      provider-side corroboration.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'actor_or_explicit_missing_state'
+    - 'reading_process_and_lineage'
+    - 'agent_identity_files_accessed'
+    - 'breadth_of_files_and_staging_when_present'
+    - 'provider_identity_use_when_correlated'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'exfiltration_destination'
+      condition: 'when a staged upload of the collected files is observed'
+  recommended_title: 'Non-agent process read agent identity and configuration files on the host'
+  unsupported_title: 'Attacker stole and used the victim''s AI agent credentials'
+
+evidence:
+  confirmed_incident_behavior: >-
+    Koi reports that a commodity infostealer collects OpenClaw AI agent files as part of its theft set.
+    That the deciding event for this procedure is the read of the identity and configuration files at
+    rest, with usable theft and later identity use held as separate corroboration, is this pack's
+    framing, registered in missing_context.assumptions, not a per-file read mechanism the report states.
+    The specific Claude Code and OpenClaw paths are the vendors' documented inventory of targets, not a
+    claim that each was read in the reported incident.
+  supported_conclusion: >-
+    The evidence supports that a commodity stealer reads and collects AI agent identity and
+    configuration files from disk. A detector can report a non-agent process reading one or more agent
+    identity files where file auditing or a sensor covers them, and can report used credential theft
+    only where a host read is joined to provider-side identity misuse.
+  unsupported_conclusions: >-
+    The evidence does not establish that the collected files held live secrets, that the identity was
+    replayed, a victim count, or any objective beyond collection. Those require the file contents,
+    provider-side use records, or incident telemetry the source does not carry.
+  procedure_boundary: >-
+    This procedure is the read of the agent identity and configuration files from disk. The stealer's
+    broader collection of other secrets, the exfiltration upload, and any later use of the stolen
+    identity are separate behaviors and are not evidenced by the read alone.
+  references:
+    - id: 'REF-THREAT-STEALER'
+      type: 'incident-procedure-primary-source'
+      title: 'Infostealer steals OpenClaw AI agent files'
+      publisher: 'Koi (via The Hacker News)'
+      url: 'https://thehackernews.com/2026/02/infostealer-steals-openclaw-ai-agent.html'
+      trust_tier: 'researcher'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary procedure-level source for a commodity stealer collecting OpenClaw AI agent files. It
+        does not publish the per-file read path, whether the files held live secrets, or a victim count.
+    - id: 'REF-CC-SETTINGS'
+      type: 'telemetry-documentation'
+      title: 'Claude Code settings'
+      publisher: 'Anthropic'
+      url: 'https://code.claude.com/docs/en/settings'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the Claude Code settings and configuration files and what ~/.claude.json holds;
+        supports the target-inventory telemetry source, not any incident fact.
+    - id: 'REF-OPENCLAW-CLI'
+      type: 'telemetry-documentation'
+      title: 'OpenClaw CLI and state directories'
+      publisher: 'OpenClaw'
+      url: 'https://docs.openclaw.ai/cli'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the OpenClaw and ClawHub state, skill, and provenance paths used as the target inventory.'
+    - id: 'REF-EVENT-4663'
+      type: 'telemetry-documentation'
+      title: 'Windows Security event 4663 (An attempt was made to access an object)'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/auditing/event-4663'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the 4663 fields and its SACL and Audit File System prerequisites; supports the
+        file-access auditing source and its enablement limitation.
+    - id: 'REF-DEFENDER-FILE'
+      type: 'telemetry-documentation'
+      title: 'DeviceFileEvents table (advanced hunting)'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-devicefileevents-table'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the DeviceFileEvents columns used for staging and process lineage, and the absence of
+        a documented read ActionType on the fetched schema.
