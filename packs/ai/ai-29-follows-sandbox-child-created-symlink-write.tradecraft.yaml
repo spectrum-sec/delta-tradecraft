@@ -1,0 +1,571 @@
+identity:
+  uuid: '4e9a4231-5c6c-49e6-ad96-a489618bb9af'
+  id: 'DT-AAG1-AI-029'
+  aliases:
+    - 'P64'
+  name: 'An agent follows a sandbox-child-created symlink to write outside the approved workspace'
+  incident: >-
+    Sandbox-child symlink workspace escape, a responsibly disclosed vulnerability (GitHub Security
+    Advisory) in which a child process inside an agent sandbox creates a symlink that the agent or a
+    parent process then follows to write outside the approved workspace directory.
+  first_observed: '2025'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'host-filesystem'
+  secondary_attack_surfaces:
+    - 'ai-agent-harness'
+  behavior_classes:
+    - 'containment-boundary-crossing'
+    - 'other'
+  behavior_classes_note: >-
+    symlink-target-redirection-of-a-trusted-write: a sandbox child plants a symlink so that a write
+    the agent believes is confined to the approved workspace resolves, through the link, to a target
+    outside it.
+  tags:
+    - 'ai'
+    - 'agent'
+    - 'sandbox-escape'
+    - 'symlink'
+    - 'filesystem'
+
+behavior:
+  definition: >-
+    A sandbox child creates a symlink and an agent or parent process follows it to write outside the
+    approved workspace.
+  detailed_definition: >-
+    An adversary controlling code that runs as a child inside an agent's workspace sandbox plants a
+    symbolic link whose target lies outside the approved directory set. A trusted writer, the agent
+    or its parent, later resolves a path that traverses that link and writes to the external target,
+    so a write intended to stay inside the workspace crosses the containment boundary. The attempt is
+    creating the link and inducing the write; success is a file written or modified outside the
+    approved workspace. It is independent of the agent product, host operating system, and filesystem,
+    and depends on the writer following links rather than resolving to a canonical path first.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers a sandbox-child-planted symlink being followed by a trusted writer to a target outside
+      the approved workspace; it does not cover any later use of the file written outside.
+    summary: >-
+      This can occur where a child process in the sandbox can create symlinks in a location the agent
+      or parent later writes through, the trusted writer follows links rather than canonicalizing and
+      rejecting escapes, and the link target lies outside the approved workspace. It requires only
+      link creation plus a subsequent write along the linked path.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      The escaping write itself is observable where endpoint file telemetry or agent tool logging
+      covers the host, because the destination path outside the workspace root appears; the fact that
+      the path resolved through a symlink is recorded by no fetched product and is a structurally
+      missing attribute of the otherwise-observable event.
+    blocking_conditions:
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          The write is only recorded where DeviceFileEvents, Sysmon, or agent OTel tool logging
+          (OTEL_LOG_TOOL_DETAILS enabled) covers the sandbox host; on an uninstrumented host it
+          leaves no record.
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          Windows 4663 object-access evidence requires the target object SACL to contain a matching
+          ACE and the Audit File System subcategory to be enabled.
+      - condition: 'deciding-property-not-in-any-schema'
+        note: >-
+          No AI or agent product emits a symlink-creation, link-target, or canonical-resolved-path
+          field, so the symlink-resolution half of the behavior is structurally lost even where the
+          write is recorded.
+    summary: >-
+      The escaping write is observable when file telemetry records a write whose destination is
+      outside the approved workspace root (a derived comparison against workspace.host_paths), with
+      the creating process lineage. What is not observable is that the path resolved through a
+      sandbox-child-created symlink: symlink creation, link target, and canonical destination are
+      native fields on no product fetched. A write inside the workspace with no escape, or a write
+      with no link attribution, is too weak to establish the symlink-escape behavior specifically.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Separable from ordinary writes where a resolved destination is compared to the approved
+      workspace roots and an escape is flagged; separating a symlink-mediated escape from a direct
+      out-of-workspace write is not possible on native telemetry because the link-resolution field is
+      absent.
+    blocking_conditions:
+      - condition: 'environment-inventory-required'
+        note: >-
+          Deciding that a write escaped requires the approved workspace root set (workspace.host_paths
+          or the container/sandbox root) as reference data, which is estate-supplied.
+      - condition: 'deciding-property-not-in-any-schema'
+        note: >-
+          The symlink-versus-direct distinction rests on a canonical-resolved-path field that no
+          product emits, so that part of the separation is structurally unavailable.
+    summary: >-
+      Separation rests on canonicalizing the write target and comparing it to the approved workspace
+      roots, then flagging a write that lands outside them, ideally correlated with a preceding
+      symlink creation by a sandbox child. Ordinary agent writes stay inside the roots, so the
+      escape is the discriminator; but because no product marks a path as symlink-resolved, a
+      symlink-mediated escape and a direct external write look the same, and the reformulated
+      question becomes the escaping write plus a nearby link creation rather than the resolution
+      itself.
+
+attack_surface_context:
+  surface: >-
+    An agent workspace sandbox (e.g. Claude Code or Cowork with an approved host-path set) and the
+    host filesystem path resolution that decides whether a write stays inside the approved workspace.
+  how_the_surface_works: >-
+    An agent is granted a set of approved workspace directories and runs tools, and sometimes child
+    processes, that read and write within them. File writes are issued as paths and resolved by the
+    operating system, which follows symbolic links by default; a link inside the workspace can point
+    to a target outside it, so a write to a path traversing the link lands outside the approved set
+    unless the writer canonicalizes and rejects escapes first.
+  incident_processing_path: >-
+    The advisory reports (source-attested) that a child process inside the sandbox can create a
+    symlink that the agent or parent then follows to write outside the approved workspace, escaping
+    the intended confinement. That the deciding evidence is a write whose canonical destination lies
+    outside the approved roots, compared against workspace.host_paths, rather than any native symlink
+    field, is this pack's reading of the available telemetry, since no product emits link resolution.
+  processing_stages:
+    - 'sandbox-child-runs-in-workspace'
+    - 'child-creates-symlink-to-external-target'
+    - 'agent-or-parent-issues-write-along-linked-path'
+    - 'os-follows-symlink-during-resolution'
+    - 'write-lands-outside-approved-workspace'
+  stage_evidence: >-
+    The link-creation stage would prove intent but emits no AI-native field; the OS-resolution stage
+    that follows the link is invisible to agent telemetry; only the final write stage produces a
+    record, and it carries the destination path but not the fact that a link was traversed to reach
+    it, so the record proves escape but not mechanism.
+  trust_boundaries: >-
+    Sandbox child into the approved-workspace confinement (crossed in the PoC: the child planted a
+    link the trusted writer followed out); approved workspace into the wider host filesystem (crossed:
+    the write landed outside the approved roots). Whether the externally written file was later used
+    is not established and is treated as unverified.
+  security_control_context: >-
+    The preventive control is the agent's workspace confinement: writes are meant to stay within an
+    approved host-path set expressed as workspace.host_paths or CLI additional directories. It decides
+    per write by path, and where it follows links without canonicalizing it neither blocks nor records
+    the escape; the emitted event carries the path but not the link resolution. Bypass representations
+    include a symlink planted by a child, a path that only escapes after link resolution, and long
+    paths truncated out of the tool payload.
+  practitioner_implication: >-
+    An implementer must discover the agent's approved workspace root set (workspace.host_paths, CLI
+    --add-dir, or the sandbox root), whether the estate collects agent OTel tool details
+    (OTEL_LOG_TOOL_DETAILS) and endpoint file telemetry on the sandbox host, and that no product
+    marks a path as symlink-resolved, so escape must be determined by a derived comparison of the
+    write destination against the approved roots rather than read from a link field.
+
+threat_research:
+  why_it_matters: >-
+    A workspace sandbox is the boundary that lets an agent run untrusted code safely; a symlink that
+    the trusted writer follows out of that boundary lets a child process cause writes anywhere the
+    agent's identity can reach, undermining the containment the sandbox exists to provide.
+  threat_actor: >-
+    Unknown; the behavior was demonstrated in a responsibly disclosed security advisory as a
+    proof-of-concept, with no in-the-wild actor attributed.
+  campaign: >-
+    A GitHub Security Advisory describing a sandbox-child symlink workspace escape; no named campaign
+    or victim organization.
+  victim: >-
+    Operators of agent workspace sandboxes that follow symlinks when writing within an approved
+    directory set; the source demonstrates the class rather than naming a compromised organization.
+  capability: >-
+    A demonstrated proof-of-concept that a sandbox child can create a symlink followed by a trusted
+    writer to escape the approved workspace and write outside it; the source shows the escape, not a
+    measured population of affected deployments.
+  target: >-
+    The path-resolution boundary of an agent workspace sandbox; targeted and demonstrated in a PoC,
+    with real-world exploitation neither claimed nor evidenced.
+  victimology:
+    - 'Agent runtimes that grant an approved workspace and follow symlinks on writes within it.'
+    - 'Deployments that run untrusted or model-generated child processes inside the workspace.'
+
+visibility:
+  telemetry_sources:
+    - source: 'Anthropic Claude Code and Cowork OpenTelemetry (agent tool events)'
+      purpose: >-
+        Record the write tool call, its target path, the approval that permitted it, and the approved
+        workspace scope.
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'claude_code.tool_result (tool_name Write/Edit/NotebookEdit, success, error_type, tool_input/tool_parameters)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CLAUDECODE-OTEL'
+          load_bearing: true
+          note: 'tool_input requires OTEL_LOG_TOOL_DETAILS=1; values over 512 chars are truncated and the payload is bounded near 4 K, which can drop long paths.'
+        - name: 'claude_code.tool_decision (decision, source, tool_source); workspace.host_paths'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CLAUDECODE-OTEL'
+          load_bearing: true
+          note: 'workspace.host_paths states the approved roots but not the resolved target; escape is a derived comparison.'
+        - name: 'symlink-resolution or canonical-target field (documented absent)'
+          attestation: 'vendor-attested-absent'
+          attestation_ref: 'REF-CLAUDECODE-OTEL'
+          load_bearing: false
+          note: 'No fetched agent product documents a symlink-resolution or canonical-target field.'
+      details: >-
+        Claude Code emits tool_result for Write/Edit/NotebookEdit with the target path under a
+        tool-detail flag, tool_decision for the approval, and the metric
+        claude_code.code_edit_tool.decision; Cowork emits file-access events carrying the paths, both
+        scoped by workspace.host_paths.
+      limitations:
+        - 'Tool-input paths require OTEL_LOG_TOOL_DETAILS=1 and are truncated at 512 chars per value.'
+        - 'workspace.host_paths gives the approved roots, not the resolved target; escape is derived.'
+        - 'No symlink-resolution or canonical-target field is emitted.'
+    - source: 'Microsoft Defender DeviceFileEvents (endpoint file telemetry)'
+      purpose: 'Record the write landing outside the workspace root and the creating process lineage.'
+      event_vocabulary: 'host-process-event'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'ActionType, FileName, FolderPath, PreviousFolderPath, SHA256'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-DEFENDER-FILE'
+          load_bearing: true
+          note: 'The destination path outside the approved roots is the escape evidence; compared against the workspace set.'
+        - name: 'InitiatingProcessCommandLine, InitiatingProcessParentFileName, InitiatingProcessId, AppGuardContainerId'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-DEFENDER-FILE'
+          load_bearing: false
+          note: 'Process lineage attributes the write; no documented symlink ActionType and no sandbox-root column beyond AppGuardContainerId.'
+      details: >-
+        DeviceFileEvents records the write outside the workspace root with the creating process
+        lineage, letting a detector compare the destination to the approved roots. The schema page
+        documents no symlink-specific ActionType.
+      limitations:
+        - 'Requires an endpoint sensor on the sandbox host.'
+        - 'No symlink-specific ActionType and no sandbox-root column on the fetched schema.'
+    - source: 'Sysmon and Windows object-access auditing (host-level effect evidence)'
+      purpose: 'Attribute the symlink creation and the sandbox child process, and the object-access write.'
+      event_vocabulary: 'host-process-event'
+      tier: 'request'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'Sysmon 11 (FileCreate) for the symlink; Sysmon 1 (ProcessCreate) for the sandbox child'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-SYSMON'
+          load_bearing: false
+          note: 'FileCreate records the link file but not that it is a symlink or its target.'
+        - name: 'Windows 4663 (Object, Accesses, Access Mask, Process Name)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-WIN-4663'
+          load_bearing: false
+          note: 'Requires the object SACL to contain a matching ACE and the Audit File System subcategory enabled.'
+      details: >-
+        Sysmon event 11 records the link file creation and event 1 the sandbox child with full
+        command line and hash; Windows 4663 records the object-access write where a SACL and the
+        Audit File System subcategory are configured.
+      limitations:
+        - 'Sysmon FileCreate does not mark a file as a symlink or record its target.'
+        - '4663 requires a matching object SACL and the Audit File System subcategory enabled.'
+
+detection:
+  scope: >-
+    The observable path runs from a sandbox child creating a symlink, through a trusted write along
+    the linked path, to a file landing outside the approved workspace. Two materially distinct
+    strategies divide coverage: one flags a write whose resolved destination escapes the approved
+    roots, and one correlates a sandbox-child symlink creation with a subsequent escaping write.
+  outcome_guardrails: >-
+    A write outside the approved roots establishes an escape, not that it was mediated by a symlink or
+    that the file was later used. A symlink creation alone establishes a plant, not a write. "Write
+    escaped the workspace" and "symlink-mediated escape confirmed" are different claims and must stay
+    distinct.
+  shared_normalization_context: >-
+    Canonicalize each write target to an absolute resolved path and compare it to the approved
+    workspace root set (workspace.host_paths, CLI additional directories, or the sandbox root); treat
+    a resolved destination outside those roots as an escape regardless of the literal path issued.
+  shared_enrichment_context: >-
+    Join agent tool events and endpoint file events on host, process, and time, and join a preceding
+    Sysmon FileCreate to a subsequent write on target path. The approved workspace root set is
+    required reference data; no join supplies a symlink-resolved marker, which stays derived or absent.
+  strategies:
+    - id: 'STRAT-SYMLINK-ESCAPE-WRITE'
+      name: 'workspace-escaping write'
+      objective: >-
+        Detect a write whose canonical destination lands outside the approved workspace roots,
+        regardless of the literal path the agent issued.
+      incident_relevance: >-
+        Detects the escaping-write outcome the PoC produced. It cannot, on native telemetry, confirm
+        the escape was mediated by a symlink, so it reports an escape and marks the mechanism as
+        underdetermined.
+      detection_logic: >-
+        Canonicalize the write target from agent tool events or endpoint file events, compare it to
+        the approved workspace root set, and raise when the resolved destination lies outside those
+        roots. Attribute the write to its process lineage. Do not suppress a write merely because the
+        issued path string appears to be inside the workspace; the predicate is the resolved
+        destination, not the literal string.
+      minimum_evidence: >-
+        A write whose resolved destination is outside the approved roots, with the writing process.
+        Where only the literal path is available and canonicalization is impossible, report a possible
+        escape and mark the resolved destination as unconfirmed.
+      correlation_context: >-
+        Compare the resolved target against the estate-supplied approved-root set at write time;
+        truncated tool-input paths may prevent canonicalization and must be flagged, not dropped.
+      detectors:
+        - detector_class: 'agent-and-endpoint-file-write-analytics'
+          technologies:
+            - 'Anthropic Claude Code and Cowork OTel'
+            - 'Microsoft Defender DeviceFileEvents'
+            - 'Windows object-access auditing (event 4663)'
+          contribution: 'Records the write destination and process lineage to test escape against the approved roots.'
+          limitations: 'Needs the approved-root set; no symlink-resolution field; agent paths may be truncated.'
+      benign_explanations:
+        - explanation: >-
+            An agent legitimately configured with additional directories writes outside the initial
+            workspace root by design.
+          distinguishing_context: >-
+            A destination outside every approved and additional root separates the escape; a write to
+            a sanctioned additional directory does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Adding the escaped location to the approved-root set to silence the alert would enrol the
+            escape target as legitimate.
+      blind_spots:
+        - description: 'Missing telemetry: no symlink-resolution or canonical-target field on any agent product.'
+          routes_to: null
+        - description: 'Missing telemetry: agent tool-input paths truncated at 512 chars can drop long escape paths.'
+          routes_to: null
+        - description: 'Missing telemetry: no endpoint sensor or object-access SACL on the sandbox host.'
+          routes_to: null
+      analyst_response: >-
+        Recover the write target and its resolved destination, compare it to the approved workspace
+        roots, identify the writing process and its parent, check for a preceding symlink creation by
+        a sandbox child, and assess what was written outside the workspace.
+      safe_conclusion: >-
+        A write landed outside the approved workspace; a successful modification and its symlink
+        mediation must be confirmed by the resolved target and write result.
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: >-
+          No source or estate figure is available; volume depends on how many agent workspaces have
+          additional directories and how escapes are canonicalized.
+    - id: 'STRAT-SYMLINK-CREATE-THEN-FOLLOW'
+      name: 'sandbox-child symlink creation then escaping write'
+      objective: >-
+        Correlate a symlink creation by a sandbox child with a subsequent write that resolves outside
+        the approved workspace, recovering the mechanism the write record omits.
+      incident_relevance: >-
+        Detects the two-step mechanism the PoC used and supplies the symlink evidence the escaping
+        write lacks; it depends on host-level file-create telemetry that marks the link.
+      detection_logic: >-
+        Where host telemetry records file creation and process lineage, select a symlink or link-file
+        creation by a sandbox child inside the workspace and correlate it with a later write by the
+        agent or parent whose destination escapes the approved roots. Raise on the pair, using the
+        creation event to attribute the mechanism.
+      minimum_evidence: >-
+        A link creation by a sandbox child correlated with a subsequent escaping write on the same
+        target path. Without the creation event, fall back to the escaping-write strategy and mark the
+        mechanism as unconfirmed.
+      correlation_context: >-
+        Correlate on host, target path, and time between the FileCreate and the write; concurrent
+        unrelated file activity in the workspace weakens the pairing.
+      detectors:
+        - detector_class: 'host-file-create-and-write-correlation'
+          technologies:
+            - 'Sysmon (events 11 and 1)'
+            - 'Microsoft Defender DeviceFileEvents'
+          contribution: 'Ties a link creation by a sandbox child to a later escaping write.'
+          limitations: 'FileCreate does not mark a file as a symlink or record its target; requires a host sensor.'
+      benign_explanations:
+        - explanation: >-
+            Build tools and package managers legitimately create symlinks inside a workspace during
+            normal agent tasks.
+          distinguishing_context: >-
+            A link whose target is outside the approved roots followed by an escaping write separates
+            the suspicious case; an intra-workspace link does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding all symlink creation to cut build noise would suppress the malicious link plant.
+      blind_spots:
+        - description: 'Missing telemetry: Sysmon FileCreate does not identify a file as a symlink or record its target.'
+          routes_to: null
+        - description: 'Attribution limit: the write record does not confirm the link was the resolution path taken.'
+          routes_to: null
+      analyst_response: >-
+        Identify the sandbox child, the link it created and its target, the later write and its
+        resolved destination, and confirm the target path is shared between the creation and the
+        write to establish the mechanism.
+      safe_conclusion: >-
+        A sandbox child created a link and a later write escaped the workspace on the same path; the
+        link-to-write causal path is inferred from the shared target and timing.
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: 'Depends on host file-create telemetry coverage and workspace build activity.'
+
+detector_requirements:
+  required: >-
+    Canonicalization of each write target to an absolute resolved path; the approved workspace root
+    set as reference data; endpoint file telemetry or agent tool logging on the sandbox host; process
+    lineage to attribute the write; retention of any preceding link-creation event; and outcome-aware
+    alert text that separates an escaping write from a confirmed symlink-mediated escape.
+  optional: >-
+    Host file-create telemetry that captures a link plant adds the mechanism the write record omits,
+    and object-access auditing adds an independent write record, but neither gates the
+    escaping-write detection.
+  correlation:
+    capability: >-
+      Aligned clocks across agent and endpoint streams, retained file events, stable host and process
+      identity, and the approved workspace root set to test escape; a shared target path is the join
+      key between a link creation and a write.
+    window: 'A short window from link creation to the subsequent write on the same target path.'
+  baselines:
+    - name: 'Approved workspace roots and sanctioned additional directories per agent'
+      window: 'Config-current, re-read on change'
+      seeded_from: >-
+        The agent configuration (workspace.host_paths, CLI additional directories, or sandbox root);
+        never extended with an observed escape destination, which would enrol the escape as approved.
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on deployed
+    sensors, enabled logging, retained fields, and architecture. For this object, verification
+    specifically means confirming the approved workspace root set is known, that agent tool logging
+    (OTEL_LOG_TOOL_DETAILS) and endpoint file telemetry cover the sandbox host, and that no product
+    emits a symlink-resolution field, so escape is a derived comparison and the mechanism depends on a
+    separate link-creation event.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of the behavior; the cited advisory is undated in the catalog.'
+    - 'Whether any file written outside the workspace was later used in the PoC or in the wild.'
+    - 'Which agent products and versions follow symlinks on writes rather than canonicalizing first.'
+    - 'Whether truncated tool-input paths in practice hide escape destinations on real deployments.'
+  assumptions:
+    - id: 'ASSUMPTION-ESCAPE-BY-RESOLVED-DESTINATION'
+      verdict_changing: true
+      statement: >-
+        Escape is decided by comparing a write's canonical resolved destination to the approved
+        workspace roots, because no product emits a symlink-resolution field. The advisory describes a
+        child-created symlink followed to write outside the workspace but publishes no telemetry
+        field; this pack inferred that the detectable signal is a resolved destination outside the
+        approved roots, which is reasoning from the outcome to an available-evidence claim. If wrong
+        and a product does emit link resolution, the detectable gate understates coverage and a
+        link-native strategy is missing. Resolve it by re-checking Claude Code, Cowork, and endpoint
+        file-event references for a documented symlink or canonical-path field.
+  standing_negatives:
+    - statement: >-
+        No fetched AI or agent product emits a symlink-creation, link-target, or canonical-resolved-path
+        field, and DeviceFileEvents documents no symlink-specific ActionType; the OTel and endpoint
+        schema pages fetched describe tool paths, workspace.host_paths, and file actions with no link
+        resolution.
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the Claude Code and Cowork OTel references and the DeviceFileEvents schema for a newly
+        documented symlink-resolution or canonical-target field.
+      ref: 'REF-CLAUDECODE-OTEL'
+
+missing_states:
+  - id: 'MISSING_SYMLINK_RESOLUTION_FIELD'
+    meaning: 'Missing telemetry: no product records that a write path resolved through a symlink or its canonical target.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report an escaping write and mark the symlink mediation as underdetermined unless a separate
+      link-creation event on the same target is present.
+  - id: 'MISSING_APPROVED_ROOT_SET'
+    meaning: 'Missing context: the approved workspace root set is unknown to the detector.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Do not claim an escape; escape cannot be decided without the approved roots, so recover the
+      workspace configuration first.
+  - id: 'MISSING_HOST_FILE_TELEMETRY'
+    meaning: 'Missing telemetry: no endpoint file sensor or object-access auditing on the sandbox host.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Rely on agent tool logging alone, accept truncation risk on long paths, and state that the
+      independent write record is unavailable.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'actor_or_explicit_missing_state'
+    - 'write_target_and_resolved_destination'
+    - 'approved_workspace_root_set'
+    - 'escape_determination_against_roots'
+    - 'writing_process_and_parent_lineage'
+    - 'preceding_symlink_creation_when_available'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'symlink_target_and_creating_child_process'
+      condition: 'when host file-create telemetry records the link plant on the same target path'
+  recommended_title: 'Agent write escaped the approved workspace (symlink mediation inferred, not recorded)'
+  unsupported_title: 'Attacker gained full host filesystem control through the agent sandbox'
+
+evidence:
+  confirmed_incident_behavior: >-
+    The advisory reports that a child process inside an agent sandbox can create a symlink that the
+    agent or a parent process then follows to write outside the approved workspace, escaping the
+    intended confinement. That the detectable evidence is a write whose canonical destination lies
+    outside the approved roots, compared against workspace.host_paths, rather than any native symlink
+    field, is this pack's reading of the fetched telemetry, registered in missing_context.assumptions,
+    not a mechanism the advisory describes in logging terms.
+  supported_conclusion: >-
+    The evidence supports that a sandbox child can plant a symlink a trusted writer follows to escape
+    the approved workspace, as demonstrated in a responsibly disclosed advisory. A detector can report
+    an escaping write where the resolved destination and approved roots are known, and can add the
+    symlink mechanism where a link-creation event is captured; it cannot confirm symlink mediation
+    from the write record alone.
+  unsupported_conclusions: >-
+    The evidence does not establish any use of the externally written file, a count of affected
+    deployments, real-world exploitation, or full host filesystem control. Those require host
+    telemetry and follow-on evidence the source does not carry.
+  procedure_boundary: >-
+    This procedure is the symlink-mediated write outside the approved workspace. Any later use of the
+    file written outside, and any broader host compromise, is a separate behavior and is not evidenced
+    by the escaping write having occurred.
+  references:
+    - id: 'REF-THREAT-SYMLINK'
+      type: 'incident-procedure-primary-source'
+      title: 'Sandbox-child symlink workspace escape (GitHub Security Advisory)'
+      publisher: 'GitHub Advisory Database'
+      url: 'https://github.com/advisories/GHSA-vp62-r36r-9xqp'
+      trust_tier: 'registry'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary source for the PoC that a sandbox child creates a symlink a trusted writer follows to
+        escape the approved workspace. It does not document a telemetry field, a count of affected
+        deployments, or real-world exploitation.
+    - id: 'REF-CLAUDECODE-OTEL'
+      type: 'telemetry-documentation'
+      title: 'Claude Code monitoring and OpenTelemetry reference'
+      publisher: 'Anthropic'
+      url: 'https://code.claude.com/docs/en/monitoring-usage'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents claude_code.tool_result, tool_decision, and workspace.host_paths used to record the
+        write and approved scope; supports the truncation limitation and the vendor-attested-absent
+        symlink field and the standing negative.
+    - id: 'REF-DEFENDER-FILE'
+      type: 'telemetry-documentation'
+      title: 'DeviceFileEvents table (advanced hunting)'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-devicefileevents-table'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the file-action and process-lineage fields used to record the escaping write;
+        supports the limitation that no symlink-specific ActionType or sandbox-root column exists.
+    - id: 'REF-SYSMON'
+      type: 'telemetry-documentation'
+      title: 'Sysmon event reference'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/sysinternals/downloads/sysmon'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents Sysmon events 11 (FileCreate) and 1 (ProcessCreate) used to attribute the link
+        plant and the sandbox child; supports the limitation that FileCreate does not mark a symlink.
+    - id: 'REF-WIN-4663'
+      type: 'telemetry-documentation'
+      title: 'Windows security event 4663 (an attempt was made to access an object)'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/auditing/event-4663'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the object-access write fields and the SACL and Audit File System prerequisites;
+        supports the audit-enablement limitation on that source, not any incident fact.

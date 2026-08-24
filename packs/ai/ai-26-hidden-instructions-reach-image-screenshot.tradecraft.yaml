@@ -1,0 +1,518 @@
+identity:
+  uuid: 'a4d47ce1-bc30-448a-bd7d-c96cdd722d5b'
+  id: 'DT-AAG1-AI-026'
+  aliases:
+    - 'P61'
+  name: 'Hidden instructions reach an agent through an image or screenshot'
+  incident: >-
+    Unseeable prompt injections via images, responsibly disclosed research (Brave) on instructions
+    embedded in images or screenshots processed by multimodal agents.
+  first_observed: '2025'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'submitted-content-ingest'
+  secondary_attack_surfaces:
+    - 'application-ai-platform'
+  behavior_classes:
+    - 'other'
+  behavior_classes_note: >-
+    multimodal-indirect-prompt-injection-via-image: an attacker embeds instructions in an image or
+    screenshot that a multimodal agent processes, so hidden visual content enters the agent context as
+    if it were legitimate input.
+  tags:
+    - 'ai'
+    - 'multimodal'
+    - 'prompt-injection'
+    - 'image'
+    - 'ocr'
+
+behavior:
+  definition: >-
+    An attacker embeds instructions in an image or screenshot processed by a multimodal agent, causing
+    the hidden visual content to enter the agent context.
+  detailed_definition: >-
+    An adversary places instructions inside image pixels - overlaid, low-contrast, or otherwise not
+    salient to a human - in an image or screenshot the agent will ingest and interpret with vision. When
+    the multimodal model reads the image, the embedded instructions join the agent's working context on
+    the same footing as legitimate content. The boundary crossed is the modality gap: content a human
+    reviewer would not see as instructions is nonetheless parsed as instructions by the model. The attempt
+    ends at ingestion of the image; success begins when the agent treats the hidden text as an instruction
+    and acts on it. It is independent of which multimodal product or image transport is used.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers hidden instructions embedded in an image/screenshot entering a multimodal agent's context on
+      ingestion; does not cover the action the agent takes on those instructions, which is a separate behavior.
+    summary: >-
+      This can occur when a multimodal agent ingests an image or screenshot from a path an attacker can
+      influence (an upload, a fetched URL, a shared file, a screen capture), the model interprets image
+      content as instructions, and no upstream filter strips or neutralizes hidden visual text. No special
+      privilege is needed; the image is ordinary input that carries an instruction a human would not read.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      The arrival and identity of the image are observable where file or upload telemetry exists; that the
+      image carries hidden instructions is not observable natively, so only the image's presence survives,
+      not its instruction payload.
+    blocking_conditions:
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          An image is recorded only where a stream captures it: DeviceFileEvents / Sysmon 11 for a file on
+          disk, or a product upload event (Perplexity file_upload, M365 Copilot interaction resources); a
+          screenshot pasted directly into a chat may leave no file-level record.
+      - condition: 'deciding-property-not-in-any-schema'
+        note: >-
+          The deciding property is structurally absent: no fetched first-party AI product documents an image,
+          screenshot-hash, OCR, or vision-extraction field, so an image-borne instruction cannot be
+          distinguished from an ordinary image or a text prompt by any native record, even when the image is
+          logged.
+    summary: >-
+      What can be logged is the image's arrival and identity: a file event with SHA256, FolderPath, and
+      FileOriginUrl, a Perplexity file_upload with filename and file_uuid, or an M365 Copilot interaction
+      referencing accessed resources. What cannot be logged is that the image contains hidden instructions,
+      because OCR/vision extraction is an analyst-side enrichment present as a native field on no product, and
+      Agent 365's gen_ai.input.messages is a JSON string not surfaced for hunting. A file or upload event
+      establishes that an image was ingested; it does not establish that the image carried an instruction.
+  detectable:
+    answer: 'no'
+    answer_scope: >-
+      An image carrying hidden instructions cannot be separated from a benign image using native telemetry,
+      because the deciding property - instruction-like content in the pixels - is extracted by no native
+      field. Separation is possible only with an analyst-side OCR/vision-and-classification pipeline built on
+      top of the captured image, which is a first-party construction rather than a native detection.
+    blocking_conditions:
+      - condition: 'deciding-property-not-in-any-schema'
+        note: >-
+          Distinguishing a malicious image from a benign one requires OCR/vision text extraction and
+          instruction classification over the pixels; no fetched product exposes image, OCR, or
+          hidden-instruction fields, so the discriminator exists in no record and cannot be enabled by a tier.
+    summary: >-
+      Nothing native separates an instruction-bearing image from an ordinary one: the record, where it exists,
+      shows a file or upload without any view into the pixels. Separation requires reformulating to a built
+      pipeline: extract text from the image with OCR/vision, classify it for instruction-like content and
+      anomalous overlays, and correlate an untrusted-origin image to a subsequent agent action. That pipeline
+      and its correlation are first-party work; the image hash, OCR text, and hidden-instruction verdict are
+      derived fields no product emits.
+
+attack_surface_context:
+  surface: >-
+    A multimodal agent or assistant (Claude Code, Microsoft 365 Copilot, Perplexity, MCP-connected clients)
+    that ingests images or screenshots as input and interprets them with a vision model.
+  how_the_surface_works: >-
+    A user or automated flow supplies an image by upload, link, shared file, or screen capture; the agent
+    passes it to a multimodal model that reads both the visual content and any text rendered in the image.
+    Over MCP, sampling messages carry content blocks of type "image" with base64 data. The model treats
+    extracted text as part of the prompt context, with no inherent separation between decorative pixels and
+    rendered instructions.
+  incident_processing_path: >-
+    Brave's research (researcher-attested) describes unseeable prompt injections via images, where
+    instructions embedded in an image or screenshot are read by a multimodal agent and enter its context.
+    That the deciding evidence - image hash, OCR text, and hidden-instruction detection - is absent as a
+    native field on every fetched AI product is this pack's reading of the telemetry audit, not a claim by the
+    research; the research establishes the behavior, the audit establishes the absence of native visibility.
+  processing_stages:
+    - 'attacker-embeds-instructions-in-image'
+    - 'image-reaches-ingestion-path'
+    - 'agent-ingests-image'
+    - 'vision-model-reads-rendered-text'
+    - 'hidden-instructions-enter-context'
+    - 'agent-acts-on-instruction'
+  stage_evidence: >-
+    The stage instrumentation sits at fixes what it can prove: a file or upload event proves an image was
+    ingested and identifies it; no native field proves the image carried instructions, because none extracts
+    the pixels. Only an analyst-side OCR/vision pass at the ingestion stage, plus a correlated agent action,
+    could evidence that hidden instructions entered and were acted upon.
+  trust_boundaries: >-
+    Untrusted image content into the agent's context (this is the boundary the behavior attempts; whether it
+    is crossed is exactly what native telemetry cannot confirm, since the pixels are not extracted); agent
+    context into a downstream action (a separate behavior). The modality boundary is crossed silently: a human
+    reviewer and the native logs both see an ordinary image.
+  security_control_context: >-
+    Controls that would decide here - input sanitization, OCR-based content inspection, provenance checks on
+    image origin - are not native to the fetched products, which log the image's identity but not its content.
+    There is thus no native control decision to record. Bypass representations include low-contrast or
+    off-salience text, instructions split across regions, and screenshots pasted inline that never touch a file
+    stream.
+  practitioner_implication: >-
+    An implementer must discover which agents ingest images and by what path (upload, URL fetch, shared file,
+    inline paste), whether file or upload telemetry captures the image at all, whether an OCR/vision pipeline
+    exists or must be built to inspect pixels, and that image hash, OCR text, and hidden-instruction detection
+    are derived fields no product emits and must be constructed.
+
+threat_research:
+  why_it_matters: >-
+    Multimodal agents accept images as ordinary input, so an instruction a human cannot see can steer the
+    agent while passing every human and native-log review; the modality that makes the agent useful is the
+    same one that hides the injection from the defender.
+  threat_actor: >-
+    The author of the crafted image. The research is a responsibly-disclosed study and proof of concept; no
+    named threat group is attributed.
+  campaign: 'Brave research and proof of concept on unseeable prompt injections via images.'
+  victim: >-
+    Users and operators of multimodal agents that ingest images or screenshots without inspecting pixel
+    content for instructions.
+  capability: >-
+    A demonstrated proof of concept that instructions embedded in an image or screenshot are read by a
+    multimodal agent and enter its context unseen by a human reviewer. The research shows the injection path;
+    it does not quantify affected deployments.
+  target: >-
+    The multimodal agent's context via its image-ingestion path. The injection was demonstrated in research;
+    real-world exploitation against a specific victim is not documented.
+  victimology:
+    - 'Multimodal assistants and agents that accept user-supplied images and screenshots.'
+    - 'Workflows that screenshot untrusted content (web pages, documents) into an agent.'
+
+visibility:
+  telemetry_sources:
+    - source: 'MCP sampling content model (protocol carrier)'
+      purpose: 'Define how an image reaches the agent over MCP; it is the protocol, not a log source.'
+      event_vocabulary: 'none'
+      tier: 'not-applicable'
+      operational_viability: 'rejected-not-coverage'
+      fields:
+        - name: 'sampling message content block type "image" with base64 data'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-MCP-SAMPLING'
+          load_bearing: false
+          note: 'Defines the image carrier; no client is documented to log the sampled image content.'
+      details: >-
+        MCP sampling messages carry role and content blocks including type "image" with base64 data, so the
+        carrier is defined by the protocol even though no client logs it.
+      limitations:
+        - 'Not a telemetry source; defines the carrier, logs nothing.'
+        - 'No client-side logging of the sampled image is documented.'
+    - source: 'Product upload and interaction telemetry (Perplexity, M365 Copilot)'
+      purpose: 'Record the identity of an image supplied to the assistant, not its pixel content.'
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'Perplexity file_upload metadata (filename, file_uuid, space_name, space_uuid); query metadata.attachments (file_uuid, file_name)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-PERPLEXITY-AUDIT'
+          load_bearing: true
+          note: 'Per-upload identity for an image; carries no OCR text, image hash, or instruction field.'
+        - name: 'M365 Copilot Graph getAllEnterpriseInteractions (prompts, responses, resources accessed); RecordType 261 CopilotEventData.Contexts{Id,Type,ContainerId}'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-M365-INTERACTIONS'
+          load_bearing: false
+          note: 'Contexts identify the container object, not the pixels; requires AiEnterpriseInteraction.Read.All.'
+      details: >-
+        Perplexity file_upload and query attachment events give per-upload image identity; M365 Copilot's
+        interaction export documents prompts, responses, user intent, and resources accessed, with RecordType
+        261 identifying the container object.
+      limitations:
+        - 'Records image identity and container, not pixel content or extracted text.'
+        - 'A screenshot pasted inline may not appear as a discrete upload.'
+    - source: 'Agent prompt telemetry (Claude Code OpenTelemetry)'
+      purpose: 'Show that a prompt or tool ran; it captures text only, with no image or vision field.'
+      event_vocabulary: 'application-record'
+      tier: 'request'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'claude_code.user_prompt prompt (OTEL_LOG_USER_PROMPTS=1, text) / prompt_length; claude_code.tool_result tool_parameters file paths (Bash bash_command/full_command)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CLAUDE-OTEL'
+          load_bearing: false
+          note: 'No image, attachment, OCR, or vision field is documented; a tool file path is the only way an image path appears.'
+      details: >-
+        claude_code.user_prompt captures text prompts only; the sole way an image can surface is as a file path
+        in a tool's parameters, and no per-modality field exists.
+      limitations:
+        - 'Text-only; an image-borne instruction cannot be distinguished from a text prompt.'
+        - 'Prompt capture is opt-in.'
+    - source: 'Endpoint file and proxy/DNS telemetry for the image'
+      purpose: 'Record the image file on disk and any remote retrieval of it.'
+      event_vocabulary: 'host-process-event'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'DeviceFileEvents FileName / FolderPath / SHA256 / FileOriginUrl / FileOriginReferrerUrl / FileOriginIP; Sysmon 11 FileCreate'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-DEFENDER-FILE'
+          load_bearing: true
+          note: 'Carries the image hash and origin, the anchor for an analyst-side OCR pass; not the OCR text itself.'
+        - name: 'Route 53 Resolver (query_name, srcaddr, rdata) or Cloud DNS (queryName, sourceIP); Slack audit file entity FXXXXXXXX'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-R53-DNS'
+          load_bearing: false
+      details: >-
+        DeviceFileEvents / Sysmon 11 record the screenshot or image arriving on disk with hash and origin;
+        proxy/DNS and collaboration-tool audit help attribute a remotely-fetched or shared image.
+      limitations:
+        - 'Records the image file and origin, not its pixel content.'
+        - 'A pasted-inline screenshot may never touch the file stream.'
+
+detection:
+  scope: >-
+    Native telemetry cannot separate an instruction-bearing image from a benign one, so detection is
+    reformulated: capture the image via file or upload telemetry, run an analyst-side OCR/vision extraction and
+    instruction classification over it, and correlate an untrusted-origin image to a subsequent agent action.
+    The single strategy is this built pipeline; it answers the reformulated question because the native answer
+    is no.
+  outcome_guardrails: >-
+    A file or upload event establishes that an image was ingested, not that it carried instructions. An OCR
+    hit establishes instruction-like text in the pixels only as well as the OCR and classifier perform. A
+    correlated agent action establishes possible influence, not proof the agent obeyed the image. "Image
+    ingested" and "image carried hidden instructions that the agent acted on" are different alerts, and the
+    latter depends on a first-party pipeline.
+  shared_normalization_context: >-
+    Canonicalize the image to a content hash and origin (upload id, FileOriginUrl), and treat OCR/vision output
+    as a derived field produced by the pipeline; classify origin into trusted versus untrusted rather than
+    matching a specific source.
+  shared_enrichment_context: >-
+    Join the image hash and origin to the agent session and any subsequent agent action on time and session id.
+    A baseline of expected image sources per workflow helps flag untrusted origins; the OCR/vision extraction
+    itself must be built before any of this can decide.
+  strategies:
+    - id: 'STRAT-IMAGE-INSTRUCTION-OCR-CORRELATION'
+      name: 'untrusted image instruction extraction and correlation'
+      objective: >-
+        Detect an untrusted image or screenshot whose OCR/vision-extracted content is instruction-like, and
+        correlate it to a subsequent agent action.
+      incident_relevance: >-
+        Detects a reformulated proxy for the researched behavior. An OCR-instruction finding on an untrusted
+        image is the observable shadow of the injection; it is not proof the hidden instructions entered the
+        model's context or that the agent obeyed them.
+      detection_logic: >-
+        Over images captured by file or upload telemetry, run OCR/vision extraction and flag instruction-like
+        text or anomalous overlays (low-contrast or off-salience rendered text), scoped to images of untrusted
+        origin. Correlate a flagged image to a subsequent agent action within a bounded window on session and
+        time. This is a first-party pipeline; without the OCR/vision stage there is no content to classify, and
+        the native records carry none.
+      minimum_evidence: >-
+        An image attributable to an ingestion event, plus OCR/vision output showing instruction-like content of
+        untrusted origin. Absent the pipeline, no content finding can be made and the honest output is that the
+        deciding evidence does not exist natively. Correlation to an agent action strengthens but does not
+        prove obedience.
+      correlation_context: >-
+        Correlate on image hash/origin, agent session id, and time between ingestion and the agent action.
+        Concurrent legitimate image inputs weaken the attribution of an action to a specific image, and OCR
+        false positives on benign text-in-image are the main noise source.
+      detectors:
+        - detector_class: 'analyst-side-ocr-vision-and-correlation'
+          technologies:
+            - 'Customer-built OCR/vision extraction and instruction classifier over captured images'
+            - 'DeviceFileEvents / Sysmon 11 and product upload events as the image anchor'
+            - 'Splunk / Elastic / Microsoft Sentinel / Google SecOps for image-to-action correlation'
+          contribution: 'Produces the OCR text and instruction verdict that no native field carries, and correlates to an action.'
+          limitations: 'Requires a built pipeline; OCR misses styled or split text; a pasted-inline screenshot may never be captured.'
+      benign_explanations:
+        - explanation: >-
+            Ordinary images and screenshots legitimately contain readable text (documentation, UI captures,
+            slides) that OCR will extract.
+          distinguishing_context: >-
+            Untrusted origin plus imperative instruction-like phrasing separates the malicious case; readable
+            text of trusted origin does not, and OCR text alone is a weak signal.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding all text-bearing images to cut OCR noise would suppress the instruction-bearing one.
+        - explanation: >-
+            A user intentionally screenshots instructions for the agent to follow (a legitimate visual prompt).
+          distinguishing_context: >-
+            User intent and a trusted origin separate a deliberate visual prompt; an untrusted or third-party
+            image origin does not.
+          overlaps_incident_instance: false
+      blind_spots:
+        - description: 'Missing telemetry: no image, OCR, or vision field on any product, so the deciding content must be built by an analyst-side pipeline.'
+          routes_to: null
+        - description: 'Missing telemetry: a screenshot pasted inline into a chat may leave no file or upload record to OCR.'
+          routes_to: null
+        - description: 'Evasion: text styled, split across regions, or low-contrast to defeat OCR while remaining model-readable.'
+          routes_to: null
+      analyst_response: >-
+        Retrieve the image by hash and origin, run OCR/vision extraction, assess whether the content is
+        instruction-like and the origin untrusted, identify the agent session that ingested it, determine
+        whether a subsequent agent action aligns with the hidden instruction, and judge whether the action was
+        influenced.
+      safe_conclusion: >-
+        An untrusted image with instruction-like extracted content was ingested by the agent; whether the hidden
+        instructions entered the model's context and were obeyed cannot be confirmed from native telemetry alone.
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: >-
+          Volume depends on image-ingestion rates and OCR classifier tuning in a first-party pipeline; no source
+          gives a rate, and no native field even carries the signal.
+
+detector_requirements:
+  required: >-
+    An analyst-side OCR/vision extraction and instruction-classification pipeline over captured images; file or
+    upload telemetry that anchors the image by hash and origin; classification of image origin into trusted
+    versus untrusted; correlation of an image to a subsequent agent action on session and time; and
+    outcome-aware alert text stating that an OCR-instruction finding is a proxy, not proof the agent obeyed the
+    image.
+  optional: >-
+    Proxy/DNS and collaboration-tool audit add source attribution for a remotely-fetched or shared image, and a
+    per-workflow baseline of expected image sources sharpens the untrusted-origin signal; neither supplies the
+    missing pixel-content field.
+  correlation:
+    capability: >-
+      A stable image hash and origin carried from the ingestion event to the agent session; aligned clocks so
+      ingestion precedes the correlated action; and session identity to bind an image to the action it may have
+      influenced.
+    window: 'From image ingestion to the correlated agent action, typically within one session; minutes-scale.'
+  baselines:
+    - name: 'Expected image sources per workflow (trusted origins)'
+      window: '30-day rolling'
+      seeded_from: >-
+        Observed sanctioned image sources per workflow; never seeded from all observed images, which would
+        enrol an attacker-supplied origin as trusted.
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on deployed sensors,
+    enabled logging, retained fields, and architecture. For this object, verification specifically means
+    confirming whether images are captured by file or upload telemetry at all, whether an OCR/vision pipeline
+    exists or must be built, and accepting that image hash, OCR text, and hidden-instruction detection are
+    derived fields no product emits.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of the behavior; the catalog dates it to 2025 research without a fetched exact date.'
+    - 'Which agents in a real estate ingest images by a path that leaves any file or upload record.'
+    - 'Whether any product configuration surfaces per-modality or OCR content for hunting.'
+    - 'The real-world existence of an exploited victim beyond the research proof of concept.'
+  assumptions:
+    - id: 'ASSUMPTION-IMAGE-IS-CAPTURED'
+      verdict_changing: true
+      statement: >-
+        The ingested image leaves a file or upload record (DeviceFileEvents/Sysmon 11, Perplexity file_upload,
+        or an M365 interaction resource) that an analyst-side pipeline can OCR. The research shows the injection
+        but does not describe an ingestion telemetry record; this pack infers that at least one capture path
+        exists to anchor the image. If wrong, the sole strategy has no image to extract from and observable
+        collapses toward nothing, leaving detectable a true no with no proxy. Resolve it by confirming, for one
+        target agent and ingestion path, that an image produces a file or upload event with a recoverable hash.
+  standing_negatives:
+    - statement: >-
+        No fetched first-party AI product documents an image, screenshot-hash, OCR, or vision-extraction
+        telemetry field, and Agent 365's gen_ai.input.messages is a JSON string not surfaced in advanced
+        hunting, so an image-borne instruction is carried by no queryable native record.
+      ref: 'REF-CLAUDE-OTEL'
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the Claude Code, M365 Copilot, and Perplexity telemetry references for a newly documented image,
+        OCR, or vision-extraction field surfaced for hunting.
+
+missing_states:
+  - id: 'MISSING_IMAGE_CONTENT_FIELD'
+    meaning: 'Missing telemetry: no native image, OCR, or vision field, so image-borne instructions are carried by no record.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Do not claim an image carried instructions from native telemetry; produce the OCR/vision verdict with a
+      built pipeline and state the finding as a proxy.
+  - id: 'MISSING_IMAGE_CAPTURE'
+    meaning: 'Missing telemetry: a pasted-inline screenshot leaves no file or upload record to inspect.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Report that the image was uncapturable on the available paths and recommend an ingestion path that records images.
+  - id: 'MISSING_ACTION_CORRELATION'
+    meaning: 'Attribution gap: no agent-action record ties a flagged image to a subsequent action.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report an untrusted instruction-bearing image without asserting the agent acted on it, and mark the influence unconfirmed.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'actor_or_explicit_missing_state'
+    - 'image_hash_and_origin'
+    - 'ocr_vision_extracted_content_and_verdict'
+    - 'image_origin_trust_classification'
+    - 'agent_session_and_correlated_action_when_present'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'correlated_agent_action'
+      condition: 'when a subsequent agent action can be tied to the flagged image on session and time'
+    - field: 'remote_fetch_source'
+      condition: 'when proxy/DNS or collaboration audit attributes a remotely-fetched or shared image'
+  recommended_title: 'Untrusted image with instruction-like content ingested by a multimodal agent (proxy for image injection)'
+  unsupported_title: 'Hidden image instructions hijacked the agent and executed the attacker''s commands'
+
+evidence:
+  confirmed_incident_behavior: >-
+    Brave's research describes unseeable prompt injections via images, in which instructions embedded in an
+    image or screenshot are read by a multimodal agent and enter its context unseen by a human, demonstrated as
+    research and proof of concept. That no fetched AI product carries an image, OCR, or vision-extraction field,
+    and that Agent 365's captured messages are not surfaced for hunting, is this pack's reading of the telemetry
+    audit, registered in the standing negative, and is what makes the behavior a detectable no rather than a
+    coverage gap a tier could close.
+  supported_conclusion: >-
+    The evidence supports that instructions embedded in an image can enter a multimodal agent's context in a
+    research setting. A detector cannot emit "an image carried hidden instructions the agent obeyed" from native
+    telemetry; the strongest emittable conclusion is "an untrusted image with instruction-like extracted content
+    was ingested", and only where a first-party OCR/vision pipeline and image capture exist.
+  unsupported_conclusions: >-
+    The evidence does not establish a real-world victim, that any agent acted on an image-borne instruction, or
+    that the injection can be told from a benign image by any native field. Those require a built OCR/vision
+    pipeline and, for downstream effect, agent-action telemetry the cited source does not carry.
+  procedure_boundary: >-
+    This procedure is the entry of hidden image-borne instructions into an agent's context on ingestion. What
+    the agent then does on those instructions is a separate behavior, and an ingested image is not evidence that
+    the instructions were obeyed.
+  references:
+    - id: 'REF-THREAT-IMAGE'
+      type: 'incident-procedure-primary-source'
+      title: 'Unseeable prompt injections via images'
+      publisher: 'Brave'
+      url: 'https://brave.com/blog/unseeable-prompt-injections/'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary source for the image-borne instruction-injection behavior and its proof of concept; does not
+        document a real-world victim or any native OCR/vision field.
+    - id: 'REF-MCP-SAMPLING'
+      type: 'attack-surface-documentation'
+      title: 'MCP sampling specification'
+      publisher: 'Model Context Protocol'
+      url: 'https://modelcontextprotocol.io/specification/2025-11-25/client/sampling'
+      trust_tier: 'registry'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the image content-block carrier (type "image", base64 data) and that no client logging is defined.'
+    - id: 'REF-CLAUDE-OTEL'
+      type: 'telemetry-documentation'
+      title: 'Claude Code monitoring usage (OpenTelemetry)'
+      publisher: 'Anthropic'
+      url: 'https://code.claude.com/docs/en/monitoring-usage'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents text-only prompt capture and the absence of any image, OCR, or vision field; supports the
+        agent-prompt telemetry source and the standing negative.
+    - id: 'REF-M365-INTERACTIONS'
+      type: 'telemetry-documentation'
+      title: 'Graph getAllEnterpriseInteractions and Copilot schema (RecordType 261)'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/api/ai-services/interaction-export/aiinteractionhistory-getallenterpriseinteractions'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the interaction export and Contexts container identity used to anchor an image-bearing interaction.'
+    - id: 'REF-PERPLEXITY-AUDIT'
+      type: 'telemetry-documentation'
+      title: 'Perplexity audit logs'
+      publisher: 'Perplexity'
+      url: 'https://www.perplexity.ai/help-center/en/articles/11652747-audit-logs.html'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents file_upload and query attachment identity fields for an image supplied to the assistant.'
+    - id: 'REF-DEFENDER-FILE'
+      type: 'telemetry-documentation'
+      title: 'DeviceFileEvents table (advanced hunting)'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-devicefileevents-table'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the image file hash and origin fields that anchor an analyst-side OCR pass.'
+    - id: 'REF-R53-DNS'
+      type: 'telemetry-documentation'
+      title: 'Route 53 Resolver query logs, Cloud DNS logging, and Slack Audit Logs API'
+      publisher: 'AWS, Google, and Slack'
+      url: 'https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resolver-query-logs-format.html'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the DNS and collaboration-audit fields used to attribute a remotely-fetched or shared image.'

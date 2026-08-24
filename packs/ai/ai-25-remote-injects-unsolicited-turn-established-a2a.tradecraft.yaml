@@ -1,0 +1,513 @@
+identity:
+  uuid: 'a266a6e2-393f-4185-84da-f33a10798a42'
+  id: 'DT-AAG1-AI-025'
+  aliases:
+    - 'P60'
+  name: 'A remote agent injects an unsolicited turn into an established A2A session'
+  incident: >-
+    Agent session smuggling in Agent2Agent (A2A) systems, responsibly disclosed research by Unit 42
+    (Palo Alto Networks).
+  first_observed: '2025'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'other'
+  primary_attack_surface_note: >-
+    agent-to-agent-session: an established A2A session between two agents, into which a remote agent
+    injects a turn; the closest routing surface is application-ai-platform but the deciding boundary is
+    the cross-agent session itself, which the surface vocabulary does not name.
+  behavior_classes:
+    - 'other'
+  behavior_classes_note: >-
+    unsolicited-turn-injection-into-an-established-session: a remote agent sends a message/turn into an
+    ongoing agent-to-agent session so that a recipient treats it as in-session context, a session-smuggling
+    form of cross-agent prompt injection.
+  tags:
+    - 'ai'
+    - 'a2a'
+    - 'agent-to-agent'
+    - 'session-smuggling'
+    - 'prompt-injection'
+
+behavior:
+  definition: >-
+    A remote agent sends an unsolicited message/turn into an established agent-to-agent session, causing
+    a recipient to treat it as in-session context.
+  detailed_definition: >-
+    An adversary-controlled agent participates in, or reaches, an ongoing session between agents and
+    contributes a turn the session's initiator never solicited, which the recipient folds into its
+    working context as if it were legitimate in-session content. The boundary crossed is the session's
+    membership and turn-provenance: content from outside the sanctioned exchange is accepted as inside
+    it. The attempt ends at delivery of the unsolicited turn; success begins when the recipient acts on
+    it as trusted context. It is independent of transport (JSON-RPC, gRPC, REST) and of any particular
+    agent framework.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers a remote agent injecting an unsolicited turn into an established A2A session; does not cover
+      the downstream action a recipient takes on that turn, which is a separate behavior.
+    summary: >-
+      This can occur when agents interoperate over a session protocol that carries multi-turn context, a
+      remote agent can reach the session or its endpoint, and the recipient has no binding that ties each
+      accepted turn to a sanctioned in-session sender. The A2A specification defines session and message
+      identity (contextId, id) but no membership or provenance check the recipient must enforce.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      The fact that one agent invoked another is recorded where the call is platform-mediated or crosses a
+      logging gateway; whether the turn was unsolicited or out-of-session is not recorded anywhere, so only
+      the occurrence of a turn survives, not its injected quality.
+    blocking_conditions:
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          A turn is recorded only where the A2A call is platform-mediated (Microsoft Agent 365 InvokeAgent
+          in CloudAppEvents) or traverses a customer-built gateway that logs it; the A2A specification
+          itself defines methods, not log records, so a direct agent-to-agent call may emit nothing.
+      - condition: 'deciding-property-not-in-any-schema'
+        note: >-
+          The deciding property is structurally absent: no fetched product or the A2A spec defines a
+          message-ordering/sequence field, an authentication-outcome-per-turn field, or an
+          in-session-versus-out-of-session classification, so "unsolicited turn" is not carried by any
+          record even where the turn itself is logged.
+    summary: >-
+      What can be logged is the occurrence of an agent-to-agent invocation: Agent 365 InvokeAgent records
+      AgentId/TargetAgentId, ConversationId, SessionIdentity, ServerAddress and an error code, and a
+      customer gateway can record method, path, source, and authentication result. What cannot be logged
+      is that a given turn was unsolicited or out-of-session, and Agent 365 captures the message payload
+      (gen_ai.input.messages) but does not surface it for hunting. A recorded invocation establishes that
+      agent A called agent B; it does not establish that B's session was smuggled a turn.
+  detectable:
+    answer: 'no'
+    answer_scope: >-
+      An injected unsolicited turn cannot be separated from a legitimate agent turn using native telemetry,
+      because the property that distinguishes them (session membership and per-turn provenance) is defined
+      in no schema. The reformulated question - is the sender bound to the session - is answerable only
+      with a customer-built session-membership binding, not from any product's native record.
+    blocking_conditions:
+      - condition: 'deciding-property-not-in-any-schema'
+        note: >-
+          Separating an injected turn from a sanctioned one requires a per-turn sender-to-session binding
+          and turn ordering; no fetched product documents either, so the discriminator exists in no record
+          and cannot be recovered by enabling a tier.
+    summary: >-
+      Nothing native separates an unsolicited turn from a legitimate one: the record, where it exists,
+      shows an invocation without marking it in- or out-of-session and without a sequence number. The only
+      path to separation is to reformulate the question and build the missing evidence: a session-membership
+      table that records which sender identities were admitted to a session, joined to IdP/OAuth audit for
+      the calling agent's credential, so a turn from a sender not bound to that session can be flagged. That
+      is a first-party construction, not a native detection.
+
+attack_surface_context:
+  surface: >-
+    An established Agent2Agent (A2A) session between two agents, carried over JSON-RPC, gRPC, or REST
+    bindings, in which multi-turn context accumulates under a shared contextId.
+  how_the_surface_works: >-
+    A2A defines methods such as SendMessage, SendStreamingMessage, GetTask, SubscribeToTask, and REST
+    bindings POST /message:send and /message:stream, with Task and Message identity fields id and contextId
+    and a JSON-RPC envelope. Agents exchange turns within a session identified by contextId; the recipient
+    treats accumulated turns as shared context. The specification defines the methods and identity fields,
+    not any audit record or membership enforcement.
+  incident_processing_path: >-
+    Unit 42 (researcher-attested) describes agent session smuggling in A2A systems, in which a remote agent
+    contributes an unsolicited turn that a recipient treats as in-session context. That the deciding evidence
+    (unsolicited/out-of-session provenance and per-turn ordering) is absent from both the A2A specification
+    and the fetched Agent 365 telemetry is this pack's reading of those documents, not a claim by the research;
+    the research establishes the behavior, the telemetry audit establishes the absence.
+  processing_stages:
+    - 'a2a-session-established'
+    - 'session-context-accumulates'
+    - 'remote-agent-reaches-session-or-endpoint'
+    - 'unsolicited-turn-delivered'
+    - 'recipient-accepts-as-in-session-context'
+    - 'recipient-acts-on-injected-turn'
+  stage_evidence: >-
+    The stage instrumentation sits at fixes what it can prove: a platform InvokeAgent event or gateway log
+    proves an invocation occurred; neither proves the turn was unsolicited, because no field marks
+    provenance or ordering. Only a customer-built session-membership binding, evaluated at the accept stage,
+    could prove a sender was not admitted to the session.
+  trust_boundaries: >-
+    Remote agent into the session's membership (this is the boundary the behavior attempts; whether it is
+    reached is exactly what native telemetry cannot confirm); accepted turn into the recipient's context
+    (reached when the recipient folds it in); recipient context into a downstream action (a separate
+    behavior). The session-membership boundary is asserted by the protocol's design rather than enforced or
+    logged.
+  security_control_context: >-
+    A2A specifies authentication for calls but the fetched specification defines no per-turn
+    authentication-outcome record, no sequence number, and no in-session membership check the recipient must
+    apply, so there is no control decision to log. Platform mediation (Agent 365) records that an invocation
+    happened and its target, and IdP/OAuth governs the calling agent's client credential. Bypass
+    representations include a validly-authenticated agent contributing an out-of-session turn, and any direct
+    call that never traverses a logging gateway.
+  practitioner_implication: >-
+    An implementer must discover whether A2A calls in the estate are platform-mediated (and thus emit
+    InvokeAgent) or direct, whether a gateway logs /message:send and /message:stream with an authentication
+    result, how calling-agent identities are issued in the IdP, and that any per-turn session-membership and
+    ordering evidence must be built, because no native record carries it.
+
+threat_research:
+  why_it_matters: >-
+    Agent-to-agent sessions extend trust across autonomous agents; a remote agent that can inject a turn a
+    recipient treats as in-session context can steer another organization's agent without ever compromising
+    it, and the property that would reveal the injection is carried by no log.
+  threat_actor: >-
+    A remote or adversary-controlled agent. The research is a responsibly-disclosed study and proof of
+    concept; no named threat group is attributed.
+  campaign: 'Unit 42 research and proof of concept on agent session smuggling in A2A systems.'
+  victim: >-
+    Agents and their operators participating in A2A sessions who accept turns without binding each to a
+    sanctioned in-session sender.
+  capability: >-
+    A demonstrated proof of concept that a remote agent can deliver an unsolicited turn into an established
+    A2A session and have it treated as in-session context. The research shows the injection; it does not
+    quantify affected deployments.
+  target: >-
+    The recipient agent's session context. The injection was demonstrated in research; real-world exploitation
+    against a specific victim is not documented.
+  victimology:
+    - 'Multi-agent deployments that interoperate over A2A or similar session protocols.'
+    - 'Platforms that mediate agent-to-agent calls without per-turn session-membership enforcement.'
+
+visibility:
+  telemetry_sources:
+    - source: 'A2A protocol surface (specification)'
+      purpose: 'Define the carrier of the injected turn; it is the protocol, not a log source.'
+      event_vocabulary: 'none'
+      tier: 'not-applicable'
+      operational_viability: 'rejected-not-coverage'
+      fields:
+        - name: 'SendMessage / SendStreamingMessage / SubscribeToTask; contextId / id; JSON-RPC envelope method/params'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-A2A-SPEC'
+          load_bearing: false
+          note: 'The specification defines methods and identity fields, not log records; no audit event is specified.'
+      details: >-
+        A2A defines the methods and REST bindings that carry a turn and the contextId/id correlation fields,
+        but specifies no audit or log record, no ordering field, and no membership check.
+      limitations:
+        - 'Not a telemetry source; defines the carrier but logs nothing.'
+        - 'No message-ordering, authentication-outcome, or in-session classification field is specified.'
+    - source: 'Microsoft Agent 365 platform mediation (CloudAppEvents InvokeAgent)'
+      purpose: 'Record that one agent invoked another where the call is platform-mediated.'
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'ActionType InvokeAgent; AgentId / TargetAgentId / TargetAgentName / TargetAgentBlueprintID / ConversationId / SessionIdentity / ServerAddress / ServerPort / ErrorType'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-AGENT365-ATTR'
+          load_bearing: true
+          note: 'Records the invocation and its target; carries no unsolicited/out-of-session or per-turn ordering field.'
+        - name: 'gen_ai.input.messages / gen_ai.output.messages'
+          attestation: 'vendor-attested-absent'
+          attestation_ref: 'REF-AGENT365-CONCEPTS'
+          load_bearing: false
+          note: 'Captured but not surfaced in advanced hunting, so the injected turn''s content cannot be retrieved.'
+      details: >-
+        InvokeAgent in CloudAppEvents is the only documented first-party record of one agent invoking another,
+        with ConversationId as the primary run join key; spans with a missing or unrecognized
+        gen_ai.operation.name are dropped.
+      limitations:
+        - 'Only where A2A calls are platform-mediated by Agent 365; direct calls emit nothing.'
+        - 'Payloads are captured but hidden from advanced hunting.'
+        - 'No field marks a turn as unsolicited, out-of-session, or out-of-order.'
+    - source: 'Customer-built A2A gateway / reverse-proxy access logs'
+      purpose: 'Record method, path, source, authentication result, and status for A2A message calls.'
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'first-party-build'
+      details: >-
+        A gateway fronting POST /message:send and /message:stream can log method, path, source address,
+        authentication result, and status; no first-party schema exists on any fetched page, so this is a
+        customer construction.
+      limitations:
+        - 'Exists only if the estate builds and routes through such a gateway.'
+        - 'Records call metadata, not session membership or turn provenance.'
+    - source: 'IdP/OAuth audit for the calling agent identity (Okta, Entra)'
+      purpose: 'Attribute the calling agent''s client credential and its lifecycle.'
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      details: >-
+        Okta app.oauth2.client.lifecycle.create/.update and admin.consent.grant, and Entra Add service
+        principal, Add service principal credentials, and Consent to application, record the caller''s
+        credential lifecycle.
+      limitations:
+        - 'Attributes the credential, not whether a turn was in-session.'
+        - 'Only relevant where the calling agent authenticates through the IdP.'
+    - source: 'Endpoint network telemetry on the receiving host'
+      purpose: 'Record the inbound connection that carried the turn where the receiver is host-instrumented.'
+      event_vocabulary: 'host-process-event'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'DeviceNetworkEvents RemoteIP / RemotePort / LocalPort / InitiatingProcessFileName; Sysmon 3 NetworkConnect'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-DEFENDER-NET'
+          load_bearing: false
+      details: >-
+        DeviceNetworkEvents or Sysmon 3 on the receiving host record the connection carrying the turn but
+        not its session semantics.
+      limitations:
+        - 'Records a connection, not a turn or its provenance.'
+        - 'Requires host telemetry on the receiver.'
+
+detection:
+  scope: >-
+    Native telemetry cannot separate an unsolicited turn from a legitimate one, so detection is reformulated:
+    instead of detecting "unsolicited", detect a turn whose sender identity is not bound to the session,
+    using a customer-built session-membership binding joined to IdP audit and any platform or gateway record
+    of the invocation. The single strategy answers the reformulated question.
+  outcome_guardrails: >-
+    A platform or gateway record establishes that an invocation occurred, not that it was unsolicited. A
+    sender-not-bound-to-session finding establishes an out-of-membership turn only as strongly as the
+    membership binding is complete. "Agent A invoked agent B" and "a sender not bound to the session added a
+    turn" are different alerts, and the latter depends on a first-party construction, not a native field.
+  shared_normalization_context: >-
+    Canonicalize the calling and target agent identities, the ConversationId/contextId, and the client
+    credential across the platform record, gateway log, and IdP audit; define session membership as the set
+    of sender identities admitted to a given ConversationId.
+  shared_enrichment_context: >-
+    Join the invocation record to the IdP-issued caller identity and to the session-membership table on
+    ConversationId. A baseline of which agent identities normally participate in a given session type helps,
+    but the membership binding itself must be built before any of this decides anything.
+  strategies:
+    - id: 'STRAT-SENDER-NOT-BOUND-TO-SESSION'
+      name: 'sender identity not bound to the session'
+      objective: >-
+        Detect a turn whose sender identity is not a member of the established session, as a proxy for the
+        unsolicited-turn injection that native telemetry cannot mark directly.
+      incident_relevance: >-
+        Detects a reformulated proxy for the researched behavior, not the behavior's deciding property. A
+        sender-not-bound finding is evidence of an out-of-membership turn, which is the observable shadow of
+        session smuggling, not proof the recipient treated it as in-session context.
+      detection_logic: >-
+        Maintain a session-membership binding: for each ConversationId, the set of sender agent identities
+        admitted to it. Raise when an invocation record (Agent 365 InvokeAgent or a gateway log) or a turn
+        carries a sender identity not in that set for the session, or a caller credential with no admission
+        event. Enrich with IdP audit for the caller's credential lifecycle. This is a first-party construction;
+        without the membership binding there is nothing to evaluate against.
+      minimum_evidence: >-
+        An invocation or turn attributable to a sender identity, plus a session-membership binding showing
+        that identity was not admitted to the session. Absent the membership binding, no finding can be made,
+        and the honest output is that the deciding evidence does not exist.
+      correlation_context: >-
+        Correlate on ConversationId/contextId, caller agent identity, and client credential across the
+        platform record, gateway log, and IdP audit. The binding must be current; a stale membership table
+        will both miss injections and flag late-but-legitimate joins.
+      detectors:
+        - detector_class: 'session-membership-binding-analytics'
+          technologies:
+            - 'Customer-built session-membership state joined in Splunk / Elastic / Microsoft Sentinel / Google SecOps'
+            - 'Microsoft Agent 365 CloudAppEvents (InvokeAgent) as the invocation record'
+            - 'IdP/OAuth audit (Okta, Entra) for the caller credential'
+          contribution: 'Flags a sender not admitted to a session, the observable proxy for the injection.'
+          limitations: 'Requires a built and current membership binding; native records carry no membership or ordering field.'
+      benign_explanations:
+        - explanation: >-
+            A new but legitimate agent is admitted to a session mid-exchange (a sanctioned late join or
+            hand-off).
+          distinguishing_context: >-
+            An admission event or hand-off record in the membership binding separates a sanctioned join; its
+            absence is the flag, so the binding''s completeness is decisive.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Treating every not-yet-in-table sender as benign to avoid false positives would suppress the
+            injection this strategy exists to find.
+        - explanation: >-
+            A shared or reused service-principal credential makes several agents look like one admitted sender.
+          distinguishing_context: >-
+            Distinct client identities per agent separate them; credential reuse collapses the discriminator
+            and must be resolved in the IdP, not tuned around.
+          overlaps_incident_instance: false
+      blind_spots:
+        - description: 'Missing telemetry: direct A2A calls that never traverse Agent 365 or a gateway leave no invocation record to evaluate.'
+          routes_to: null
+        - description: 'Missing telemetry: no native session-membership or per-turn ordering field exists, so the binding must be built and may be incomplete.'
+          routes_to: null
+        - description: 'Attribution limit: Agent 365 hides the turn payload, so the injected content cannot be inspected even when the invocation is recorded.'
+          routes_to: null
+      analyst_response: >-
+        Identify the ConversationId and the sender agent identity and credential, check the membership binding
+        for an admission event, review IdP audit for the caller's credential lifecycle, and, where platform
+        payload capture can be retrieved out of band, examine the turn's content; determine whether the
+        recipient acted on it.
+      safe_conclusion: >-
+        A sender not bound to the session contributed a turn; whether it was an injected unsolicited turn and
+        whether the recipient treated it as in-session context cannot be confirmed from native telemetry alone.
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: >-
+          Volume depends entirely on the completeness of a first-party membership binding and how many A2A
+          calls are mediated or gatewayed; no source gives a rate.
+
+detector_requirements:
+  required: >-
+    A first-party session-membership binding mapping each ConversationId to its admitted sender identities;
+    canonicalization of caller and target agent identities and client credentials across platform, gateway,
+    and IdP records; a current admission/hand-off record so late joins are distinguishable; and outcome-aware
+    alert text stating that a sender-not-bound finding is a proxy, not proof of an unsolicited turn.
+  optional: >-
+    A gateway logging /message:send and /message:stream adds an invocation record where calls are not
+    platform-mediated, and IdP audit adds credential-lifecycle context; neither supplies the missing
+    per-turn provenance.
+  correlation:
+    capability: >-
+      Stable agent-identity and credential identifiers joined on ConversationId across platform, gateway, and
+      IdP; a current membership binding; and aligned clocks so an admission precedes the turns it authorizes.
+    window: 'Per session (ConversationId) lifetime; admission events must precede the turns they cover.'
+  baselines:
+    - name: 'Session-membership binding (ConversationId to admitted sender identities)'
+      window: 'Per-session, updated on each admission or hand-off'
+      seeded_from: >-
+        Sanctioned session-admission and hand-off events; never seeded from raw observed senders, which would
+        enrol the injecting agent as a member.
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on deployed sensors,
+    enabled logging, retained fields, and architecture. For this object, verification specifically means
+    confirming whether A2A calls are platform-mediated or direct, whether any gateway logs them, and
+    accepting that the deciding per-turn provenance evidence must be built as a session-membership binding
+    because no product emits it.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of the behavior; the catalog dates it to 2025 research without a fetched exact date.'
+    - 'What fraction of A2A calls in a real estate are platform-mediated versus direct and unlogged.'
+    - 'Whether any Agent 365 or gateway configuration surfaces the turn payload for hunting.'
+    - 'The real-world existence of an exploited victim beyond the research proof of concept.'
+  assumptions:
+    - id: 'ASSUMPTION-MEMBERSHIP-BINDING-BUILDABLE'
+      verdict_changing: true
+      statement: >-
+        A session-membership binding (which sender identities were admitted to a ConversationId) can be
+        constructed from admission and hand-off events in the estate. No fetched product emits such a binding;
+        this pack infers it can be assembled from platform, gateway, and IdP records. If wrong, the sole
+        strategy has nothing to evaluate against and detectable remains a true no with no workable proxy.
+        Resolve it by attempting to build the binding for one live A2A session type and confirming admission
+        events are recoverable.
+  standing_negatives:
+    - statement: >-
+        Neither the A2A specification nor the fetched Agent 365 telemetry defines a per-turn sequence number,
+        an authentication-outcome-per-turn field, or an in-session-versus-out-of-session classification, so an
+        unsolicited turn is carried by no native record.
+      ref: 'REF-A2A-SPEC'
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the A2A specification and the Agent 365 observability attribute reference for a newly defined
+        turn-ordering, per-turn authentication-outcome, or session-membership field.
+
+missing_states:
+  - id: 'MISSING_TURN_PROVENANCE_FIELD'
+    meaning: 'Missing telemetry: no native field marks a turn as unsolicited, out-of-session, or out-of-order.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Do not claim an unsolicited turn from native telemetry; rely on the built membership binding and state
+      the finding as a sender-not-bound proxy.
+  - id: 'MISSING_INVOCATION_RECORD'
+    meaning: 'Missing telemetry: a direct A2A call not mediated by Agent 365 or a gateway leaves no invocation record.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Report that the call was unobservable and recommend routing A2A through a mediating platform or logging gateway.
+  - id: 'MISSING_TURN_PAYLOAD'
+    meaning: 'Attribution gap: Agent 365 captures but does not surface the turn payload for hunting.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Evaluate on invocation metadata and membership only; note that the injected content could not be inspected.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'actor_or_explicit_missing_state'
+    - 'conversation_or_context_id'
+    - 'sender_agent_identity_and_credential'
+    - 'session_membership_binding_result'
+    - 'invocation_record_source_when_present'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'admission_or_handoff_record'
+      condition: 'when the membership binding carries an admission event for the sender'
+    - field: 'turn_payload_reference'
+      condition: 'when the turn content can be retrieved out of band from platform capture'
+  recommended_title: 'Sender not bound to the A2A session contributed a turn (proxy for session smuggling)'
+  unsupported_title: 'Remote agent hijacked the A2A session and controlled the recipient agent'
+
+evidence:
+  confirmed_incident_behavior: >-
+    Unit 42 describes agent session smuggling in A2A systems, in which a remote agent injects an unsolicited
+    turn into an established session that a recipient treats as in-session context, demonstrated as research
+    and proof of concept. That the A2A specification and the fetched Agent 365 telemetry carry no turn-ordering,
+    per-turn authentication-outcome, or in-session classification field is this pack's reading of those
+    documents, registered in the standing negative, and is what makes the behavior a detectable no rather than
+    a coverage gap that a tier could close.
+  supported_conclusion: >-
+    The evidence supports that a remote agent can inject an unsolicited turn into an established A2A session in
+    a research setting. A detector cannot emit "an unsolicited turn was injected" from native telemetry; the
+    strongest emittable conclusion is "a sender not bound to the session contributed a turn", and only where a
+    first-party session-membership binding exists to evaluate against.
+  unsupported_conclusions: >-
+    The evidence does not establish a real-world victim, that any recipient acted on an injected turn, or that
+    the injection can be told from a legitimate turn by any native field. Those require a session-membership
+    binding and, for downstream effect, recipient-action telemetry the cited source does not carry.
+  procedure_boundary: >-
+    This procedure is the delivery of an unsolicited turn into an established A2A session. What the recipient
+    agent then does with that turn is a separate behavior, and a recorded invocation is not evidence that the
+    turn was unsolicited or that the recipient acted on it.
+  references:
+    - id: 'REF-THREAT-A2A'
+      type: 'incident-procedure-primary-source'
+      title: 'Agent session smuggling in Agent2Agent (A2A) systems'
+      publisher: 'Unit 42 (Palo Alto Networks)'
+      url: 'https://unit42.paloaltonetworks.com/agent-session-smuggling-in-agent2agent-systems/'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary source for the session-smuggling behavior and its proof of concept; does not document a
+        real-world victim or any native provenance field.
+    - id: 'REF-A2A-SPEC'
+      type: 'attack-surface-documentation'
+      title: 'A2A specification'
+      publisher: 'A2A Project'
+      url: 'https://github.com/a2aproject/A2A/blob/main/docs/specification.md'
+      trust_tier: 'registry'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the A2A methods and identity fields carrying the turn and the absence of any audit,
+        ordering, or membership record cited in the standing negative.
+    - id: 'REF-AGENT365-ATTR'
+      type: 'telemetry-documentation'
+      title: 'Agent 365 observability attribute reference'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability-attribute-reference'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the InvokeAgent CloudAppEvents fields recording that one agent invoked another.'
+    - id: 'REF-AGENT365-CONCEPTS'
+      type: 'telemetry-documentation'
+      title: 'Agent 365 observability concepts'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability-concepts'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents that gen_ai.input.messages is captured but not surfaced in advanced hunting.'
+    - id: 'REF-IDP-AUDIT'
+      type: 'telemetry-documentation'
+      title: 'Okta event types and Entra audit activities'
+      publisher: 'Okta and Microsoft'
+      url: 'https://developer.okta.com/docs/reference/api/event-types/'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the OAuth client-credential lifecycle events used to attribute the calling agent.'
+    - id: 'REF-DEFENDER-NET'
+      type: 'telemetry-documentation'
+      title: 'DeviceNetworkEvents table (advanced hunting)'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-devicenetworkevents-table'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the receiver-side network fields that record the connection carrying a turn.'

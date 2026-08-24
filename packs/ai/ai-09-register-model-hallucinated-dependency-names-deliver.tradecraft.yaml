@@ -1,0 +1,600 @@
+identity:
+  uuid: 'c5bf053a-9257-44f6-9987-4fd243d98c58'
+  id: 'DT-AAG1-AI-009'
+  aliases:
+    - 'P21'
+  name: 'Attackers register model-hallucinated dependency names to deliver malware'
+  incident: >-
+    LLM package-name hallucination (USENIX Security 2025 study): 16 code LLMs produced 205,474 unique
+    hallucinated package names, a registrable name space an attacker can pre-claim (slopsquatting).
+  first_observed: '2024'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'other'
+  primary_attack_surface_note: >-
+    public-package-registry-and-ai-generated-dependency-install: the attacker registers a name in a
+    public package registry (PyPI/npm) that an AI coding assistant hallucinates, and generated code
+    then installs it; the entry surface is the public registry, not a self-hosted repository manager.
+  secondary_attack_surfaces:
+    - 'ai-agent-harness'
+    - 'host-os'
+  behavior_classes:
+    - 'other'
+  behavior_classes_note: >-
+    slopsquatting-via-model-hallucinated-dependency-name: an attacker pre-registers a package name an
+    AI assistant is known to invent, so that generated code installing that name pulls an
+    attacker-controlled dependency that executes or delivers malicious content.
+  tags:
+    - 'ai'
+    - 'supply-chain'
+    - 'slopsquatting'
+    - 'package-hallucination'
+    - 'pypi'
+    - 'npm'
+
+behavior:
+  definition: >-
+    An attacker registers a package name that an AI coding assistant invents; when generated code
+    installs that name, the attacker-controlled dependency executes or delivers malicious content.
+  detailed_definition: >-
+    The adversary exploits that code-generating models invent non-existent dependency names with a
+    measurable, repeatable frequency, and pre-registers those names in a public registry the consumer
+    trusts. The boundary crossed is from a suggested but non-existent name into an installed,
+    attacker-controlled artifact; the possible outcomes range from install-time code execution to
+    delivery of malicious content into the build. The attempt ends when the name is registered and
+    resolvable; success begins when generated code installs it and the artifact runs. It is
+    independent of model, registry, and package manager.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers registration of a hallucinated name and its installation by generated code; does not
+      cover confirmed in-the-wild victims, which the cited measurement study does not establish.
+    summary: >-
+      This can occur when a code model repeatably invents a name not present in the registry, the
+      registry lets an attacker register that name, and a developer or agent installs generated code
+      without verifying the dependency exists and is trustworthy. It requires only a repeatable
+      hallucination and an open registration path; no exploit of the model or the registry is needed,
+      since both behave as designed.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      The suggested name is observable where AI assistant response/tool capture is enabled and
+      untruncated, and the install where package-manager process or registry-proxy telemetry exists;
+      no first-party public-registry consumer-side audit records the pull.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          Assistant-response capture is opt-in (OTEL_LOG_ASSISTANT_RESPONSES=1) and truncated (60 KB
+          default), and command capture needs OTEL_LOG_TOOL_DETAILS=1; a suggested package name may
+          never appear without these, and Codex tool_result documents only duration, success, and an
+          output snippet.
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          Endpoint package-manager process telemetry and registry-proxy access logs exist only where a
+          sensor or a proxy is deployed; the public registries (npm/PyPI) publish no consumer-side
+          audit schema found on any page fetched.
+    summary: >-
+      The behavior is observable when the assistant response or tool arguments carry the suggested
+      package name, or when a package-manager process or registry-proxy access log records the install
+      of that name. A suggested name in a response establishes a recommendation, not an install; a
+      package-manager process or Artifactory DOWNLOAD establishes acquisition; only install-time
+      execution or delivered content establishes the effect. A registry existence check is enrichment,
+      not telemetry.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      A hallucinated or slopsquatting precursor is separable from a legitimate dependency when a
+      referenced package is non-existent, newly registered, or first-seen for the repository and this
+      is checked against a registry existence/age baseline before install; a freshly created internal
+      package overlaps and must not be excluded blindly.
+    blocking_conditions:
+      - condition: 'environment-inventory-required'
+        note: >-
+          The deciding predicate (name is non-existent, newly registered, or first-seen) requires a
+          built registry existence/age lookup and an allowlist of sanctioned packages; this is a
+          first-party-built enrichment set, not a log stream, and must exist before the check can run.
+      - condition: 'cross-source-join-required'
+        note: >-
+          Tying the suggested name to the install and to registry age needs the assistant/tool signal
+          joined to the package-manager or proxy event and to the registry lookup on package name and
+          repository; no single stream separates a hallucinated install from a legitimate one.
+    summary: >-
+      Separation rests on classifying a referenced package as non-existent, newly registered, or
+      first-seen for the repository against a registry existence/age baseline, since legitimate
+      installs also pull new packages. Normalising the package name and version, checking it against
+      the built registry baseline before install, and correlating to the install event are what make
+      the precursor distinguishable; a novel name with no registry check, or an install with no name
+      capture, is too weak to establish it.
+
+attack_surface_context:
+  surface: >-
+    Public package registries (PyPI, npm) as a name space an attacker can register into, and the
+    AI-assisted install path where generated code runs pip install or npm install for a suggested
+    dependency.
+  how_the_surface_works: >-
+    A code-generating assistant proposes dependencies by name, and a developer or agent installs them
+    with the package manager, which resolves the name against a public registry and downloads the
+    artifact, often running install-time hooks. Registration in the public registry is open, so a name
+    the model invents can be pre-claimed; because the package manager trusts name resolution, an
+    installed hallucinated name pulls whatever the attacker published under it.
+  incident_processing_path: >-
+    The USENIX Security 2025 study reports (source-attested) that across 16 code LLMs and 576,000
+    samples there were 205,474 unique hallucinated package names, with at least 5.2% hallucination for
+    commercial and 21.7% for open-source models, submitted June 2024 and revised March 2025. That a
+    hallucinated name is trivially registrable and would then be installed by generated code is this
+    pack's reading of the slopsquatting delivery path; the study measures the hallucination rate and
+    name space and does not confirm in-the-wild squatted-package victims.
+  processing_stages:
+    - 'model-suggests-dependency'
+    - 'hallucinated-name-emitted'
+    - 'attacker-registers-name'
+    - 'generated-code-references-name'
+    - 'package-manager-resolves-name'
+    - 'registry-download'
+    - 'install-time-execution'
+    - 'malicious-content-delivered'
+  stage_evidence: >-
+    The stage an event sits at fixes what it can prove: a suggested name in an assistant response at
+    hallucinated-name-emitted proves a recommendation; an install command at package-manager-resolves
+    proves acquisition intent; a registry-proxy DOWNLOAD proves the pull; only install-time execution
+    or delivered content proves the effect. A registry existence/age check is derived enrichment at
+    any stage, not an event.
+  trust_boundaries: >-
+    Attacker into the public registry name space (reachable: registration is open); registry-resolved
+    name into the consumer's build (reached when generated code installs it); installed artifact into
+    the host runtime (reached at install-time execution). The study establishes the hallucination name
+    space and rates; it does not establish that any specific name was registered and installed by a
+    victim.
+  security_control_context: >-
+    Dependency allowlists, registry existence/age checks, publisher-reputation gates, and pinned
+    lockfiles decide before install where an estate deploys them, and can block an unknown or
+    newly registered name; where present they log the policy decision. Bypass representations include a
+    name registered far enough ahead to age past a freshness threshold, a private-package naming
+    collision, and an install performed outside a proxied or monitored path.
+  practitioner_implication: >-
+    An implementer must discover which assistants the estate uses and whether their response and tool
+    content are captured and untruncated, whether a registry-proxy or package-manager telemetry path
+    records installs, whether a registry existence/age baseline and allowlist exist to classify a
+    referenced name, and how package names are carried from suggestion to install.
+
+threat_research:
+  why_it_matters: >-
+    Code models invent dependency names repeatably and at measurable rates, so an attacker who
+    pre-registers those names turns an assistant's own suggestion into a delivery channel: generated
+    code installs the attacker's package with the trust normally given to a resolved dependency.
+  threat_actor: >-
+    Unknown; the cited work is a measurement study, not an attributed campaign. It establishes the
+    feasibility and name space rather than a named actor.
+  campaign: >-
+    LLM package-name hallucination measured in the USENIX Security 2025 study; no specific
+    slopsquatting campaign is attributed by the cited page.
+  victim: >-
+    Developers and agents that install AI-suggested dependencies without verifying existence and
+    provenance; the study does not confirm specific in-the-wild squatted-package victims.
+  capability: >-
+    Across 16 code LLMs and 576,000 samples, 205,474 unique hallucinated package names, with at least
+    5.2% hallucination for commercial and 21.7% for open-source models, establishing a large,
+    repeatable, registrable name space for slopsquatting.
+  target: >-
+    The AI-assisted dependency-install path into PyPI and npm consumers. The study demonstrates the
+    hallucination name space and rates; it does not demonstrate a completed in-the-wild delivery to a
+    named victim.
+  victimology:
+    - 'Developers and CI pipelines that install AI-suggested Python or JavaScript dependencies.'
+    - 'Organisations without dependency allowlists or registry existence/age gating on installs.'
+
+visibility:
+  telemetry_sources:
+    - source: 'AI assistant response capture'
+      purpose: >-
+        Carry the suggested (possibly hallucinated) package name from the assistant output before it is
+        installed.
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'claude_code.assistant_response (response, response_length, model, request_id, message.uuid)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CC-OTEL'
+          load_bearing: true
+          note: >-
+            Redacted by default; included with OTEL_LOG_ASSISTANT_RESPONSES=1; truncated at
+            CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH (default 61440, 60 KB); requires v2.1.193+; text blocks only.
+        - name: 'gen_ai.output.messages (OpenClaw), Graph getAllEnterpriseInteractions response text (M365)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-OPENCLAW-OTEL'
+          load_bearing: false
+          note: 'Platform equivalents carrying response text under their own capture flags and licences.'
+      details: >-
+        The assistant response carries the suggested package name where content capture is enabled and
+        the name is not truncated away; OpenClaw gen_ai.output.messages and M365 Graph enterprise
+        interactions provide platform-equivalent response text under their own flags and licences.
+      limitations:
+        - 'Opt-in and truncated (60 KB default); a suggested name may fall outside the captured window.'
+        - 'Codex codex.tool_result documents only duration, success, and an output snippet, so a name may never appear.'
+        - 'Copilot Studio audit carries the conversation thread ID, not transcript text; Agent 365 output is captured but not surfaced in hunting.'
+    - source: 'AI tool-call install command'
+      purpose: >-
+        Capture the actual pip/npm install invocation naming the package the assistant produced.
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'claude_code.tool_result tool_parameters.bash_command/full_command'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CC-OTEL'
+          load_bearing: true
+          note: 'Requires OTEL_LOG_TOOL_DETAILS=1; captures the actual npm install / pip install invocation.'
+      details: >-
+        tool_result tool_parameters carry the install command with the package name; Cowork provides
+        prompt and tool events once an admin sets the OTLP endpoint, and GitHub streamed Copilot usage
+        carries a truncated request body under a preview.
+      limitations:
+        - 'Opt-in content flag required; without it the command text is not recorded.'
+        - 'GitHub streamed usage is public preview, truncated at 1 MB, EMU or GHEC with data residency only.'
+    - source: 'Endpoint package-manager and file telemetry'
+      purpose: >-
+        Record the package-manager process, the installed files, and the registry fetch on the host.
+      event_vocabulary: 'host-process-event'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'DeviceProcessEvents (ProcessCommandLine, FileName, InitiatingProcessParentFileName, AccountName)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-DEFENDER-PROC'
+          load_bearing: true
+        - name: 'DeviceFileEvents (FileOriginUrl, FolderPath, SHA256) for installed files'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-DEFENDER-FILE'
+          load_bearing: true
+      details: >-
+        DeviceProcessEvents or Sysmon 1 record the package-manager process and its command line;
+        DeviceFileEvents or Sysmon 11 record installed files with origin and hash; DeviceNetworkEvents
+        or Sysmon 3/22 record the registry fetch.
+      limitations:
+        - 'Requires an endpoint sensor on the developer or build host.'
+        - 'A package-manager process proves an install of a name, not that the name was hallucinated.'
+    - source: 'Registry-proxy access log'
+      purpose: >-
+        Record a package pull with an accept/deny decision where installs route through a managed proxy.
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'Artifactory access log DOWNLOAD (ACCEPTED/DENIED, repository path, user, IP, APIKEY/TOKEN)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-ARTIFACTORY'
+          load_bearing: true
+          note: 'The only fetched first-party source that records a package pull with a policy decision.'
+      details: >-
+        The Artifactory access log records a DOWNLOAD with an accept/deny status and the repository
+        path where installs are proxied, giving a first-party record of the pull the public registries
+        do not provide.
+      limitations:
+        - 'Exists only where installs route through a managed proxy such as Artifactory.'
+        - 'No first-party public-registry consumer-side audit or publish-event schema was found on any page fetched.'
+
+detection:
+  scope: >-
+    Detection spans the assistant's suggested name, the install of that name, and the registry
+    existence/age of the name. Two materially distinct strategies divide the path: one classifies a
+    referenced package as non-existent, newly registered, or first-seen against a registry baseline
+    before install, and one confirms the install on the host or proxy and joins it to the suggested
+    name.
+  outcome_guardrails: >-
+    A suggested name establishes a recommendation, not an install. A first-seen or non-existent name
+    establishes a precursor, not a compromise. An install establishes acquisition, and only
+    install-time execution or delivered content establishes the effect. These stay distinct;
+    "assistant suggested a novel package" and "malicious dependency executed" are different alerts.
+  shared_normalization_context: >-
+    Canonicalise the package name and version and inspect for registry existence and age, treating a
+    non-existent, newly registered, or first-seen-for-repo name as one class rather than matching
+    specific strings, and applying Unicode and typo normalisation to the name.
+  shared_enrichment_context: >-
+    Join the suggested name to the install command, the package-manager or proxy event, and a built
+    registry existence/age lookup and allowlist, keyed on package name/version, repository, agent id,
+    and registry URL. A rolling repository history of first-seen packages helps flag novelty; registry
+    age and publisher reputation raise confidence.
+  strategies:
+    - id: 'STRAT-FIRST-SEEN-NOVELTY'
+      name: 'first-seen / registry-novelty classification'
+      objective: >-
+        Detect a referenced package that is non-existent, newly registered, or first-seen for the
+        repository, especially before install, against a registry existence/age baseline.
+      incident_relevance: >-
+        Detects the slopsquatting precursor the study makes feasible. It does not by itself establish
+        install-time execution; the install and its effect are confirmed separately.
+      detection_logic: >-
+        Extract package identifiers from the assistant response and tool arguments, normalise the name,
+        and query the registry existence/age baseline; raise when a referenced package is non-existent,
+        newly registered within the freshness window, or first-seen for that repository, and not on the
+        allowlist. Prefer to evaluate before install. Treat registry age and publisher reputation as
+        confidence raisers, not as the trigger.
+      minimum_evidence: >-
+        A referenced package name classified against the registry baseline as non-existent, newly
+        registered, or first-seen for the repository, and off the allowlist. Without the install, report
+        a hallucinated/slopsquatting precursor, not a confirmed compromise.
+      correlation_context: >-
+        Correlate the suggested name to the install within up to twenty-four hours (explicit maximum
+        gap twenty-four hours), keyed on package name/version, repository, and registry URL, against a
+        rolling thirty-day first-seen history.
+      detectors:
+        - detector_class: 'package-novelty-and-registry-enrichment'
+          technologies:
+            - 'SIEM with first-seen/cardinality tracking (Splunk, Elastic, Sentinel, Google SecOps)'
+            - 'Registry existence/age enrichment against PyPI/npm'
+            - 'Dependency allowlist lookups'
+          contribution: 'Classifies a referenced name as novel or non-existent before it is trusted.'
+          limitations: 'Requires a built registry baseline and allowlist; registry checks are enrichment, not telemetry.'
+      benign_explanations:
+        - explanation: >-
+            Private or internal packages, or packages legitimately created just before use, are also
+            non-existent in the public registry or newly registered.
+          distinguishing_context: >-
+            The allowlist and an internal-registry origin separate the legitimate private package;
+            registry age and publisher reputation help, but novelty alone does not.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding all first-seen or newly registered packages to cut noise would also suppress the
+            attacker-registered hallucinated name, which is newly registered by construction.
+      blind_spots:
+        - description: 'Missing telemetry: no first-party public-registry consumer-side audit schema; registry checks are derived enrichment.'
+          routes_to: null
+        - description: 'Missing telemetry: assistant-response capture is opt-in and truncated, so a suggested name may never appear.'
+          routes_to: null
+        - description: 'Evasion: a name registered far enough ahead to age past the freshness threshold.'
+          routes_to: null
+      analyst_response: >-
+        Recover the suggested name and the install command, classify the name against registry
+        existence/age and the allowlist, determine whether an install occurred and on which host,
+        inspect the package publisher and age, and scope any install-time execution.
+      safe_conclusion: >-
+        An AI-suggested dependency is non-existent, newly registered, or first-seen for the repository;
+        confirming compromise requires the install and install-time execution evidence.
+    - id: 'STRAT-INSTALL-CONFIRMATION'
+      name: 'install and fetch confirmation'
+      objective: >-
+        Confirm the install of the referenced package and its registry fetch on the host or proxy, and
+        join it to the suggested name.
+      incident_relevance: >-
+        Confirms acquisition of the referenced name where the novelty precursor fired, and provides the
+        install-time execution vantage. An install must be tied to the suggested name to attribute it
+        to this procedure.
+      detection_logic: >-
+        Select package-manager process events and registry-proxy DOWNLOADs for the referenced name and
+        raise when the installed name matches a novelty-flagged suggestion and is off the allowlist.
+        Join to the suggested name from the assistant/tool signal and to install-time process or file
+        activity. Treat install-time execution or delivered content as the effect.
+      minimum_evidence: >-
+        A package-manager install or proxy DOWNLOAD of the referenced name joined to the suggested name.
+        Without install-time execution, report acquisition of a novel dependency, not a confirmed
+        malicious effect.
+      correlation_context: >-
+        Correlate the install to the suggested name on package name/version and host within the session,
+        and to install-time process/file events; prefer the installed artifact hash where available.
+      detectors:
+        - detector_class: 'endpoint-and-proxy-install-analytics'
+          technologies:
+            - 'Microsoft Defender for Endpoint advanced hunting'
+            - 'Sysmon (events 1, 11, 3, 22)'
+            - 'Artifactory access log'
+          contribution: 'Confirms the install and fetch of the referenced name on host or proxy.'
+          limitations: 'Requires a sensor or proxy; an install proves acquisition of a name, not that it was hallucinated.'
+      benign_explanations:
+        - explanation: >-
+            A developer or CI legitimately installs a newly published or internal package the assistant
+            happened to reference.
+          distinguishing_context: >-
+            The allowlist, an internal-registry origin, and a matching approved dependency separate the
+            legitimate install; an install of a novelty-flagged public name does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Allowlisting the package-manager process wholesale would let an install of an
+            attacker-registered name through.
+      blind_spots:
+        - description: 'Missing telemetry: no endpoint sensor or proxy on the install path.'
+          routes_to: null
+        - description: 'Attribution limit: without the suggested-name join, an install reads as a generic new-dependency install.'
+          routes_to: null
+      analyst_response: >-
+        Identify the install command and installed artifact, join it to the suggested name, inspect the
+        artifact origin and hash, determine whether install-time hooks executed, and scope the affected
+        host or pipeline.
+      safe_conclusion: >-
+        A referenced novel package was installed on the host or via the proxy; confirming a malicious
+        effect requires install-time execution or delivered-content evidence.
+
+detector_requirements:
+  required: >-
+    Extraction and normalisation of package identifiers from assistant and tool content; a built
+    registry existence/age baseline and dependency allowlist to classify a referenced name; capture of
+    the install command and package-manager or proxy event; a join from suggested name to install on
+    package name/version and repository; durable retention of the first-seen history; and outcome-aware
+    alert text separating a novel-package precursor from a confirmed malicious install.
+  optional: >-
+    Assistant-response capture carries the suggested name pre-install, registry age and publisher
+    reputation raise confidence, and a registry proxy adds a first-party pull record; none is a hard
+    gate, but without the registry baseline the deciding novelty predicate cannot be evaluated.
+  correlation:
+    capability: >-
+      Aligned clocks across assistant, endpoint, and proxy streams; a stable package name and version
+      carried from suggestion to install; repository and registry identity; and a built registry
+      existence/age baseline queried at classification time.
+    window: >-
+      Suggestion to install within up to twenty-four hours, explicit maximum gap twenty-four hours,
+      against a rolling thirty-day first-seen history.
+  baselines:
+    - name: 'Registry existence/age and first-seen package history'
+      window: '30-day rolling first-seen; live registry existence/age lookup'
+      seeded_from: >-
+        The public registry existence/age service and sanctioned allowlists; never seeded by treating a
+        name''s appearance in generated code as evidence it is legitimate, which would enrol a
+        hallucinated name as known-good.
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on deployed
+    sensors, enabled logging, retained fields, and architecture. For this object, verification means
+    confirming that assistant/tool content capture is enabled and untruncated enough to carry package
+    names, that a registry existence/age baseline and allowlist exist, and that install telemetry is
+    available, since the public registries publish no consumer-side audit and content capture is
+    opt-in and truncated.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of slopsquatting exploitation in the wild; the study measures hallucination, not a first in-the-wild sighting.'
+    - 'Whether any specific hallucinated name was registered by an attacker and installed by a victim, which the study does not confirm.'
+    - 'The exact freshness threshold that best separates attacker pre-registration from legitimate new packages, which the source does not state.'
+    - 'The retention and schema of any public-registry consumer-side audit, none of which was found on the pages fetched.'
+  assumptions:
+    - id: 'ASSUMPTION-REGISTER-AND-INSTALL-PATH'
+      verdict_changing: true
+      statement: >-
+        A hallucinated name is trivially registrable and would then be installed by generated code that
+        references it. The study measures the hallucination rate and the unique-name space but does not
+        register names or observe installs; this pack read the register-and-install delivery path from
+        the slopsquatting concept and the measured name space, which is reasoning from feasibility to a
+        completed path. If wrong, the first-seen/novelty predicate detects a precursor that no attacker
+        actually weaponises and the supported conclusion overstates delivery. Resolve it by observing a
+        registered hallucinated name being installed in a real estate, or by a controlled test that
+        registers a benign name and confirms an assistant-driven install pulls it.
+  standing_negatives:
+    - statement: >-
+        No first-party public-registry (npm/PyPI) consumer-side audit or publish-event schema was found
+        on any page fetched for the telemetry audit; registry existence/age checks are enrichment, not
+        telemetry, so the pull is recorded only by an endpoint or a managed proxy.
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-check the npm and PyPI documentation for a newly published consumer-side audit or
+        publish-event schema that records a package pull.
+    - statement: >-
+        Assistant-response capture is opt-in and truncated at a 60 KB default, and Codex
+        codex.tool_result documents only duration, success, and an output snippet, so a suggested
+        package name may never appear in the captured content.
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the Claude Code and Codex OTel references for changed default capture or truncation
+        behavior for assistant responses and tool output.
+
+missing_states:
+  - id: 'MISSING_REGISTRY_CONSUMER_AUDIT'
+    meaning: 'Structural gap: the public registries publish no consumer-side audit schema recording a package pull.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Record the pull from endpoint or managed-proxy telemetry and treat registry existence/age as
+      derived enrichment; do not expect a first-party registry event.
+  - id: 'MISSING_SUGGESTED_NAME_CAPTURE'
+    meaning: 'Missing telemetry: assistant response/tool content capture is disabled or truncated, so the suggested name is absent.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Fall back to install-time classification of the installed name against the registry baseline; do
+      not require the suggested name to raise the novelty precursor.
+  - id: 'MISSING_REGISTRY_BASELINE'
+    meaning: 'Missing context: no built registry existence/age baseline or allowlist exists to classify a referenced name.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Do not claim a hallucinated or slopsquatting precursor; the deciding novelty predicate cannot be
+      evaluated without the baseline.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'actor_or_explicit_missing_state'
+    - 'referenced_package_name_and_version'
+    - 'registry_existence_age_classification'
+    - 'suggesting_agent_and_repository_when_available'
+    - 'install_command_or_proxy_download_when_present'
+    - 'installed_artifact_origin_and_hash_when_present'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'install_time_execution_evidence'
+      condition: 'when install-time process or file activity from the installed package is observed'
+  recommended_title: 'AI-suggested dependency is non-existent or newly registered and was installed'
+  unsupported_title: 'Attacker compromised the build pipeline through a malicious AI-suggested package'
+
+evidence:
+  confirmed_incident_behavior: >-
+    The USENIX Security 2025 study reports that across 16 code LLMs and 576,000 samples there were
+    205,474 unique hallucinated package names, with at least 5.2% hallucination for commercial and
+    21.7% for open-source models, submitted June 2024 and revised March 2025. That such a name is
+    trivially registrable and would be installed by generated code that references it is this pack's
+    reading of the slopsquatting delivery path, registered in missing_context.assumptions, not a
+    completed delivery the study observes.
+  supported_conclusion: >-
+    The evidence supports that code models invent dependency names repeatably and at measurable rates,
+    creating a large registrable name space for slopsquatting. The behavior is detectable where a
+    referenced package is classified as non-existent, newly registered, or first-seen against a
+    registry baseline and correlated to an install, and reportable as a slopsquatting precursor from
+    the novelty classification alone.
+  unsupported_conclusions: >-
+    The evidence does not establish any in-the-wild registration of a hallucinated name, any victim
+    install, a victim count, or a completed malicious delivery; the study is a measurement of
+    hallucination, not of exploitation. Confirmed compromise requires install and install-time
+    execution telemetry the study does not carry.
+  procedure_boundary: >-
+    This procedure is the registration of a model-hallucinated dependency name and its installation by
+    generated code. The install-time execution or content delivery of the malicious package, and any
+    follow-on action, are separate behaviors evidenced only by host install-time telemetry; poisoning
+    an instruction file through a contribution is the adjacent procedure DT-AAG1-AI-008.
+  references:
+    - id: 'REF-THREAT-ARXIV'
+      type: 'detection-modeling-reference'
+      title: 'We Have a Package for You! A Comprehensive Analysis of Package Hallucinations by Code-Generating LLMs (arXiv 2406.10279)'
+      publisher: 'USENIX Security 2025 (arXiv preprint)'
+      url: 'https://arxiv.org/abs/2406.10279'
+      trust_tier: 'researcher'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary source for the hallucination rates, sample counts, and the 205,474 unique hallucinated
+        names; it measures the phenomenon and does not confirm in-the-wild squatted-package victims.
+    - id: 'REF-CC-OTEL'
+      type: 'telemetry-documentation'
+      title: 'Claude Code monitoring and OpenTelemetry reference'
+      publisher: 'Anthropic'
+      url: 'https://code.claude.com/docs/en/monitoring-usage'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents assistant_response and tool_result fields, the capture flags, and the truncation
+        behavior used by the assistant and tool telemetry sources; not an incident fact.
+    - id: 'REF-OPENCLAW-OTEL'
+      type: 'telemetry-documentation'
+      title: 'OpenClaw OpenTelemetry (gen_ai output messages)'
+      publisher: 'OpenClaw'
+      url: 'https://docs.openclaw.ai/gateway/opentelemetry'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the platform-equivalent response-text capture used as a secondary assistant telemetry
+        field; not an incident fact.
+    - id: 'REF-DEFENDER-PROC'
+      type: 'telemetry-documentation'
+      title: 'DeviceProcessEvents table (advanced hunting)'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-deviceprocessevents-table'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the process fields used to record the package-manager install on the host.'
+    - id: 'REF-DEFENDER-FILE'
+      type: 'telemetry-documentation'
+      title: 'DeviceFileEvents table (advanced hunting)'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-devicefileevents-table'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the file-event fields used to record installed files with origin and hash.'
+    - id: 'REF-ARTIFACTORY'
+      type: 'telemetry-documentation'
+      title: 'Artifactory access log'
+      publisher: 'JFrog'
+      url: 'https://docs.jfrog.com/administration/docs/access-log'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the DOWNLOAD access-log record used by the registry-proxy telemetry source; the only
+        fetched first-party source recording a package pull.

@@ -1,0 +1,631 @@
+identity:
+  uuid: 'e6bbcb7a-ee85-4ad6-800a-8948a996e1ca'
+  id: 'DT-AAG1-AI-008'
+  aliases:
+    - 'P19'
+  name: 'Attackers submit source contributions that poison a coding agent instruction file'
+  incident: >-
+    Amazon Q Developer for VS Code 1.84 wiper-prompt pull request: an attacker PR inserted a
+    destructive instruction telling the agent to wipe the system and delete cloud resources.
+  first_observed: '2025-07'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'submitted-content-ingest'
+  secondary_attack_surfaces:
+    - 'ai-agent-harness'
+    - 'host-filesystem'
+  behavior_classes:
+    - 'persistence'
+    - 'other'
+  behavior_classes_note: >-
+    coding-agent-instruction-file-poisoning-via-source-contribution: an attacker contributes source
+    content containing destructive instructions to a path a coding agent consumes as its charter, so
+    the shipped agent receives attacker-authored tasking that persists across sessions.
+  tags:
+    - 'ai'
+    - 'supply-chain'
+    - 'coding-agent'
+    - 'prompt-injection'
+    - 'amazon-q'
+    - 'wiper'
+
+behavior:
+  definition: >-
+    An attacker contributes source content containing destructive instructions in a path consumed by
+    a coding agent, causing the shipped agent to receive attacker-authored tasking.
+  detailed_definition: >-
+    The adversary submits a contribution through the normal source-contribution path into a file the
+    agent treats as instructions (an instruction, charter, rules, or skill file), rather than into
+    code the agent merely reads. The boundary crossed is from ordinary contributed content to the
+    agent's trusted tasking surface; the possible outcomes range from benign-looking guidance to a
+    destructive instruction such as wiping a system or deleting cloud resources. The attempt ends when
+    the contribution is merged and shipped; success begins when a shipped agent loads the poisoned
+    instruction and acts on it. It is independent of agent product, instruction-file format, and
+    source-hosting platform.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers the merge of a contribution that poisons an instruction file and its arrival in a shipped
+      agent; does not cover whether the tasking executed, which in the cited incident was reportedly
+      not functional and produced no confirmed wipes.
+    summary: >-
+      This can occur when a coding agent loads an instruction file whose content can be changed through
+      the normal source-contribution path, and the contribution is merged into a shipped version. It
+      requires a mergeable contribution route into an instruction path and an agent that consumes that
+      path as tasking; whether the tasking then executes depends on the agent's capabilities and the
+      instruction being functional.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      The contribution event is observable where an agentic or SCM audit stream exists, and the
+      resulting destructive command where agent OTel or endpoint telemetry exists; the poisoning of
+      the instruction content itself is observable only by diffing Git objects, since no audit event
+      carries instruction-file content.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          The GitHub agentic audit view (actor_is_agent, agent_session_id, 180-day) and Claude Code
+          tool_result content require enterprise audit and OTEL_LOG_TOOL_DETAILS=1 respectively; Git
+          events via REST retain only 7 days, shorter than the agentic view.
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          Endpoint file monitoring of the documented instruction paths and process telemetry for the
+          resulting command exist only where a sensor is deployed; native instruction-file drift
+          detection is customer-built on every platform examined.
+    summary: >-
+      The behavior is observable when a contribution/PR event names an author and repository, when a
+      Git object diff shows the poisoned instruction content, or when a destructive command executed
+      by the agent is recorded on the host. A contribution event establishes a change was made but not
+      its instruction content; a Git diff establishes the poisoned content but not that any agent
+      loaded it; a destructive command establishes tasking ran but, without the instruction linkage,
+      not that this contribution caused it.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Separable from a legitimate instruction change when an unauthorised or unexpected contributor
+      changes an instruction-file hash and a downstream destructive action follows; the poisoning is
+      distinguishable at content level only by diffing Git objects, since no first-party audit event
+      carries instruction-file content or names a custom-instruction update.
+    blocking_conditions:
+      - condition: 'cross-source-join-required'
+        note: >-
+          Tying the poisoned instruction to its effect needs the contribution/instruction-drift signal
+          joined to the downstream destructive tool call and to a cloud/EDR delete audit; no single
+          stream spans the contribution and the effect.
+      - condition: 'deciding-property-not-in-any-schema'
+        note: >-
+          Instruction-file content and its load are carried by no native agent or audit event on any
+          platform examined; content-level detection is structurally reconstructed from Git objects
+          and file hashes. The contribution event and downstream command survive without it, which is
+          what answer_scope bounds.
+    summary: >-
+      Separation rests on an unauthorised contributor changing a monitored instruction-file hash and a
+      correlated downstream destructive action, since legitimate instruction updates also change the
+      same files. Normalising the instruction paths to a monitored set, hashing them before and after,
+      and requiring a contribution outside the approved-change set are what make the poisoning
+      distinguishable; an instruction change with an approved record, or a destructive command with no
+      instruction linkage, is too weak to establish it.
+
+attack_surface_context:
+  surface: >-
+    Coding-agent instruction and charter files (e.g. CLAUDE.md at the documented macOS/Linux/Windows
+    and project paths, .claude/rules/, OpenClaw SKILL.md/skill-card.md) that the agent loads as tasking
+    and that are reachable through the source-contribution path of the hosting repository.
+  how_the_surface_works: >-
+    A coding agent loads instruction files at startup to shape its behavior: a global or project
+    charter, rules, and skill descriptions. Those files live in the repository or on the host and are
+    changed through the same contribution path as code: a pull request, merge, and release. Because the
+    agent treats the file as instructions rather than data, a merged contribution to that path becomes
+    tasking the shipped agent obeys.
+  incident_processing_path: >-
+    Tom's Hardware and the AWS security bulletin report (source-attested) that an attacker pull request
+    on 13 July 2025 inserted a wiper prompt into Amazon Q Developer for VS Code 1.84, telling the agent
+    to clean the system to a near-factory state and delete filesystem and cloud resources using bash
+    and AWS CLI access, with reporting around 23 July and an Amazon statement on 24 July 2025; the
+    injected prompt was reportedly not functional and no victim wipes were confirmed. That the deciding
+    surface is the instruction/charter file the agent consumes, rather than ordinary code, is this
+    pack's framing consistent with the procedure name; the sources describe the PR and its instruction
+    without publishing the agent's instruction-load path.
+  processing_stages:
+    - 'contribution-authored'
+    - 'pull-request-submitted'
+    - 'review-and-merge'
+    - 'instruction-file-poisoned'
+    - 'release-and-ship'
+    - 'agent-instruction-load'
+    - 'destructive-tasking-issued'
+    - 'destructive-command-attempt'
+  stage_evidence: >-
+    The stage an event sits at fixes what it can prove: a contribution/PR event at review-and-merge
+    proves a change was contributed and by whom; a Git object diff at instruction-file-poisoned proves
+    the poisoned content; a destructive command at destructive-command-attempt proves tasking ran, and
+    only a resource-delete audit proves an effect. No native event proves the agent loaded the
+    instruction.
+  trust_boundaries: >-
+    Untrusted contributor into the repository's instruction path (the boundary the procedure crosses:
+    the PR was merged); merged instruction into the shipped agent (reached when a release ships it);
+    agent tasking into the host and cloud (attempted per the instruction; in the cited case reportedly
+    non-functional with no confirmed wipes). The sources establish the merge and shipment, not a
+    successful victim wipe.
+  security_control_context: >-
+    Code review and merge approval decide before an instruction change ships and record the
+    contribution, and destructive-action policy may gate the resulting command; where present they log
+    the PR and the command attempt. Neither logs the instruction-file content, which must be
+    reconstructed from Git objects. Bypass representations include a benign-looking instruction change
+    that passes review, a poisoned path outside the monitored instruction set, and a contribution whose
+    Git record ages out of the 7-day REST retention before review.
+  practitioner_implication: >-
+    An implementer must discover which agents the estate ships and their exact instruction/charter/rule
+    paths, whether an agentic or SCM audit stream records contributions and its retention, whether Git
+    object diffing is available to see instruction content, whether endpoint telemetry covers the
+    instruction paths, and where the downstream destructive-action audit (cloud or EDR) lives.
+
+threat_research:
+  why_it_matters: >-
+    An instruction file is trusted tasking, so a single merged contribution can task every shipped
+    agent that loads it: in the cited case, an instruction to wipe the system and delete cloud
+    resources with bash and AWS CLI access, distributed through a normal software release rather than
+    an exploit.
+  threat_actor: >-
+    Unknown as a named group. The source attributes the wiper prompt to an attacker who submitted a
+    pull request; no group attribution is given.
+  campaign: >-
+    Amazon Q Developer wiper-prompt pull request, July 2025: PR on 13 July, reporting around 23 July,
+    Amazon statement on 24 July.
+  victim: >-
+    Users of Amazon Q Developer for VS Code 1.84 that shipped with the poisoned instruction; the source
+    reports no confirmed victim wipes because the injected prompt was reportedly not functional.
+  capability: >-
+    A merged pull request that inserted a wiper prompt into a shipped coding-agent version, instructing
+    the agent to clean the system to a near-factory state and delete filesystem and cloud resources via
+    bash and AWS CLI; the injected prompt was reportedly not functional and no wipes were confirmed.
+  target: >-
+    The instruction/charter surface of a shipped coding agent and, through it, the filesystems and
+    cloud resources of its users. The contribution reached the shipped release; the destructive effect
+    was attempted in instruction form but not confirmed executed.
+  victimology:
+    - 'Developers running coding agents that load instruction/charter files shipped from public repositories.'
+    - 'Organisations mirroring or redistributing coding-agent releases that carry instruction files.'
+
+visibility:
+  telemetry_sources:
+    - source: 'GitHub agentic and enterprise audit'
+      purpose: >-
+        Record the contribution/PR event and attribute it to an actor (including an agent author) and
+        repository.
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'agentic audit (action, actor_is_agent=true, agent_session_id, user; 180-day view)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-GH-AGENTIC'
+          load_bearing: true
+          note: 'Proves an agent-authored contribution/PR event; retained 180 days in the agentic view.'
+        - name: 'enterprise audit (action, actor, repo, repo_id, @timestamp, _document_id, request_id, user_agent)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-GH-AUDIT'
+          load_bearing: true
+          note: 'Git events via REST retain only 7 days, shorter than the agentic view.'
+      details: >-
+        The agentic audit view records agent-authored contributions with a 180-day retention; the
+        enterprise audit and Git events (via REST, 7-day retention) record the contribution actor,
+        repository, and time, with export events for longer retention.
+      limitations:
+        - 'No documented audit event carries instruction-file content or names a custom-instruction update.'
+        - 'Git event retention via REST is only 7 days, so late detection loses the contribution record.'
+    - source: 'Coding-agent instruction paths (integrity targets)'
+      purpose: >-
+        Enumerate the instruction/charter/rule files whose change must be integrity-monitored, since no
+        native event reports their load.
+      event_vocabulary: 'none'
+      operational_viability: 'first-party-build'
+      fields:
+        - name: 'documented instruction paths (CLAUDE.md variants, .claude/rules/, OpenClaw SKILL.md/skill-card.md)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CC-MEMORY'
+          load_bearing: true
+          note: 'Documented as instruction locations; the agent emits no event on loading them.'
+      details: >-
+        The documented instruction locations across macOS, Linux/WSL, Windows, user, and project scopes
+        define the watchlist a drift detector must hash; they are a target set to monitor, not a log
+        stream.
+      limitations:
+        - 'Claude Code emits no event for loading CLAUDE.md, .claude/rules/*, or managed-policy instruction files.'
+        - 'gen_ai.system_instructions and gen_ai.agent.version are not documented anywhere on the pages fetched.'
+    - source: 'Claude Code OpenTelemetry (resulting command)'
+      purpose: >-
+        Record the destructive command the poisoned instruction produced, as attempt text.
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'claude_code.tool_result (tool_name Bash, tool_parameters.bash_command/full_command/dangerouslyDisableSandbox/git_commit_id)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CC-OTEL'
+          load_bearing: true
+          note: 'Requires OTEL_LOG_TOOL_DETAILS=1; proves the command text only, not file/cloud deletion.'
+        - name: 'claude_code.user_prompt.command_source (builtin, custom, mcp)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CC-OTEL'
+          load_bearing: false
+          note: 'Distinguishes the tasking source but does not carry the instruction-file content.'
+      details: >-
+        tool_result records a destructive bash/full_command the poisoned instruction produced and
+        command_source distinguishes builtin/custom/mcp tasking; this is attempt evidence, and
+        file/cloud deletion must be confirmed by EDR or the resource's own audit log.
+      limitations:
+        - 'Opt-in content flag required; without it the command text is not recorded.'
+        - 'A destructive full_command proves command text only; deletion is confirmed elsewhere.'
+    - source: 'Endpoint and artifact telemetry'
+      purpose: >-
+        Confirm the instruction-file change on the host and the destructive command or artifact-level
+        effect that followed.
+      event_vocabulary: 'host-process-event'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'DeviceFileEvents (FolderPath, FileName, SHA256, PreviousFileName, InitiatingProcessCommandLine)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-DEFENDER-FILE'
+          load_bearing: true
+        - name: 'DeviceProcessEvents / Sysmon 1 (ProcessCommandLine, SHA256) for the destructive command'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-SYSMON'
+          load_bearing: true
+      details: >-
+        DeviceFileEvents or Sysmon 11 record a change to an instruction path with content hash;
+        DeviceProcessEvents or Sysmon 1 record the destructive command executed afterwards; Artifactory
+        access-log DEPLOY/DELETE and audit-trail Data Changed record artifact-level effect where models
+        or packages are involved.
+      limitations:
+        - 'Requires an endpoint sensor on the host running the agent.'
+        - 'A file change or command proves the change or the attempt, not that this contribution caused it.'
+
+detection:
+  scope: >-
+    Detection spans the contribution that poisons the instruction file, the poisoned content itself,
+    and the downstream destructive tasking. Two materially distinct strategies divide the path: one
+    detects instruction-file drift by hashing the monitored instruction paths against approved
+    versions, and one detects the contribution event and correlates it to a downstream destructive
+    command and delete audit.
+  outcome_guardrails: >-
+    A contribution event establishes a change and its author, not its instruction content. An
+    instruction-file hash change establishes drift, not that it was poisoned. A destructive command
+    establishes tasking ran, and only a resource-delete audit establishes deletion. These stay
+    distinct; "instruction file changed" and "agent executed a destructive wipe" are different alerts.
+  shared_normalization_context: >-
+    Canonicalise the instruction/charter/rule paths to a monitored watchlist and hash each before and
+    after, keying on agent version and repository, since no native event carries the instruction
+    content and drift must be a hash delta on Git or host objects.
+  shared_enrichment_context: >-
+    Join the instruction-file drift or contribution to the downstream destructive tool call and to a
+    cloud or EDR delete audit, on agent version/instruction hash, commit/PR id, tool-call id, and
+    target resource. A register of approved instruction versions helps flag unauthorised drift; an
+    unapproved contribution plus a destructive effect is meaningful without one.
+  strategies:
+    - id: 'STRAT-INSTRUCTION-DRIFT'
+      name: 'instruction-file integrity drift'
+      objective: >-
+        Detect an unauthorised change to a monitored coding-agent instruction/charter/rule file for an
+        agent version, independent of whether the change has yet been acted on.
+      incident_relevance: >-
+        Detects the poisoning at content level. It does not by itself establish that a shipped agent
+        loaded the instruction or executed tasking; a downstream destructive command corroborates the
+        effect.
+      detection_logic: >-
+        Hash the monitored instruction paths (from Git objects and host files) per agent version and
+        raise when a hash changes without a matching approved-instruction version, or when a
+        contribution to those paths comes from an unexpected contributor. Diff the Git object to
+        recover the instruction content, since no audit event carries it. Correlate a later destructive
+        tool call only as corroboration.
+      minimum_evidence: >-
+        An instruction-file hash change on a monitored path outside the approved-version set, with the
+        Git object diff available to show content. Without content, report an unauthorised
+        instruction-path change, not a confirmed poisoning.
+      correlation_context: >-
+        Correlate the instruction drift to a later destructive command over a multi-day window with an
+        explicit maximum gap of thirty days, keyed on agent version and instruction hash; Git event
+        retention via REST is only 7 days, so capture the object before it ages out.
+      detectors:
+        - detector_class: 'instruction-integrity-drift'
+          technologies:
+            - 'Git object diffing on the instruction paths'
+            - 'File-integrity monitoring (DeviceFileEvents, Sysmon 11)'
+            - 'SIEM baseline of approved instruction versions'
+          contribution: 'Detects an unauthorised content change to a monitored instruction file.'
+          limitations: 'Customer-built on every platform; no native instruction-load or hash event exists.'
+      benign_explanations:
+        - explanation: >-
+            Normal agent prompt or instruction/version updates change the same instruction files in the
+            course of development.
+          distinguishing_context: >-
+            A matching approved-instruction version and an expected contributor separate the routine
+            update; the path or hash change alone does not.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding all instruction-file changes as routine updates would also suppress the poisoning
+            contribution, which changes the same files.
+      blind_spots:
+        - description: 'Missing telemetry: no native instruction-file load or hash event on any platform; drift detection is customer-built.'
+          routes_to: null
+        - description: 'Missing telemetry: Git event retention via REST is only 7 days, so a late-detected contribution loses its record.'
+          routes_to: null
+        - description: 'Evasion: a poisoned instruction path outside the monitored watchlist.'
+          routes_to: null
+      analyst_response: >-
+        Recover the instruction-file diff from Git objects, identify the contributor and PR, determine
+        whether an approved-instruction version matches, check which shipped agent versions carry the
+        change, and pivot to downstream destructive tool and delete telemetry.
+      safe_conclusion: >-
+        A monitored coding-agent instruction file changed without an approved version; whether a
+        shipped agent acted on the poisoned instruction requires downstream command and delete evidence.
+    - id: 'STRAT-CONTRIBUTION-TO-DESTRUCTIVE-EFFECT'
+      name: 'contribution audit to downstream destructive action'
+      objective: >-
+        Detect a contribution to an instruction path and correlate it to a downstream destructive tool
+        call and a resource-delete audit.
+      incident_relevance: >-
+        Detects the contribution from the SCM/agentic audit and ties it to the attempted destructive
+        effect. The cited incident's instruction was reportedly non-functional, so a destructive
+        command may be absent even when the contribution occurred.
+      detection_logic: >-
+        Select contribution/PR events (agentic or enterprise audit) touching instruction paths and
+        raise when the contributor is unexpected or the change is unapproved. Join to a downstream
+        destructive tool call (bash/full_command) and to a cloud or EDR delete audit on commit/PR id,
+        agent version, and target resource. Treat the destructive command as attempt evidence and the
+        delete audit as effect.
+      minimum_evidence: >-
+        A contribution to a monitored instruction path from an unexpected contributor. Reporting a
+        destructive effect requires the downstream delete audit; the destructive command alone proves
+        the attempt text, not deletion.
+      correlation_context: >-
+        Correlate the contribution to downstream effect over a multi-day window with a thirty-day
+        maximum gap, keyed on commit/PR id, agent version, and target resource; the agentic view
+        retains 180 days while Git REST retains 7.
+      detectors:
+        - detector_class: 'scm-and-agentic-audit-correlation'
+          technologies:
+            - 'GitHub agentic and enterprise audit'
+            - 'Claude Code OTel (tool_result Bash)'
+            - 'Cloud delete audit (e.g. AWS CloudTrail) and EDR process telemetry'
+          contribution: 'Ties an instruction-path contribution to a downstream destructive attempt and effect.'
+          limitations: 'Audit enterprise-gated; the destructive command proves text only; delete confirmation is elsewhere.'
+      benign_explanations:
+        - explanation: >-
+            Approved destructive maintenance or a sanctioned cleanup contribution legitimately touches
+            instruction paths and runs destructive commands.
+          distinguishing_context: >-
+            An approved-change record and an authorised operator separate the sanctioned maintenance; an
+            unapproved contribution with a destructive effect does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Suppressing all destructive commands that follow an instruction change would hide an agent
+            tasked by a poisoned instruction.
+      blind_spots:
+        - description: 'Attribution limit: the audit event does not carry the instruction content that caused the command.'
+          routes_to: null
+        - description: 'Missing telemetry: a non-functional poisoned instruction produces no destructive command to correlate.'
+          routes_to: null
+        - description: 'Missing telemetry: no cloud or EDR delete audit, so deletion cannot be confirmed.'
+          routes_to: null
+      analyst_response: >-
+        Identify the contribution and contributor, recover the instruction diff, determine whether a
+        downstream destructive command ran and against which resources, check the cloud/EDR delete
+        audit for confirmed deletion, and scope the shipped agent versions affected.
+      safe_conclusion: >-
+        A contribution to an instruction path preceded a destructive tool call; confirmed deletion
+        requires the resource's own delete audit, and the instruction linkage requires the Git diff.
+
+detector_requirements:
+  required: >-
+    A monitored watchlist of instruction/charter/rule paths; content hashing of those paths against
+    approved versions per agent version; Git object diffing to recover instruction content, since no
+    audit event carries it; a join from contribution to downstream destructive tool call and delete
+    audit; durable retention beyond the 7-day Git REST window; and outcome-aware alert text separating
+    an instruction change from a confirmed destructive effect.
+  optional: >-
+    The GitHub agentic audit view (180-day) adds agent-author attribution, Claude Code OTel adds the
+    resulting command text, and a cloud/EDR delete audit confirms effect; none provides the
+    instruction content, which only Git diffing recovers.
+  correlation:
+    capability: >-
+      Aligned clocks across SCM, agent, and host streams; a stable instruction hash and agent version
+      carried from contribution to effect; commit/PR id and target-resource identity; and retention
+      beyond the 7-day Git REST window so a late-detected contribution is still recoverable.
+    window: >-
+      Contribution to downstream destructive effect over a multi-day window with an explicit maximum gap
+      of thirty days; the agentic view retains 180 days, Git REST 7.
+  baselines:
+    - name: 'Approved coding-agent instruction versions'
+      window: '30-day rolling'
+      seeded_from: >-
+        Reviewed and released instruction versions; never seeded from the live instruction file after a
+        suspected poisoning contribution, which would enrol the poisoned instruction as approved.
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on deployed
+    sensors, enabled logging, retained fields, and architecture. For this object, verification means
+    confirming that the instruction paths are enumerated and hashed against approved versions, that Git
+    objects are diffable before the 7-day REST window expires, and that a downstream delete audit
+    exists, since no native event carries instruction-file content or reports its load.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of instruction-file poisoning as a class; the source dates this incident but not the behavior''s first appearance.'
+    - 'Whether any shipped Amazon Q agent loaded and acted on the poisoned instruction, which the source does not confirm.'
+    - 'The exact instruction-load path of the agent from the shipped file to its tasking, which the sources do not publish.'
+    - 'Whether copilot.custom_instructions_updated or an equivalent instruction-content event exists, which the fetched GitHub audit pages do not document.'
+  assumptions:
+    - id: 'ASSUMPTION-INSTRUCTION-FILE-IS-THE-SURFACE'
+      verdict_changing: true
+      statement: >-
+        The deciding surface is the instruction/charter file the agent consumes as tasking, rather than
+        ordinary code the agent merely reads. The sources describe an attacker PR inserting a wiper
+        prompt into a shipped agent version, but publish no agent instruction-load path; this pack
+        framed the surface as the instruction file from the procedure name and the described tasking,
+        which is reasoning from the outcome to the surface. If wrong, the instruction-drift predicate is
+        not the right signal and the manifestation scope shifts to a code-ingestion surface. Resolve it
+        by reading the merged PR to confirm it changed an instruction/charter file rather than code, or
+        by reproducing the load in a lab and recording which file the agent consumed as tasking.
+  standing_negatives:
+    - statement: >-
+        No documented GitHub audit event carries instruction-file content or names a custom-instruction
+        update: the enterprise audit event list fetched contains Copilot lifecycle and settings events
+        but no copilot.custom_instructions_updated, so instruction content must come from Git objects.
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the GitHub enterprise and agentic audit event lists for a newly documented event that
+        carries instruction-file content or names a custom-instruction update.
+    - statement: >-
+        Claude Code emits no event for loading CLAUDE.md, .claude/rules/*, or managed-policy instruction
+        files, and gen_ai.system_instructions and gen_ai.agent.version are not documented on any page
+        fetched, so instruction-file drift has no native agent event.
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the Claude Code memory and OTel references for a newly documented instruction-load or
+        system-instruction event.
+
+missing_states:
+  - id: 'MISSING_INSTRUCTION_CONTENT_EVENT'
+    meaning: 'Structural gap: no native audit or agent event carries instruction-file content or reports its load.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Reconstruct instruction content by diffing Git objects and hashing host files; do not rely on an
+      audit event to show the poisoned content.
+  - id: 'MISSING_DESTRUCTIVE_EFFECT_AUDIT'
+    meaning: 'Missing telemetry: no cloud or EDR delete audit to confirm that a destructive command deleted resources.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report the destructive command as an attempt and mark deletion unconfirmed until the resource''s
+      own delete audit is available.
+  - id: 'MISSING_CONTRIBUTION_RECORD'
+    meaning: 'Missing telemetry: the Git contribution record aged out of the 7-day REST retention before detection.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Rely on the 180-day agentic view or exported audit where present; treat a missing REST record as a
+      retention gap, not as absence of the contribution.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'contributor_or_explicit_missing_state'
+    - 'affected_instruction_path_and_hash_delta'
+    - 'contribution_or_pr_identifier_when_available'
+    - 'affected_agent_versions'
+    - 'downstream_destructive_command_when_present'
+    - 'resource_delete_audit_when_present'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'deleted_resource_identifiers'
+      condition: 'when a cloud or EDR delete audit confirms deletion of specific resources'
+  recommended_title: 'Coding-agent instruction file poisoned by an unauthorised source contribution'
+  unsupported_title: 'Attacker wiped victim systems and cloud accounts through a poisoned coding agent'
+
+evidence:
+  confirmed_incident_behavior: >-
+    An attacker pull request on 13 July 2025 put a wiper prompt into Amazon Q Developer for VS Code
+    1.84 telling the agent to clean the system to a near-factory state and delete filesystem and cloud
+    resources using bash and AWS CLI access, with reporting around 23 July and an Amazon statement on
+    24 July 2025; the injected prompt was reportedly not functional and no victim wipes were confirmed.
+    That the deciding surface is the instruction/charter file rather than ordinary code is this pack's
+    framing, registered in missing_context.assumptions, not a load path the sources publish.
+  supported_conclusion: >-
+    The evidence supports that a source contribution can poison a coding-agent instruction file and
+    ship in a released agent version carrying destructive tasking. The behavior is detectable where an
+    unauthorised change to a monitored instruction path is correlated with a downstream destructive
+    command and delete audit, and reportable as an unauthorised instruction change from drift alone.
+  unsupported_conclusions: >-
+    The evidence does not establish that any shipped agent executed the tasking, any victim wipe, a
+    victim count, or deletion of specific resources; the source states the prompt was reportedly
+    non-functional. Confirmed destructive effect requires cloud or EDR delete telemetry not carried by
+    the cited sources.
+  procedure_boundary: >-
+    This procedure is the poisoning of a coding-agent instruction file through a source contribution
+    and its arrival in a shipped agent. The execution of the destructive tasking, and any resource
+    deletion it causes, are separate behaviors evidenced only by downstream command and delete
+    telemetry; post-approval mutation of an already-approved local config is the adjacent procedure
+    DT-AAG1-AI-006.
+  references:
+    - id: 'REF-THREAT-TOMSHARDWARE'
+      type: 'incident-procedure-primary-source'
+      title: "Hacker injects malicious, potentially disk-wiping prompt into Amazon's AI coding assistant"
+      publisher: "Tom's Hardware"
+      url: 'https://www.tomshardware.com/tech-industry/cyber-security/hacker-injects-malicious-potentially-disk-wiping-prompt-into-amazons-ai-coding-assistant-with-a-simple-pull-request-told-your-goal-is-to-clean-a-system-to-a-near-factory-state-and-delete-file-system-and-cloud-resources'
+      trust_tier: 'news'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary reporting for the wiper-prompt pull request, its instruction text, and the timeline; it
+        reports the prompt as non-functional and confirms no victim wipes.
+    - id: 'REF-THREAT-AWS'
+      type: 'incident-procedure-primary-source'
+      title: 'AWS security bulletin AWS-2025-015'
+      publisher: 'Amazon Web Services'
+      url: 'https://aws.amazon.com/security/security-bulletins/AWS-2025-015/'
+      trust_tier: 'primary'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Vendor statement on the incident from the affected party; supports the contribution and
+        shipment facts without confirming victim wipes.
+    - id: 'REF-GH-AGENTIC'
+      type: 'telemetry-documentation'
+      title: 'GitHub agentic audit log events'
+      publisher: 'GitHub'
+      url: 'https://docs.github.com/en/copilot/reference/enterprise-administrators/agentic-audit-log-events'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the agentic audit fields (actor_is_agent, agent_session_id, 180-day view) used by the
+        contribution telemetry source; not an incident fact.
+    - id: 'REF-GH-AUDIT'
+      type: 'telemetry-documentation'
+      title: 'Audit log events for your enterprise'
+      publisher: 'GitHub'
+      url: 'https://docs.github.com/en/enterprise-cloud@latest/admin/monitoring-activity-in-your-enterprise/reviewing-audit-logs-for-your-enterprise/audit-log-events-for-your-enterprise'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the enterprise audit fields and the absence of a custom-instruction event, and the
+        7-day Git REST retention, used by the contribution telemetry source and a standing negative.
+    - id: 'REF-CC-MEMORY'
+      type: 'telemetry-documentation'
+      title: 'Claude Code memory (instruction files)'
+      publisher: 'Anthropic'
+      url: 'https://code.claude.com/docs/en/memory'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the instruction-file paths that form the integrity watchlist and the absence of a
+        load event; not an incident fact.
+    - id: 'REF-CC-OTEL'
+      type: 'telemetry-documentation'
+      title: 'Claude Code monitoring and OpenTelemetry reference'
+      publisher: 'Anthropic'
+      url: 'https://code.claude.com/docs/en/monitoring-usage'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the tool_result Bash fields and command_source used to record the resulting
+        destructive command; not an incident fact.
+    - id: 'REF-DEFENDER-FILE'
+      type: 'telemetry-documentation'
+      title: 'DeviceFileEvents table (advanced hunting)'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-devicefileevents-table'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the file-event fields used to detect an instruction-path change on the host.'
+    - id: 'REF-SYSMON'
+      type: 'telemetry-documentation'
+      title: 'Sysmon event reference'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/sysinternals/downloads/sysmon'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the process and file events used to record the instruction change and the resulting command.'

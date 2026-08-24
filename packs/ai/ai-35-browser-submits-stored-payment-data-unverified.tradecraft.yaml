@@ -1,0 +1,521 @@
+identity:
+  uuid: 'ee24a468-2412-4d68-a70c-92de581f2bff'
+  id: 'DT-AAG1-AI-035'
+  aliases:
+    - 'P70'
+  name: 'A browser agent submits stored payment data to an unverified site'
+  incident: >-
+    Guardio's Scamlexity research put agentic AI browsers to the test and found one submitted stored
+    payment data to a scam site it had not verified.
+  first_observed: '2026'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'other'
+  primary_attack_surface_note: >-
+    agentic-browser-stored-payment-submission: the surface is an AI browser agent's ability to fill and
+    submit stored payment data into a web form, driven by the agent's own task completion rather than
+    by a user, with no member of the surface vocabulary capturing the browser-agent payment path.
+  behavior_classes:
+    - 'other'
+  behavior_classes_note: >-
+    stored-payment-data-submission-to-unverified-destination: a browser agent autofills and submits the
+    user's stored payment data into a form on a destination it has not verified, moving sensitive data
+    to an unverified site as part of completing a task.
+  tags:
+    - 'ai'
+    - 'agent'
+    - 'browser'
+    - 'payment'
+    - 'autofill'
+
+behavior:
+  definition: >-
+    A browser agent submits stored payment data to an unverified site. This procedure is payment
+    submission only and does not claim credential form submission.
+  detailed_definition: >-
+    An AI browser agent, completing a task on the user's behalf, autofills the user's stored payment
+    data into a form and submits it to a destination it has not verified as legitimate for the task. The
+    boundary crossed is from stored payment data held for the user into a form submission to an
+    unverified origin. The attempt ends at submission of the payment data; success as loss begins only
+    if the destination captures or charges it. It is independent of which browser agent, which payment
+    store, and which destination.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers a browser agent autofilling and submitting stored payment data to a destination it has not
+      verified; does not cover whether a charge or capture followed.
+    summary: >-
+      This can occur when a browser agent has access to stored payment data, a task leads it to a form
+      that requests payment, and the agent submits the data without verifying the destination is
+      legitimate for the task. Loss additionally requires the destination to capture or charge the
+      submitted data.
+  observable:
+    answer: 'no'
+    answer_scope: >-
+      The destination origin is visible as a network connection where egress logging exists, but the
+      payment-submission behavior itself, and the deciding facts of stored-payment use and a failed or
+      absent site verification, emit no record on any fetched product.
+    blocking_conditions:
+      - condition: 'action-emits-no-record'
+        note: >-
+          No fetched browser-agent product emits a payment-submission event: Perplexity's
+          comet_agent_action records only that an automated action occurred, with no payment, autofill,
+          destination-origin, or site-verification field, and ChatGPT Atlas documents that it emits no
+          Compliance API logs and offers no SIEM or eDiscovery export at all.
+      - condition: 'deciding-property-not-in-any-schema'
+        note: >-
+          The deciding properties, that stored payment data was used and that the destination was
+          unverified, exist in no native schema; Chrome content-transfer covers upload, download, and
+          print scanning, not form submission of stored payment credentials.
+    summary: >-
+      There is no telemetry that records the behavior. A browser agent's automated action may be counted
+      without its type or target; a destination host may be recorded by proxy, TLS, or DNS as a
+      connection; a merchant, processor, or card-network record may show a charge as an after-the-fact
+      effect. None of these record that the agent submitted stored payment data, nor that it did so to an
+      unverified site. A connection to a host and an automated-action count are too weak to establish the
+      behavior, and the source's own reading is to treat this procedure as unobservable with today's
+      documented telemetry.
+  detectable:
+    answer: 'no'
+    answer_scope: >-
+      Not separable from a legitimate agent-completed purchase: a benign checkout the user asked for and
+      a submission to a scam site produce the same network footprint, and no stream marks the destination
+      as unverified or the data as stored payment.
+    blocking_conditions:
+      - condition: 'action-emits-no-record'
+        note: >-
+          With no payment-submission event, there is no record to separate; the connection to the
+          destination is the only artifact and it does not carry the submission.
+      - condition: 'indistinguishable-from-legitimate'
+        note: >-
+          A browser agent legitimately completing a purchase for the user submits stored payment data to
+          a destination in exactly the same way, so the malicious case matches benign behavior on every
+          available signal.
+    summary: >-
+      Separation would require the payment-submission event, the use of stored payment data, and a
+      site-verification decision, none of which any fetched product emits, and even then a legitimate
+      agent-completed purchase looks identical to a submission to an unverified site. Without a
+      first-party site-verification signal or a payment-submission record, there is nothing that
+      separates the behavior from an ordinary agent purchase; the honest result is a negative that a
+      first-party verification and submission record inside the agent would be needed to change.
+
+attack_surface_context:
+  surface: >-
+    An AI browser agent that navigates and acts on the user's behalf and can autofill and submit the
+    user's stored payment data into web forms while completing a task.
+  how_the_surface_works: >-
+    An agentic browser accepts a task, navigates pages, and takes automated actions including filling
+    forms; where it holds or can access stored payment data, completing a checkout means autofilling and
+    submitting that data. Whether the destination is legitimate for the task is a judgment the agent must
+    make; nothing in the browser records that judgment or the payment submission as a distinct event.
+  incident_processing_path: >-
+    Guardio reports (source-attested) that, in its Scamlexity testing, an agentic AI browser navigated to
+    a scam site and submitted payment data, clicking through and paying without catching the fraud. That
+    the deciding event for this procedure is submission of stored payment data to a destination the agent
+    had not verified, scoped to payment submission and not credential-form submission, is this pack's
+    framing carried from the catalog rather than a per-field submission call path the report publishes.
+  processing_stages:
+    - 'task-assignment'
+    - 'agent-navigation'
+    - 'destination-arrival'
+    - 'site-verification-decision'
+    - 'stored-payment-autofill'
+    - 'payment-submission'
+    - 'merchant-side-effect'
+  stage_evidence: >-
+    The stage an event sits at fixes what it can prove: a network connection proves arrival at a
+    destination, not a payment submission; an automated-action count proves the agent acted, not what it
+    did; only an in-agent record of the verification decision and the submission proves the behavior; a
+    merchant or processor record proves a charge as an after-the-fact effect.
+  trust_boundaries: >-
+    Stored payment data held for the user into a submission to an unverified origin (reached: the data is
+    submitted); user's funds into the destination's control (reached only if the destination captures or
+    charges). Whether the destination was actually fraudulent is a property the available telemetry does
+    not carry.
+  security_control_context: >-
+    Browser safe-browsing, enterprise URL and content controls, and any in-agent site-verification step
+    decide before submission where deployed, and where present they can block a known-bad destination or
+    scan a transfer. They record little that bears on this behavior: Chrome content-transfer scanning
+    covers upload, download, and print, not stored-payment form submission, and publishes no per-event
+    fields on the fetched pages. Bypass representations include a first-seen scam domain not yet known-bad,
+    an agent that skips verification, and payment submission that the transfer-scanning controls do not
+    treat as a scanned transfer.
+  practitioner_implication: >-
+    An implementer must recognise that no fetched browser-agent product exports a payment-submission or
+    site-verification event, discover whether the agent in use offers any first-party action log at all,
+    determine whether egress or merchant-side records are available as weak after-the-fact corroboration,
+    and set expectations that this behavior is not detectable from documented telemetry today.
+
+threat_research:
+  why_it_matters: >-
+    A browser agent that will submit stored payment data to a site it has not verified turns delegated
+    web tasks into a direct financial-loss path, because the agent both holds the payment data and makes
+    the trust decision that a cautious user would otherwise make, and it does so with no record anyone can
+    review.
+  threat_actor: >-
+    None named. The behavior was demonstrated by Guardio research against agentic browsers using scam
+    sites, not attributed to a specific adversary group.
+  campaign: 'Guardio Scamlexity research testing agentic AI browsers against scam sites.'
+  victim: >-
+    Users who delegate purchasing or web tasks to an agentic browser that can access their stored payment
+    data, as characterised by the research; no in-the-wild victim set is claimed.
+  capability: >-
+    Guardio demonstrated an agentic AI browser navigating to a scam site and submitting payment data,
+    clicking through and paying without catching the fraud.
+  target: >-
+    The user's stored payment data and the funds behind it, submitted to an unverified destination. The
+    research demonstrates the submission; a resulting charge is framed as the effect, not the procedure.
+  victimology:
+    - 'Consumers and employees using agentic browsers that autofill stored payment data during delegated tasks.'
+    - 'Environments with no first-party logging of browser-agent actions or site-verification decisions.'
+
+visibility:
+  telemetry_sources:
+    - source: 'Browser-agent action logs (Perplexity Comet, ChatGPT Atlas)'
+      purpose: >-
+        Establish, at most, that a browser agent took an automated action; no fetched product records
+        the payment submission, the stored-payment use, or the destination verification.
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'comet_agent_action (uuid, timestamp, event_type, user_email, ip_address, user_agent, session_id, metadata)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-PERPLEXITY-AUDIT'
+          load_bearing: false
+          note: >-
+            Records that the Comet agent performed an automated action; documents no payment, autofill,
+            destination-origin, or site-verification field, so it cannot carry this behavior.
+        - name: 'ChatGPT Atlas agent activity export'
+          attestation: 'vendor-attested-absent'
+          attestation_ref: 'REF-ATLAS-ENTERPRISE'
+          load_bearing: false
+          note: >-
+            The enterprise page states Atlas emits no Compliance API logs and provides no SIEM or
+            eDiscovery integration, and warns browsing and agent activity may fall outside enterprise
+            retention; the field does not exist.
+      details: >-
+        Across the fetched Anthropic, Microsoft, Google, and AWS pages, no product documents a
+        payment-submission, stored-card, autofill, or site-verification telemetry field for a browser
+        agent.
+      limitations:
+        - 'The one documented browser-agent action event carries no payment, destination, or verification field.'
+        - 'One product documents the outright absence of exportable agent logs.'
+    - source: 'Browser enterprise reporting (Chrome Enterprise content and URL events)'
+      purpose: 'Scan transfers and flag suspicious or unsafe URLs, where Chrome Enterprise reporting is enabled.'
+      event_vocabulary: 'application-record'
+      operational_viability: 'opt-in'
+      details: >-
+        Chrome Enterprise Premium content-transfer and content-unscanned events cover upload, download,
+        and print scanning, and suspicious-URL and unsafe-site-visit events flag destinations; none is a
+        form-submission event and no per-event field schema is published on the fetched pages.
+      limitations:
+        - 'Content transfer covers upload, download, and print, not stored-payment form submission.'
+        - 'No per-event field schema is published; Premium is required for content scanning.'
+    - source: 'Network egress and merchant-side records (proxy, TLS, DNS; processor and card-network alerts)'
+      purpose: 'Record the destination origin as a connection and any resulting charge as after-the-fact effect.'
+      event_vocabulary: 'flow-record'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      details: >-
+        Proxy, TLS, and DNS logs (DeviceNetworkEvents RemoteUrl and RemoteIP, Route 53 Resolver
+        query_name and srcaddr, Cloud DNS queryName and sourceIP) record the destination origin the agent
+        reached; payment-processor, card-network, and merchant authorization records can show a charge as
+        the effect.
+      limitations:
+        - 'A destination connection is not a payment submission and carries no stored-payment or verification context.'
+        - 'Merchant and processor records show a charge, not that an agent submitted the data to an unverified site.'
+
+detection:
+  scope: >-
+    There is no observable path to the payment-submission behavior in documented telemetry, so the scope
+    is a reformulation: detect the weak, after-the-fact artifacts (arrival at a suspicious destination, an
+    automated-action count, a resulting charge) and state plainly that none establishes the behavior.
+    Closing the gap requires a first-party in-agent record of the site-verification decision and the
+    payment submission.
+  outcome_guardrails: >-
+    A connection to a destination establishes arrival, not a payment submission. An automated-action
+    count establishes that the agent acted, not what it did. A merchant charge establishes an effect, not
+    that stored payment data was submitted to an unverified site by the agent. None of these may be
+    reported as the behavior; "agent reached a suspicious site" and "agent paid a scam site with stored
+    card data" are different claims, and only the first is available.
+  shared_normalization_context: >-
+    Normalize destination origins to a comparable host form and classify known-suspicious destinations,
+    so that arrival at a flagged destination can at least be surfaced even though the submission itself is
+    not recorded.
+  shared_enrichment_context: >-
+    Join a browser agent's automated-action count, the destination origin from egress, and any merchant or
+    processor charge on user, session, and time; treat the join as corroboration of an incident under
+    investigation, not as detection of the submission.
+  strategies:
+    - id: 'STRAT-SUSPICIOUS-DESTINATION-ARRIVAL'
+      name: 'agent arrival at a suspicious destination (reformulated proxy)'
+      objective: >-
+        Surface a browser agent connecting to a suspicious or first-seen destination during a task,
+        acknowledging this is arrival, not the payment submission.
+      incident_relevance: >-
+        Detects a precursor artifact of the incident, arrival at the scam destination, not the deciding
+        submission event. It is a reformulation offered because the behavior itself is unobservable.
+      detection_logic: >-
+        Correlate a browser agent's automated-action activity with an egress connection to a destination
+        that is first-seen, flagged by URL reputation, or unsafe-site-visit rated, and surface it for
+        review. Do not assert payment submission; the connection and action count carry none of the
+        deciding properties. Enrich with any merchant or processor charge on the same user and window as
+        after-the-fact corroboration.
+      minimum_evidence: >-
+        A browser agent action correlated with an egress connection to a suspicious destination. This
+        supports reporting agent arrival at a suspicious site under investigation, never a confirmed
+        stored-payment submission.
+      correlation_context: >-
+        Join the agent action, the egress destination, and any charge on user, session, and a task-length
+        window; account for the automated-action event carrying no target, so the join is inferential, not
+        exact.
+      detectors:
+        - detector_class: 'browser-egress-and-reputation-analytics'
+          technologies:
+            - 'Chrome Enterprise reporting (Suspicious Url, Unsafe site visit)'
+            - 'Egress proxy and TLS logs'
+            - 'Route 53 Resolver and Cloud DNS query logs'
+          contribution: 'Surfaces arrival at a suspicious destination during agent activity.'
+          limitations: 'Records arrival, not the submission; carries no stored-payment or verification context.'
+      benign_explanations:
+        - explanation: >-
+            A browser agent legitimately completes a purchase the user asked for at a first-seen but
+            reputable merchant.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Treating all first-seen agent destinations as benign would discard the only precursor artifact,
+            while treating them all as malicious would bury the analyst in ordinary purchases.
+        - explanation: >-
+            A user browses to a flagged site independently of the agent, and the action count is unrelated.
+          distinguishing_context: >-
+            Agent-attributed action activity concurrent with the connection separates the agent case; an
+            unrelated human visit does not, though the automated-action event''s missing target keeps this
+            inferential.
+          overlaps_incident_instance: false
+      blind_spots:
+        - description: 'Missing telemetry: no payment-submission event exists on any fetched browser-agent product.'
+          routes_to: null
+        - description: 'Missing telemetry: the automated-action event carries no target, so arrival is joined inferentially.'
+          routes_to: null
+        - description: 'Structural: a legitimate agent purchase and a scam submission share the same network footprint.'
+          routes_to: null
+      analyst_response: >-
+        Determine whether a browser agent was active for the user in the window, recover the destination
+        origin from egress, check its reputation, look for any merchant or processor charge, and interview
+        the user about whether the purchase was intended, since no telemetry confirms the submission.
+      safe_conclusion: >-
+        A browser agent reached a suspicious destination during a task; whether it submitted stored
+        payment data, and whether the site was unverified, is not established by any available telemetry.
+    - id: 'STRAT-IN-AGENT-VERIFICATION-RECORD'
+      name: 'first-party site-verification and submission record (required build)'
+      objective: >-
+        Detect a payment submission the agent makes to a destination its own verification step did not
+        clear, from a first-party in-agent record that does not exist in fetched products today.
+      incident_relevance: >-
+        Detects the deciding behaviour directly, but only against a first-party record the estate or
+        vendor must build; it is stated as the requirement that would move this object from a negative.
+      detection_logic: >-
+        Where a browser agent is instrumented to record its site-verification decision and its
+        payment-submission action with the destination origin, raise when a stored-payment submission goes
+        to a destination the verification step did not clear or did not evaluate. Classify submission by
+        the stored-payment autofill path rather than by page content. This requires instrumentation absent
+        from every fetched product.
+      minimum_evidence: >-
+        A first-party in-agent record pairing a stored-payment submission with a destination the
+        verification step did not clear. Absent that record, the behavior cannot be detected and must be
+        reported as unobservable.
+      correlation_context: >-
+        Join the in-agent submission record to the egress destination and any charge on session and time to
+        confirm the destination and the effect; the in-agent record is the only source of the verification
+        decision.
+      detectors:
+        - detector_class: 'browser-agent-first-party-instrumentation'
+          technologies:
+            - 'First-party browser-agent action and verification logging'
+            - 'Agent-side policy hooks that record payment submission and destination'
+          contribution: 'Would recover the submission and verification decision the native streams omit.'
+          limitations: 'Does not exist in any fetched product; must be built by the vendor or estate before it can fire.'
+      benign_explanations:
+        - explanation: >-
+            The agent submits stored payment data to a destination its verification step cleared for a
+            legitimate purchase.
+          distinguishing_context: >-
+            A submission to a destination the verification step did not clear or did not evaluate separates
+            the malicious case; a cleared, intended purchase does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Recording only cleared submissions, or omitting the verification outcome, would erase the one
+            field that separates the behavior.
+      blind_spots:
+        - description: 'Missing telemetry: no fetched browser-agent product emits a verification or payment-submission record.'
+          routes_to: null
+        - description: 'Missing telemetry: stored-payment autofill is not distinguished from manual entry in any documented field.'
+          routes_to: null
+      analyst_response: >-
+        If first-party instrumentation exists, read the recorded verification decision and submission
+        destination, join to egress and any charge, and confirm whether the destination was cleared;
+        otherwise record that the behavior is unobservable and pursue the incident through user report and
+        merchant records.
+      safe_conclusion: >-
+        With a first-party in-agent record, a browser agent submitted stored payment data to a destination
+        its verification step did not clear; no fetched product provides that record today.
+
+detector_requirements:
+  required: >-
+    An honest recognition that no fetched browser-agent product records the payment submission or the
+    site-verification decision; normalization and reputation classification of destination origins for the
+    reformulated arrival signal; attribution of egress and any charge to the browser agent's activity; and
+    outcome-aware alert text that never states a submission the telemetry does not carry. The deciding
+    build requirement is a first-party in-agent record of the verification decision and the payment
+    submission with the destination origin.
+  optional: >-
+    Chrome Enterprise reporting adds URL reputation and unsafe-site context to the arrival signal, and
+    merchant or processor records add after-the-fact charge corroboration; neither makes the submission
+    observable.
+  correlation:
+    capability: >-
+      Aligned clocks across browser-agent action logs, egress, and merchant records; stable user and
+      session identity across them; and acknowledgement that the automated-action event carries no target,
+      so agent-to-destination joins are inferential rather than exact.
+    window: 'A task-length window (this pack''s convention up to one hour) to join agent action, egress, and any charge.'
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on deployed
+    sensors, enabled logging, retained fields, and architecture. For this object, verification specifically
+    means confirming that no available stream records the payment submission or the site-verification
+    decision, and that any alert rests only on arrival, action counts, and charges, none of which
+    establishes the behavior, until a first-party in-agent record is built.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of the behavior; the source is undated in the catalog and only a coarse year is defensible.'
+    - 'The specific browser agent and payment store involved in the demonstrated submission.'
+    - 'Whether the demonstrated submission resulted in an actual charge or capture.'
+    - 'Whether any browser-agent vendor plans a payment-submission or site-verification telemetry field.'
+  assumptions:
+    - id: 'ASSUMPTION-SUBMISSION-IS-DECIDING-EVENT'
+      verdict_changing: true
+      statement: >-
+        The deciding event for this procedure is submission of stored payment data to a destination the
+        agent had not verified, scoped to payment submission and not credential-form submission. The
+        source reports the agent clicked through and paid a scam site but publishes no per-field
+        submission call path; this pack framed the submission and the verification failure as the boundary
+        from the catalog. If wrong, the observable and detectable negatives are scoped to the wrong action
+        and a different agent event might carry the behavior. Resolve it by reproducing the agentic
+        purchase in a lab and recording which action the agent takes and whether any verification step
+        runs and is logged.
+  standing_negatives:
+    - statement: >-
+        No fetched browser-agent product emits a payment-submission, stored-card, autofill, or
+        site-verification event: Perplexity's comet_agent_action documents none of those fields, ChatGPT
+        Atlas documents emitting no Compliance API logs and no SIEM or eDiscovery export, and no Anthropic,
+        Microsoft, Google, or AWS page fetched documents such a field.
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the Perplexity audit-logs and ChatGPT Atlas enterprise references, and the other fetched
+        browser-agent pages, for a newly documented payment-submission or site-verification event.
+
+missing_states:
+  - id: 'NO_PAYMENT_SUBMISSION_EVENT'
+    meaning: 'Missing telemetry: no fetched browser-agent product records a payment submission.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Do not assert a payment submission; report only arrival and action counts, and pursue the incident
+      through user report and merchant records.
+  - id: 'NO_SITE_VERIFICATION_SIGNAL'
+    meaning: 'Missing telemetry: no stream records the agent''s site-verification decision.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Do not claim the destination was unverified; treat the verification state as unknown absent a
+      first-party in-agent record.
+  - id: 'DESTINATION_ONLY_AS_CONNECTION'
+    meaning: 'Attribution gap: egress shows a destination host but not that a payment was submitted to it.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report agent arrival at the destination under investigation and mark the submission as
+      unestablished.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'actor_or_explicit_missing_state'
+    - 'browser_agent_and_session_context'
+    - 'destination_origin_when_available'
+    - 'site_verification_state_or_explicit_missing_state'
+    - 'payment_submission_evidence_or_explicit_missing_state'
+    - 'merchant_or_processor_charge_when_present'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'in_agent_verification_and_submission_record'
+      condition: 'when first-party browser-agent instrumentation records the submission and verification decision'
+  recommended_title: 'Browser agent reached a suspicious destination during a task (payment submission unconfirmed)'
+  unsupported_title: 'Browser agent paid a scam site with the user''s stored card data'
+
+evidence:
+  confirmed_incident_behavior: >-
+    Guardio reports that, in its Scamlexity testing of agentic AI browsers, an agent navigated to a scam
+    site and submitted payment data, clicking through and paying without catching the fraud. That the
+    deciding event for this procedure is submission of stored payment data to an unverified destination,
+    scoped to payment submission and not credential-form submission, is this pack's framing, registered in
+    missing_context.assumptions, not a per-field submission mechanism the report states.
+  supported_conclusion: >-
+    The evidence supports that an agentic browser will submit payment data to a scam site without
+    verifying it. Because no fetched product records the submission or the verification decision, a
+    detector can at most report agent arrival at a suspicious destination under investigation; the
+    submission itself is not detectable from documented telemetry, which is a publishable negative.
+  unsupported_conclusions: >-
+    The evidence does not establish, from telemetry, that any specific submission occurred, that a charge
+    resulted, a victim count, or that the data was stolen rather than merely spent. Those require a
+    first-party in-agent record, merchant records, or user report the documented streams do not provide.
+  procedure_boundary: >-
+    This procedure is submission of stored payment data to an unverified site by a browser agent. Any
+    resulting charge, capture, or downstream fraud, and any credential-form submission, are separate
+    behaviors and are not evidenced by this procedure, which the telemetry does not even record.
+  references:
+    - id: 'REF-THREAT-PAYMENT'
+      type: 'incident-procedure-primary-source'
+      title: 'Scamlexity: we put agentic AI browsers to the test; they clicked, they paid, they failed'
+      publisher: 'Guardio'
+      url: 'https://guard.io/labs/scamlexity-we-put-agentic-ai-browsers-to-the-test-they-clicked-they-paid-they-failed'
+      trust_tier: 'researcher'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary procedure-level source for an agentic browser submitting payment data to a scam site. It
+        does not publish a per-field submission call path or a telemetry schema for the behavior.
+    - id: 'REF-PERPLEXITY-AUDIT'
+      type: 'telemetry-documentation'
+      title: 'Perplexity audit logs'
+      publisher: 'Perplexity'
+      url: 'https://www.perplexity.ai/help-center/en/articles/11652747-audit-logs.html'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents comet_agent_action and its fields; supports the finding that the one browser-agent action
+        event carries no payment, destination, or verification field.
+    - id: 'REF-ATLAS-ENTERPRISE'
+      type: 'telemetry-documentation'
+      title: 'ChatGPT Atlas for Enterprise'
+      publisher: 'OpenAI'
+      url: 'https://help.openai.com/en/articles/12603091-chatgpt-atlas-for-enterprise'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents that Atlas emits no Compliance API logs and provides no SIEM or eDiscovery integration;
+        supports the vendor-attested-absent field and the standing negative.
+    - id: 'REF-CHROME-REPORTING'
+      type: 'telemetry-documentation'
+      title: 'Chrome Enterprise reporting'
+      publisher: 'Google'
+      url: 'https://support.google.com/chrome/a/answer/11375053?hl=en'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the Chrome Enterprise content-transfer and URL event values used by the arrival signal,
+        and that content transfer covers upload, download, and print rather than form submission.

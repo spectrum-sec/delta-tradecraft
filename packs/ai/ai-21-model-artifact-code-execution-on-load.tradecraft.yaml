@@ -1,0 +1,538 @@
+identity:
+  uuid: 'e33f2efd-4912-4cd5-a2b1-32f6e74c4a68'
+  id: 'DT-AAG1-AI-021'
+  aliases:
+    - 'P50'
+  name: 'Attackers upload model artifacts that execute code when loaded'
+  incident: >-
+    Malicious model uploads to Hugging Face reported by JFrog (accounts baller423 and star23;
+    repositories goober2, baller13, baller8).
+  first_observed: '2024'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'submitted-content-ingest'
+  secondary_attack_surfaces:
+    - 'in-process-runtime'
+  behavior_classes:
+    - 'other'
+  behavior_classes_note: >-
+    code-execution-via-model-artifact-deserialization: an untrusted serialized model file carries
+    executable operations (e.g. Python pickle REDUCE/GLOBAL) that run in-process when a consumer
+    loads it.
+  tags:
+    - 'ai'
+    - 'model-supply-chain'
+    - 'huggingface'
+    - 'pickle'
+    - 'reverse-shell'
+
+behavior:
+  definition: >-
+    An attacker uploads a crafted model artifact to a registry; when a victim deserializes or loads
+    it, the artifact executes attacker code such as a reverse shell.
+  detailed_definition: >-
+    The adversary controls a serialized artifact published to a shared registry that consumers
+    treat as distributable model data. The serialization format permits embedded executable
+    operations that run at deserialization time, so loading the artifact in-process crosses from
+    untrusted published content into code execution in the consumer's runtime, identity, and
+    network context. The attempt ends at publication and availability; success begins when a
+    consumer loads the artifact and the embedded code executes. It is independent of registry
+    product, serialization library, model framework, and endpoint sensor.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers publication of an artifact that executes on load and its execution in a consumer
+      runtime; does not cover any specific follow-on objective beyond the initial execution.
+    summary: >-
+      This can occur when an untrusted account can publish an artifact to a registry a consumer
+      trusts, the artifact's serialization format admits embedded executable operations, and the
+      consumer loads it with a deserializer that honours those operations in-process. Execution
+      requires only that a consumer load the artifact; a network callback additionally requires
+      egress from the loading host to the attacker destination.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Upload-time scan results and host-side execution are observable where those streams exist;
+      the registry's own download and load-time events are not, so a load is inferred from host
+      execution rather than read from registry telemetry.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          Hugging Face audit logs are Team/Enterprise only, and cloud registry Data Access logs are
+          off by default; without them the upload actor and registry operations are not recorded.
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          Load-time code execution is only recorded where endpoint process/network telemetry is
+          deployed on the loading host; a sandboxed load whose console is not exported is unrecorded.
+    summary: >-
+      The behavior is observable when upload-time scanning flags the serialized artifact, or when
+      endpoint telemetry records a child process or outbound connection from the model-loading
+      process, with enough context to tie it to the artifact. A registry badge of "infected" or a
+      displayed suspicious-import list establishes a suspicious artifact but not execution; a host
+      process/network event establishes execution but, without the artifact hash, not which
+      artifact caused it. A download record alone establishes acquisition, not load.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Separable from benign model loading when a scan/signature failure or a known-bad artifact
+      correlates with an unexpected child process or callback from the loader; a benign custom
+      loader that legitimately spawns helper processes overlaps and must not be tuned out blindly.
+    blocking_conditions:
+      - condition: 'cross-source-join-required'
+        note: >-
+          Distinguishing malicious load from benign load needs the registry/scan signal joined to
+          the host execution signal on artifact hash and host; neither stream alone separates them.
+    summary: >-
+      Separation rests on correlating an artifact-integrity or scan failure with load-time
+      execution, since benign models are also pickled and also spawn processes. Normalizing the
+      artifact to a hash and model URI, treating suspicious serialization opcodes as one class, and
+      requiring an unexpected post-load child process or callback are what make the behavior
+      distinguishable; a scan flag with no execution, or an execution with no artifact linkage, is
+      too weak to establish it.
+
+attack_surface_context:
+  surface: >-
+    A shared model-artifact registry (e.g. Hugging Face Hub) and in-process model deserialization
+    via a pickle-based loader.
+  how_the_surface_works: >-
+    The registry accepts user-uploaded model files, runs best-effort scans on them, and serves them
+    for download. Consumers retrieve an artifact and load it with a framework loader that
+    deserializes the file in-process; a pickle-format file can carry opcodes that invoke callables
+    during deserialization, so loading passive-looking data can run code.
+  incident_processing_path: >-
+    JFrog reports (source-attested) that accounts baller423 and star23 published model
+    repositories whose pickled files carried a working reverse shell to attacker IP addresses, that
+    baller423/goober2 was later removed, that star23/baller13 reused the payload on a different
+    IP/port, and that users self-reported compromise from star23/baller8 before Hugging Face
+    blocked it. That the payload executed specifically via pickle REDUCE/GLOBAL opcodes at
+    deserialization is this pack's reading of the artifact type, not a loader call path the post
+    publishes.
+  processing_stages:
+    - 'artifact-authoring'
+    - 'registry-upload'
+    - 'upload-time-scan'
+    - 'artifact-availability'
+    - 'consumer-download'
+    - 'in-process-deserialization'
+    - 'embedded-code-execution'
+    - 'outbound-callback'
+  stage_evidence: >-
+    The stage an event sits at fixes what it can prove: an upload-time scan proves suspicious
+    content, not execution; a download proves acquisition, not load; only a load-time child process
+    or outbound connection proves the code ran, and only a captured destination proves the callback.
+  trust_boundaries: >-
+    Untrusted publisher into the registry (reached: the artifacts were published); registry content
+    into the consumer's runtime (reached at least once: self-reported victims); loading runtime to
+    external network (reached: the reverse shell called attacker IPs). The registry later blocked
+    the repositories, which bounds availability but not the loads that already occurred.
+  security_control_context: >-
+    Hugging Face runs a best-effort pickle-import scan that flags STACK_GLOBAL/GLOBAL/REDUCE and
+    lists imports, and a ClamAV scan at each commit that sets per-file ok/infected badges; both
+    decide at upload/commit and surface only as UI badges and displayed lists, not as a
+    machine-readable schema. Signing, SBOM, and registry allowlists decide before load where an
+    estate deploys them. Bypass representations include obfuscated or novel opcodes, non-pickle
+    executable formats, and payloads added after the scanned revision.
+  practitioner_implication: >-
+    An implementer must discover which loader and serialization format the estate actually uses,
+    whether endpoint telemetry covers the loading hosts (or whether loads run in a sandbox whose
+    console is not exported), whether the registry is Hugging Face (with tier-gated audit) or a
+    mirror such as Artifactory, and how artifact hashes are carried end to end.
+
+threat_research:
+  why_it_matters: >-
+    A model registry looks like passive data distribution but delivers executable-on-load content,
+    turning a routine model download into code execution on ML and data-science hosts that hold
+    data, credentials, and network reach.
+  threat_actor: >-
+    Unknown. The malicious uploads used the accounts baller423 and star23; JFrog assigns no group
+    attribution.
+  campaign: 'JFrog-reported malicious model uploads to Hugging Face.'
+  victim: >-
+    Hugging Face model consumers (data scientists); JFrog notes users self-reported as victims of
+    star23/baller8 before takedown.
+  capability: >-
+    Working reverse-shell payloads embedded in pickled model files calling out to attacker IP
+    addresses, with distinct payload variants across repositories and self-reported victims for one
+    repository before the registry blocked it.
+  target: >-
+    Consumers that load the published artifacts. The source reports self-reported victims for one
+    repository rather than an enumerated victim set, so impact is partly achieved and partly
+    unquantified.
+  victimology:
+    - 'ML and data-science workstations and pipelines that load third-party model artifacts.'
+    - 'Organizations that mirror public model registries into internal artifact stores.'
+
+visibility:
+  telemetry_sources:
+    - source: 'Model-registry upload-time scanning (Hugging Face pickle import scan and ClamAV)'
+      purpose: >-
+        Flag a serialized artifact carrying executable opcodes or matching malware at upload, before
+        any consumer loads it.
+      event_vocabulary: 'none'
+      operational_viability: 'on-by-default'
+      fields:
+        - name: 'pickle-import-scan (STACK_GLOBAL / GLOBAL / REDUCE; displayed imports)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-HF-PICKLE'
+          load_bearing: true
+          note: >-
+            Surfaced only as displayed import lists and highlights; no field names, severities, or
+            timestamps are published.
+        - name: 'malware badge (ok / infected)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-HF-MALWARE'
+          load_bearing: true
+          note: 'An absent badge means scanning, queued, or scan error, not clean.'
+      details: >-
+        Pickle scanning runs pickletools.genops on pushed pickled files and highlights suspicious
+        imports; ClamAV runs at each commit and sets per-file badges.
+      limitations:
+        - 'Best-effort by the vendor''s own statement; not a guarantee.'
+        - 'No machine-readable schema, timestamps, uploader ids, or stated retention.'
+    - source: 'Model-registry audit log (Hugging Face Team/Enterprise)'
+      purpose: 'Attribute repository create/delete/settings and token events to an actor and time.'
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      details: >-
+        Records who/what/description/location/anonymized-IP/date-time for repository lifecycle,
+        settings, secrets, and token events, exportable as JSON.
+      limitations:
+        - 'Team/Enterprise tiers only.'
+        - 'Records no artifact download and no load-time event.'
+    - source: 'Endpoint process and network telemetry on the loading host'
+      purpose: 'Establish that loading the artifact executed code and made an outbound callback.'
+      event_vocabulary: 'host-process-event'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'ProcessCommandLine / InitiatingProcessParentFileName / SHA256'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-DEFENDER-PROC'
+          load_bearing: true
+        - name: 'RemoteIP / RemotePort / RemoteUrl'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-DEFENDER-NET'
+          load_bearing: true
+      details: >-
+        DeviceProcessEvents / Sysmon 1 record the child process spawned at load; DeviceNetworkEvents
+        / Sysmon 3 record the reverse-shell callback; Sysmon 7 records loaded modules.
+      limitations:
+        - 'Requires an endpoint sensor on the loading host.'
+        - 'A sandboxed load whose console is not exported can be invisible.'
+        - 'Without the artifact hash it cannot name which artifact caused the execution.'
+    - source: 'Artifact download and file-origin telemetry'
+      purpose: 'Establish acquisition of the artifact and, where mirrored, registry-side provenance.'
+      event_vocabulary: 'host-process-event'
+      operational_viability: 'opt-in'
+      details: >-
+        DeviceFileEvents.FileOriginUrl / Sysmon 11 record the downloaded artifact on the host;
+        Artifactory access logs record DOWNLOAD/DEPLOY where models are mirrored internally.
+      limitations:
+        - 'Hugging Face itself publishes no download event.'
+        - 'Acquisition is not load, and load is not execution.'
+
+detection:
+  scope: >-
+    Detection spans the artifact at rest in the registry, its acquisition, its in-process load, and
+    the resulting execution and callback. Two materially distinct strategies divide the path: one
+    inspects the artifact and its scan/signature verdict at the registry, and one correlates a
+    model-loading process with an unexpected child process or outbound connection on the host.
+  outcome_guardrails: >-
+    A scan or signature failure establishes a suspicious artifact, not that it ran. A download
+    establishes acquisition. A post-load child process or outbound connection establishes execution
+    and, with a captured destination, a callback. These must stay distinct; "flagged artifact" and
+    "confirmed execution" are different alerts.
+  shared_normalization_context: >-
+    Canonicalize the artifact to a content hash and model URI/version, and treat suspicious
+    serialization opcodes (STACK_GLOBAL/GLOBAL/REDUCE and equivalents) as one class rather than
+    matching literal payload bytes.
+  shared_enrichment_context: >-
+    Join artifact hash, model URI/version, host, loader process, child process, and destination
+    where available. A 90-day baseline of known-good artifact hashes and model versions helps
+    prioritise, but a signature/scan failure correlated with load-time execution is meaningful
+    without one.
+  strategies:
+    - id: 'STRAT-REGISTRY-ARTIFACT-SCAN'
+      name: 'registry artifact inspection'
+      objective: >-
+        Flag a model artifact whose serialized content carries executable opcodes or fails malware
+        or signature policy, before or at the point a consumer loads it.
+      incident_relevance: >-
+        Detects the artifact the incident published. It does not by itself establish that any
+        consumer loaded or executed it; the registry post reports execution separately, on the host.
+      detection_logic: >-
+        Evaluate a pushed or mirrored model artifact against serialization-opcode inspection,
+        malware scan, signature, and SBOM/allowlist policy. Raise on a suspicious-import or infected
+        result, an unsigned or non-allowlisted artifact, or a hash absent from the known-good
+        baseline. Associate the finding with the artifact hash, model URI/version, and uploading
+        actor where the audit tier records it. Repeated re-uploads of the same payload under new
+        names strengthen the signal.
+      minimum_evidence: >-
+        A scan/signature/policy result naming a specific artifact hash and model URI. Without host
+        evidence, report a suspicious or policy-failing artifact, not confirmed execution.
+      correlation_context: >-
+        Tie the artifact hash to any subsequent download and load on a host. Prefer the immutable
+        content hash over the repository name, which can be recreated.
+      detectors:
+        - detector_class: 'registry-native-artifact-scanning'
+          technologies:
+            - 'Hugging Face pickle-import and ClamAV scanning'
+            - 'Model-artifact scanners (e.g. modelscan-class tools)'
+          contribution: 'Inspects the highest-fidelity copy of the uploaded artifact.'
+          limitations: 'Vendor-stated best-effort; surfaces only badges and displayed imports, no schema.'
+        - detector_class: 'siem-artifact-and-audit-correlation'
+          technologies:
+            - 'Splunk'
+            - 'Elastic'
+            - 'Microsoft Sentinel'
+            - 'Google SecOps'
+          contribution: 'Correlates the suspicious artifact with the uploading actor and any mirror download.'
+          limitations: 'Depends on registry scan results and audit being forwarded; HF publishes no scan schema.'
+      benign_explanations:
+        - explanation: >-
+            Legitimate models are also pickled and legitimately reference GLOBAL/REDUCE for custom
+            classes, so an opcode flag alone is common on benign artifacts.
+          distinguishing_context: >-
+            Signed or allowlisted provenance and a known-good hash separate expected models from
+            unknown uploads; opcode presence alone does not.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding all GLOBAL/REDUCE artifacts to cut noise would also suppress the malicious
+            artifact, which uses the same opcodes.
+      blind_spots:
+        - description: 'Missing telemetry: obfuscated or novel opcodes the scanner does not model.'
+          routes_to: null
+        - description: 'Evasion: an executable non-pickle format the scanner does not cover.'
+          routes_to: null
+        - description: 'Evasion: payload added after the scanned revision.'
+          routes_to: null
+      analyst_response: >-
+        Retrieve the artifact hash and model URI, inspect the flagged opcodes or scan verdict,
+        determine whether any host downloaded and loaded that hash, identify the uploading actor and
+        related repositories, and pivot to host process/network telemetry for execution.
+      safe_conclusion: >-
+        An untrusted model artifact carried executable or policy-failing content; server-side or
+        host execution is not established without load evidence.
+    - id: 'STRAT-LOAD-EXECUTION-CORRELATION'
+      name: 'load-time execution correlation'
+      objective: >-
+        Detect an unexpected child process or outbound connection originating from a process that is
+        loading a model artifact.
+      incident_relevance: >-
+        Detects the executed outcome the incident's self-reported victims experienced. A positive
+        host signal must be tied to the artifact before it is attributed to this procedure.
+      detection_logic: >-
+        Select process-create and network-connect events whose initiating process is a model loader
+        or interpreter loading a model file, and raise on a spawned shell/interpreter child or an
+        outbound connection to a non-approved destination shortly after the load. Join to the loaded
+        artifact's hash where file-origin telemetry carries it. Exclude only explicitly approved
+        post-load helpers, by image and destination, not by loader name alone.
+      minimum_evidence: >-
+        A host process or network event attributed to a model-loading process, with a spawned child
+        or outbound destination. Naming the causing artifact requires the artifact-hash join;
+        without it, report generic post-load execution on the host.
+      correlation_context: >-
+        Correlate within a bounded window (source convention up to one hour, with an explicit
+        maximum gap of thirty minutes) on host plus loader-process identity, and to the artifact via
+        file-origin hash. Concurrent unrelated loads on one host weaken artifact attribution.
+      detectors:
+        - detector_class: 'endpoint-process-and-network-analytics'
+          technologies:
+            - 'Microsoft Defender for Endpoint advanced hunting'
+            - 'Sysmon (events 1, 3, 7, 11)'
+            - 'Endpoint or workload platforms with process-network telemetry'
+          contribution: 'Attributes a child process and callback to the model-loading process.'
+          limitations: 'Requires a deployed sensor; may lack the artifact hash needed to name the cause.'
+      benign_explanations:
+        - explanation: >-
+            Custom loaders and post-load tooling legitimately spawn helper processes and fetch
+            resources.
+          distinguishing_context: >-
+            An outbound connection to an unrecognised destination, or a shell child from a loader
+            that should not spawn one, separates the malicious case; an approved helper to an
+            approved destination does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Allowlisting a loader wholesale, rather than by expected child image and destination,
+            would let the same loader''s malicious child through.
+      blind_spots:
+        - description: 'Missing telemetry: a sandboxed load whose console logs are not exported (e.g. AgentCore code-interpreter in CloudWatch).'
+          routes_to: null
+        - description: 'Missing telemetry: no endpoint sensor on the loading host.'
+          routes_to: null
+        - description: 'Attribution limit: no registry load event ties the host execution back to the registry.'
+          routes_to: null
+      analyst_response: >-
+        Identify the loading process and its parent, determine the spawned child and any callback
+        destination, recover the loaded artifact hash from file-origin telemetry, check whether that
+        hash was flagged at the registry, and scope any follow-on activity from the host.
+      safe_conclusion: >-
+        A model-loading process executed code or called out after a load; attributing it to a
+        specific malicious artifact requires the artifact-hash join.
+
+detector_requirements:
+  required: >-
+    Canonicalization of the artifact to a content hash and model URI; classification of suspicious
+    serialization opcodes and malware/signature verdicts; endpoint process and network telemetry on
+    the loading hosts; a join from artifact hash to host, loader process, child process, and
+    destination; durable retention of artifact provenance (source convention 90 days or more); and
+    outcome-aware alert text that distinguishes a flagged artifact from confirmed execution.
+  optional: >-
+    Signing-key and SBOM allowlists and a model-registry audit tier (Hugging Face Team/Enterprise)
+    add upload-actor attribution and pre-load policy, but neither gates host-side detection.
+  correlation:
+    capability: >-
+      Aligned clocks across registry, download, and endpoint streams; a stable artifact hash carried
+      end to end; and host plus loader-process identity to bind execution to an artifact.
+    window: 'Up to one hour from load, with an explicit maximum gap of thirty minutes.'
+  baselines:
+    - name: 'Known-good artifact hashes and model versions'
+      window: '90-day provenance'
+      seeded_from: >-
+        Signed or internally verified model releases; never seeded from unreviewed public uploads,
+        which would enrol the attack artifact as known-good.
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on
+    deployed sensors, enabled logging, retained fields, and architecture. For this object,
+    verification specifically means confirming that the registry's scanning is enabled and its
+    results are retrievable, and that endpoint telemetry exists on the hosts that load models, since
+    the registry publishes no load event and its scanning is best-effort.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of the behavior; the cited post is undated in the catalog.'
+    - 'The exact loader and deserialization call path for each self-reported victim.'
+    - 'The machine-readable schema, field names, and retention of the registry''s scan results.'
+    - 'Whether any victim load ran in a sandbox whose execution was not exported.'
+  assumptions:
+    - id: 'ASSUMPTION-PICKLE-EXECUTION'
+      verdict_changing: true
+      statement: >-
+        The payload executed via pickle REDUCE/GLOBAL opcodes at deserialization. JFrog states the
+        files carried a working reverse shell and that users self-reported compromise, but publishes
+        no consumer loader call path; this pack inferred the pickle-opcode mechanism from the
+        artifact type, which is reasoning from the format to the mechanism. If wrong, the
+        opcode-class predicate in STRAT-REGISTRY-ARTIFACT-SCAN is not the right signal and the
+        observable scope shifts to a different serialization surface. Resolve it by reading the
+        specific artifact''s opcodes or reproducing the load in a lab and recording the executed
+        call path.
+  standing_negatives:
+    - statement: >-
+        Hugging Face publishes no artifact-download event and no load-time execution event: the
+        docs pages fetched for the telemetry audit describe scanning badges and displayed imports
+        only, with no download/load event schema.
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the Hugging Face Hub security and audit-log documentation for a newly documented
+        download or load event with named fields.
+
+missing_states:
+  - id: 'MISSING_REGISTRY_LOAD_EVENT'
+    meaning: 'Missing telemetry: the registry emits no download or load-time event and no scan-result schema.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Infer load from host execution and treat upload-time scan badges as content evidence only; do
+      not claim a load from registry telemetry alone.
+  - id: 'MISSING_ENDPOINT_TELEMETRY'
+    meaning: 'Missing telemetry: no endpoint process/network sensor on the loading host.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Do not claim execution; limit the conclusion to a suspicious or policy-failing artifact from
+      the registry scan.
+  - id: 'MISSING_ARTIFACT_HASH'
+    meaning: 'Attribution gap: a host execution event carries no artifact hash or model version.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Alert on generic post-load execution at host level and mark artifact attribution incomplete.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'actor_or_explicit_missing_state'
+    - 'affected_model_artifact_hash_and_uri'
+    - 'loading_host_and_process_when_available'
+    - 'observed_scan_signature_or_policy_decision'
+    - 'observed_child_process_or_callback_when_present'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'outbound_callback_destination'
+      condition: 'when a network callback is observed from the loading process'
+  recommended_title: 'Model-loading process executed code or called out after loading a flagged artifact'
+  unsupported_title: 'Attacker achieved full host compromise through a malicious model'
+
+evidence:
+  confirmed_incident_behavior: >-
+    JFrog reports that baller423/goober2 carried a working reverse shell to an attacker IP (the
+    repository was later removed), that star23/baller13 reused the payload on a different IP and
+    port, and that star23/baller8 was reported by users who said they were victims before Hugging
+    Face blocked it. That execution occurred specifically through pickle REDUCE/GLOBAL opcodes is
+    this pack's reading of the artifact type, registered in missing_context.assumptions, not a
+    mechanism the post states.
+  supported_conclusion: >-
+    The evidence supports that malicious pickled model artifacts carrying working reverse-shell
+    payloads were published to Hugging Face and that at least one had self-reported victims before
+    takedown. The behavior is detectable where an upload-time scan or signature failure is
+    correlated with load-time execution on a host, and reportable as a suspicious artifact from the
+    registry scan alone.
+  unsupported_conclusions: >-
+    The evidence does not establish the number or identity of victims, the exact loader path,
+    persistence, lateral movement, or any objective beyond the initial reverse-shell callback. Those
+    require host and network telemetry not carried by the cited source.
+  procedure_boundary: >-
+    This procedure is the publication of an execute-on-load artifact and its execution when a
+    consumer loads it. Any follow-on command-and-control, persistence, or lateral movement from the
+    reverse shell is a separate behavior and is not evidenced by this artifact having executed.
+  references:
+    - id: 'REF-THREAT-JFROG'
+      type: 'incident-procedure-primary-source'
+      title: 'Data scientists targeted by malicious Hugging Face ML models with silent backdoor'
+      publisher: 'JFrog'
+      url: 'https://jfrog.com/blog/data-scientists-targeted-by-malicious-hugging-face-ml-models-with-silent-backdoor/'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary procedure-level source for the malicious uploads, the reverse-shell payloads and
+        attacker IPs, the repository names, and the self-reported victims. It does not document the
+        consumer loader path or a victim count.
+    - id: 'REF-HF-PICKLE'
+      type: 'telemetry-documentation'
+      title: 'Pickle scanning'
+      publisher: 'Hugging Face'
+      url: 'https://huggingface.co/docs/hub/en/security-pickle'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the upload-time pickle-import scan and its best-effort nature; supports the
+        registry-scan telemetry source and its limitations, not any incident fact.
+    - id: 'REF-HF-MALWARE'
+      type: 'telemetry-documentation'
+      title: 'Malware scanning'
+      publisher: 'Hugging Face'
+      url: 'https://huggingface.co/docs/hub/en/security-malware'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the ClamAV ok/infected badges used by the registry-scan telemetry source.'
+    - id: 'REF-DEFENDER-PROC'
+      type: 'telemetry-documentation'
+      title: 'DeviceProcessEvents table (advanced hunting)'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-deviceprocessevents-table'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the process fields used by the load-execution telemetry source.'
+    - id: 'REF-DEFENDER-NET'
+      type: 'telemetry-documentation'
+      title: 'DeviceNetworkEvents table (advanced hunting)'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-devicenetworkevents-table'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the network fields used to observe the reverse-shell callback.'

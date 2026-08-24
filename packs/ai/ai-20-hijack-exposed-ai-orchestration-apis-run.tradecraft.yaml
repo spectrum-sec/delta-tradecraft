@@ -1,0 +1,542 @@
+identity:
+  uuid: '74b59c37-a044-4190-ba7d-5e3ef998d539'
+  id: 'DT-AAG1-AI-020'
+  aliases:
+    - 'P49'
+  name: 'Attackers hijack exposed AI orchestration APIs to run jobs'
+  incident: >-
+    ShadowRay 2.0 (Oligo): actor IronErn440 used unauthenticated Ray Job Submission APIs on
+    internet-exposed dashboards to build a self-propagating botnet, pin jobs per node, and exfiltrate
+    MySQL credentials from job environment variables.
+  first_observed: '2024'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'other'
+  primary_attack_surface_note: >-
+    ai-orchestration-job-submission-api: an internet-exposed AI/ML job-submission and orchestration
+    API (e.g. Ray) that accepts jobs without authentication and has no documented access logging.
+  secondary_attack_surfaces:
+    - 'container-workload'
+    - 'egress-control'
+  behavior_classes:
+    - 'persistence'
+    - 'other'
+  behavior_classes_note: >-
+    exposed-orchestration-api-job-execution-and-self-propagation: an attacker submits
+    attacker-controlled jobs to an internet-exposed orchestration API and configures them to
+    self-propagate and pin to nodes, running code in the victim environment without authenticating.
+  tags:
+    - 'ai'
+    - 'ray'
+    - 'orchestration-api'
+    - 'botnet'
+    - 'shadowray'
+
+behavior:
+  definition: >-
+    An attacker finds an Internet-exposed AI orchestration job-submission API and uses it to launch
+    attacker-controlled or self-propagating jobs in the victim environment.
+  detailed_definition: >-
+    An adversary reaches an orchestration or job-submission API exposed to the Internet, and, because
+    the API authorizes no caller, submits jobs that run arbitrary code on the cluster's compute. The
+    boundary crossed is the submission interface of an orchestrator that treats any reachable caller as
+    authorized, from which the attacker gains code execution on worker nodes. Possible outcomes range
+    from a single unauthorized job through to a self-propagating fleet that pins work per node and
+    harvests secrets from job environments. The attempt is the reachable exposed endpoint; success
+    begins when a submitted job executes. It is independent of the orchestrator product and of whether
+    the cluster runs on Kubernetes or raw compute, and the job-submission API emits no first-party audit record.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers reaching an exposed unauthenticated job-submission API and running attacker-controlled or
+      self-propagating jobs; does not cover the follow-on credential exfiltration or the disputed
+      vulnerability classification of the API's lack of authentication.
+    summary: >-
+      This can occur when an orchestration job-submission API is reachable from the Internet, the API
+      authorizes no caller (or authentication is disabled), and the submitted job can execute code and
+      reach further nodes. Self-propagation additionally requires that a submitted job be able to
+      enumerate and submit to other reachable clusters.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      The submission is observable only through infrastructure logs around the API, since the
+      orchestrator documents no access logging; whether any of those infrastructure logs exists varies
+      by estate, and confirming the hijack effect needs a separate workload-audit join.
+    blocking_conditions:
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          The orchestrator (Ray) documents no authentication and no access logging, so the only record
+          of a submission is an infrastructure log: a fronting proxy or ingress access log, whose
+          existence depends on whether such a proxy fronts the API in the estate.
+      - condition: 'cross-source-join-required'
+        note: >-
+          Confirming the hijack effect needs the submission log joined to Kubernetes or cloud workload
+          audit for the resulting jobs and to endpoint or network telemetry for the payload's execution
+          and egress; no single stream carries submission and effect.
+    summary: >-
+      The behavior is observable when a fronting proxy or ingress log records a POST to the
+      job-submission path with a source IP and response code, and when workload audit and endpoint or
+      network telemetry record the resulting job and its egress. An internet-origin POST with no
+      resulting job establishes an attempt, not a hijack; a new workload with no submission log
+      establishes creation, not its exposed-API origin. Neither alone establishes the whole.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Separable from legitimate use when an internet-origin submission to an exposed endpoint, or an
+      anomalous job parameter, is joined to an external attack-surface inventory and to network or IDS
+      evidence; public CI users, scanners and shared NATs overlap and must be distinguished, not tuned out.
+    blocking_conditions:
+      - condition: 'environment-inventory-required'
+        note: >-
+          Judging a submission as internet-origin to an endpoint that should not be exposed needs an
+          external attack-surface inventory of exposed endpoints and a baseline of expected client
+          networks, which must be built before the anomaly is meaningful.
+      - condition: 'cross-source-join-required'
+        note: >-
+          Separating a hijack from benign public access needs the API access log joined to the
+          resulting job or cluster audit and to network flow or IDS evidence of the payload; the access
+          log alone does not establish execution.
+    summary: >-
+      Separation rests on alerting on internet-origin job submissions to exposed orchestration APIs,
+      enumeration patterns and anomalous job parameters, and joining to an external attack-surface
+      inventory and to IDS or flow evidence. Because public CI, scanners and shared NATs produce the
+      same access-log shape, the signal is strengthened by a known exploit pattern, a failed-auth burst,
+      and confirmed unauthorized job execution; an access-log hit with no execution evidence is too weak
+      to establish a hijack.
+
+attack_surface_context:
+  surface: >-
+    Internet-exposed AI/ML orchestration job-submission APIs and dashboards, exemplified by Ray's Job
+    Submission REST API (POST /api/jobs/ and related routes) on an exposed Ray dashboard.
+  how_the_surface_works: >-
+    An orchestrator exposes a REST job-submission API through which a caller submits an entrypoint,
+    runtime environment and metadata; the orchestrator schedules the job onto worker nodes and runs it,
+    returning job status and logs. Ray's REST reference documents POST /api/jobs/ to submit, GET routes
+    to read status and logs, and a stop route, and states no authentication and no access-logging
+    mechanism, so any caller that reaches the dashboard can submit work.
+  incident_processing_path: >-
+    Oligo reports (source-attested) that ShadowRay 2.0, attributed to actor IronErn440, used
+    unauthenticated Ray Job Submission APIs on internet-exposed dashboards, tied to the disputed
+    CVE-2023-48022, to build a self-propagating botnet, pinned jobs per node with a node-affinity
+    scheduling strategy, and exfiltrated MySQL credentials from job environment variables. Oligo assesses
+    the payloads were likely LLM-generated, which the source frames as an assessment rather than proof,
+    and this pack carries it as such.
+  processing_stages:
+    - 'external-exposure'
+    - 'endpoint-discovery'
+    - 'unauthenticated-job-submission'
+    - 'job-scheduling'
+    - 'entrypoint-execution'
+    - 'node-pinning-persistence'
+    - 'self-propagation'
+    - 'secret-exfiltration'
+  stage_evidence: >-
+    The stage an event sits at fixes what it can prove: a proxy access log at the submission stage proves
+    a POST reached the API, not that a job ran; workload audit proves a job was created; only endpoint or
+    network telemetry proves the entrypoint executed and egressed. Because the API itself logs nothing,
+    every proof comes from an adjacent infrastructure stage.
+  trust_boundaries: >-
+    Internet caller into the orchestrator's submission interface (reached: unauthenticated jobs were
+    submitted); job into worker-node execution (reached: entrypoints ran); node into other clusters
+    (reached: the botnet self-propagated); job environment into exfiltration (reached: MySQL credentials
+    were taken). The API authorizes no caller, so the first crossing requires only reachability.
+  security_control_context: >-
+    Preventive control is network exposure management and authentication: not exposing the dashboard,
+    or fronting it with an authenticating proxy, prevents anonymous submission; Ray itself documents no
+    authentication. Detective control is infrastructure logging around the API, which the orchestrator
+    does not provide natively. Bypass representations include reaching the API before exposure is noticed,
+    blending with public scanner and CI traffic, and running payloads that look like ordinary jobs.
+  practitioner_implication: >-
+    An implementer must discover whether any orchestration dashboards are internet-exposed, whether a
+    fronting proxy or ingress logs submissions with source IP, whether Kubernetes or cloud audit records
+    the resulting workloads, whether endpoint and DNS or flow telemetry covers the nodes, and what the
+    expected client networks are, before an exposed-API hijack can be scored.
+
+threat_research:
+  why_it_matters: >-
+    An exposed unauthenticated orchestration API hands an attacker code execution on cluster compute with
+    no credential and no exploit, and a self-propagating job turns each reached cluster into a launch
+    point, while the API's silence on logging leaves the submission itself unrecorded.
+  threat_actor: >-
+    IronErn440, per Oligo, though attribution is medium confidence: an independent registry dates the
+    campaign lineage earlier and a later vendor post reportedly re-attributes the activity, so the actor
+    label is carried pending reconciliation.
+  actor_class: 'named-actor-medium-confidence'
+  campaign: 'ShadowRay 2.0: hijack of internet-exposed Ray Job Submission APIs into a self-propagating botnet.'
+  victim: >-
+    Organizations running internet-exposed Ray clusters and dashboards; Oligo frames a global campaign
+    rather than naming a single victim organization.
+  capability: >-
+    Use of unauthenticated Ray Job Submission APIs on exposed dashboards to build a self-propagating
+    botnet, per-node job pinning with a node-affinity scheduling strategy, and exfiltration of MySQL
+    credentials from job environment variables; Oligo assesses the payloads were likely LLM-generated.
+  target: >-
+    Internet-exposed Ray orchestration clusters. Job submission, self-propagation, node pinning and
+    credential exfiltration were reached; the disputed CVE-2023-48022 classification and the exact victim
+    count are unresolved in the source.
+  infrastructure:
+    - 'Internet-exposed Ray dashboards and Job Submission REST endpoints used as the submission surface.'
+    - 'Self-propagating jobs pinned per node via a node-affinity scheduling strategy.'
+  victimology:
+    - 'Organizations exposing Ray or similar orchestration dashboards and job-submission APIs to the Internet.'
+    - 'ML clusters whose jobs carry database or cloud credentials in environment variables.'
+
+visibility:
+  telemetry_sources:
+    - source: 'Front-proxy or ingress access logs'
+      purpose: >-
+        Record the job-submission request path, method, source IP and response code, since the
+        orchestrator itself logs nothing.
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'request method / path / source IP / response code'
+          attestation: 'estate-supplied'
+          load_bearing: true
+          note: >-
+            Customer-owned proxy or ingress log; no first-party schema, so field names and retention are
+            estate-specific.
+      details: >-
+        A fronting proxy or ingress records POST /api/jobs/ and related routes with method, path, source
+        IP and response code where such a proxy exists; the Ray REST reference documents the routes but
+        no authentication and no access logging of its own.
+      limitations:
+        - 'Exists only where a logging proxy or ingress fronts the API; Ray itself publishes no access log.'
+        - 'No first-party schema; field names and retention vary by estate.'
+    - source: 'Kubernetes audit'
+      purpose: 'Record creation of the pods or jobs the submission produces, by the orchestrator service account.'
+      event_vocabulary: 'kube-audit'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'user / verb / resource / resourceNames'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-K8S-AUDIT'
+          load_bearing: true
+          note: 'Metadata level; request bodies require Request or RequestResponse level.'
+      details: >-
+        Enabled with an audit policy file; levels None, Metadata, Request and RequestResponse select
+        detail; records pod and job creation by the orchestrator service account for the resulting workloads.
+      limitations:
+        - 'Produces nothing unless an audit policy file is supplied.'
+        - 'Records the resulting workload, not the exposed-API submission that caused it.'
+    - source: 'Endpoint process telemetry'
+      purpose: 'Record processes spawned by the submitted entrypoint on worker nodes.'
+      event_vocabulary: 'host-process-event'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'ProcessCommandLine / InitiatingProcessParentFileName / SHA256'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-SYSMON'
+          load_bearing: false
+          note: 'DeviceProcessEvents or Sysmon 1 on nodes where an endpoint sensor is deployed.'
+      details: >-
+        DeviceProcessEvents and Sysmon 1 record processes the submitted entrypoint spawns, with command
+        line, parent and hash, on nodes carrying an endpoint sensor.
+      limitations:
+        - 'Requires an endpoint sensor on the worker nodes.'
+        - 'Records execution, not the API submission or its source.'
+    - source: 'Network and DNS telemetry'
+      purpose: 'Record the submitted payload''s egress and name resolution for self-propagation and exfiltration.'
+      event_vocabulary: 'flow-record'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      details: >-
+        DeviceNetworkEvents or Sysmon 3 record the payload's outbound connections (remote IP, port,
+        protocol); Route 53 Resolver query logs (query_name, srcaddr) and Cloud DNS logs (queryName,
+        sourceIP) record its name resolution.
+      limitations:
+        - 'Requires network or DNS logging on the cluster network.'
+        - 'Records egress, not the exposed-API submission that initiated it.'
+    - source: 'Managed AI-service audit (where the orchestrator is managed)'
+      purpose: 'Provide control-plane audit where the hijacked orchestrator is a managed AI service rather than self-hosted Ray.'
+      event_vocabulary: 'cloud-management-event'
+      tier: 'no-tier-model'
+      operational_viability: 'on-by-default'
+      details: >-
+        CloudTrail management events for Bedrock and Agents operations, and Vertex Admin Activity audit
+        logs (always on), record orchestration operations where the surface is a managed AI service.
+      limitations:
+        - 'Applies only where the orchestrator is a managed AI service; self-hosted Ray has no equivalent.'
+        - 'Records managed control-plane operations, not the Ray job-submission API.'
+
+detection:
+  scope: >-
+    Detection spans the exposed endpoint, the internet-origin submission, and the resulting job execution
+    and egress. One strategy raises on internet-origin submissions and anomalous parameters to exposed
+    orchestration APIs and joins to an external attack-surface inventory and to network or IDS evidence,
+    since the API itself logs nothing.
+  outcome_guardrails: >-
+    An access-log hit establishes that a request reached the API, not that a job ran. Workload audit
+    establishes a job was created. Endpoint or network telemetry establishes the entrypoint executed and
+    egressed. Attempted access, created job and executed payload stay distinct; an access log alone is
+    attempted access, not a confirmed hijack.
+  shared_normalization_context: >-
+    Normalize to the source IP, API route, job id, cluster and workload id across proxy, workload-audit
+    and network streams, and classify a submission's origin against an inventory of exposed endpoints and
+    expected client networks.
+  shared_enrichment_context: >-
+    Join the submission log to an external attack-surface inventory of exposed endpoints, to the resulting
+    Kubernetes or cloud workload audit, and to network flow or IDS evidence of the payload. A thirty-day
+    baseline of expected client networks per endpoint helps prioritise internet-origin submissions.
+  strategies:
+    - id: 'STRAT-EXPOSED-API-SUBMISSION-ANOMALY'
+      name: 'exposed-API submission and network anomaly'
+      objective: >-
+        Detect an internet-origin job submission, enumeration pattern or anomalous job parameter against
+        an exposed orchestration API, joined to attack-surface inventory and network evidence.
+      incident_relevance: >-
+        Detects the exposed-API hijack the incident used to seed the botnet. It detects an anomalous
+        submission and its network correlates; confirming the hijack effect requires the workload-audit or
+        endpoint join, since the access log alone does not establish execution.
+      detection_logic: >-
+        Raise on internet-origin submissions to exposed orchestration job-submission APIs, on enumeration
+        patterns across job routes, and on anomalous job parameters, and join each to an external
+        attack-surface inventory of exposed endpoints, to the resulting workload audit, and to network
+        flow or IDS evidence. Baseline expected client networks per endpoint and treat a known exploit
+        pattern or a failed-auth burst as confidence raisers. Do not exclude a source merely because it is
+        a shared NAT or a public CI range; distinguish by execution evidence.
+      minimum_evidence: >-
+        An access-log or network record of an internet-origin submission to an exposed endpoint, joined to
+        either resulting workload audit or endpoint or network evidence of execution. Without the
+        execution join, report attempted access to an exposed API, not a confirmed hijack.
+      correlation_context: >-
+        Correlate on source IP, API route, job id, cluster, user agent and workload id over five-minute
+        and one-hour windows against a thirty-day baseline of expected client networks. Because the API
+        logs nothing, the submission side depends on a fronting proxy, and its clock must align with the
+        workload and network streams.
+      detectors:
+        - detector_class: 'exposed-service-access-and-network-anomaly-analytics'
+          technologies:
+            - 'Splunk'
+            - 'Elastic'
+            - 'Microsoft Sentinel'
+            - 'Google SecOps'
+          contribution: 'Raises on internet-origin submissions and anomalous parameters against exposed endpoints.'
+          limitations: 'Depends on a fronting proxy log; the API itself publishes no access record.'
+        - detector_class: 'workload-and-network-execution-correlation'
+          technologies:
+            - 'Kubernetes audit analytics'
+            - 'Endpoint and network or IDS analytics'
+          contribution: 'Confirms the submission produced a job that executed and egressed.'
+          limitations: 'Kubernetes audit is silent without a policy file; requires endpoint or network sensors on nodes.'
+      benign_explanations:
+        - explanation: >-
+            Public CI users, security scanners and shared NATs generate internet-origin traffic to
+            reachable endpoints that resembles submission or enumeration.
+          distinguishing_context: >-
+            A known exploit pattern, a failed-auth burst, and confirmed unauthorized job execution
+            separate a hijack from benign public access; an access-log hit with no execution does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding all shared-NAT or public-CI source ranges to cut scanner noise would suppress a
+            hijack originating from such a range; distinguish by execution evidence, not source range alone.
+      blind_spots:
+        - description: 'Missing telemetry: the orchestration job-submission API documents no authentication and no access logging, so it emits no first-party record.'
+          routes_to: null
+        - description: 'Missing telemetry: no fronting proxy or ingress log, leaving the submission unrecorded.'
+          routes_to: null
+        - description: 'Coverage gap: external attack-surface inventory and IDS data are outside every first-party AI logging surface.'
+          routes_to: null
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: >-
+          The source describes a global campaign but no firing rate; internet-facing endpoints draw
+          constant scanner traffic, so per-estate volume depends on exposure and baseline quality and is
+          not derivable here.
+      safe_conclusion: >-
+        An internet-origin submission reached an exposed orchestration API; API and network logs confirm
+        attempted access, and job or cluster audit confirms whether the hijack effect occurred.
+
+detector_requirements:
+  required: >-
+    A fronting proxy or ingress log recording job-submission requests with source IP; an external
+    attack-surface inventory of exposed endpoints and a baseline of expected client networks;
+    normalization to source IP, API route, job id and workload id; a join from the submission to workload
+    audit and to network or endpoint execution evidence; and outcome-aware alert text that keeps attempted
+    access distinct from confirmed hijack.
+  optional: >-
+    Kubernetes audit at Request level, DNS query logging, and managed-AI-service control-plane audit add
+    workload and egress detail, but none substitutes for the submission-side proxy log the exposed API
+    lacks.
+  correlation:
+    capability: >-
+      Aligned clocks across proxy, workload-audit and network streams; a stable source IP, job id and
+      workload id carried across them; and an external inventory of exposed endpoints to classify origin.
+    window: 'Rolling five-minute and one-hour windows against a thirty-day expected-client-network baseline.'
+  baselines:
+    - name: 'Exposed-endpoint inventory and expected client networks'
+      window: '30-day'
+      seeded_from: >-
+        An external attack-surface scan of exposed orchestration endpoints and observed sanctioned client
+        networks; never seeded from a window in which the endpoint was already being hijacked, which would
+        enrol the attacker network as expected.
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on deployed
+    sensors, enabled logging, retained fields and architecture. For this object, verification specifically
+    means confirming that a fronting proxy or ingress logs submissions to the exposed API (Ray itself
+    documents no authentication and no access logging), that Kubernetes or cloud audit and node telemetry
+    exist to confirm execution, and that an external exposed-endpoint inventory is maintained, since the
+    orchestration API emits no first-party record.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of the behavior; Oligo states the campaign was possibly active since Sep 2024, identified early Nov 2025.'
+    - 'The victim count and the extent of self-propagation across clusters.'
+    - 'Whether the payloads were LLM-generated, which Oligo frames as an assessment rather than proof.'
+    - 'Whether any estate fronts the exposed Ray API with a logging proxy, since Ray documents no access logging.'
+  assumptions:
+    - id: 'ASSUMPTION-INFRA-ONLY-OBSERVABILITY'
+      verdict_changing: true
+      statement: >-
+        The submission is observable only through infrastructure logs around the API, because Ray's REST
+        reference documents no authentication and no access logging. This pack read the observability as
+        wholly dependent on a fronting proxy, workload audit and network telemetry, inferring from the
+        documentation's silence that no first-party record exists. If wrong and a Ray build or deployment
+        does emit an access log, the observable gate understates coverage and the stream-existence blocking
+        condition is too strong. Resolve it by inspecting a running Ray dashboard's access-logging
+        configuration and confirming whether job submissions are recorded natively.
+    - id: 'ASSUMPTION-ACTOR-ATTRIBUTION'
+      verdict_changing: false
+      statement: >-
+        The activity is attributed to IronErn440. Oligo names the actor, but an independent registry dates
+        the campaign lineage earlier and a later vendor post reportedly re-attributes it, so this pack
+        carries the label at medium confidence. If wrong, the threat_actor and campaign fields name the
+        wrong operator, though no detection logic depends on the attribution. Resolve it by reconciling the
+        Oligo attribution against the registry lineage and the later vendor re-attribution.
+  standing_negatives:
+    - statement: >-
+        The Ray Job Submission REST reference documents no authentication and no access-logging mechanism:
+        the fetched page describes the submit, status, log and stop routes but no auth and no access log,
+        so job submission has no documented first-party audit record.
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the Ray Job Submission REST reference for a newly documented authentication or
+        access-logging mechanism.
+
+missing_states:
+  - id: 'MISSING_SUBMISSION_LOG'
+    meaning: 'Missing telemetry: no fronting proxy or ingress log, and the orchestration API emits no first-party record.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Do not claim a submission from API telemetry; fall back to workload audit and network evidence of
+      the resulting job, and treat the submission origin as unknown.
+  - id: 'MISSING_EXPOSURE_INVENTORY'
+    meaning: 'Missing telemetry: no external attack-surface inventory of exposed endpoints or expected client networks.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report an internet-origin submission without classifying the endpoint as unexpectedly exposed until
+      the inventory exists.
+  - id: 'MISSING_EXECUTION_EVIDENCE'
+    meaning: 'Attribution gap: no workload audit or node telemetry to confirm the submission executed.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report attempted access to an exposed API; do not claim a confirmed hijack without the execution join.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'source_ip_and_expected_network_match_or_explicit_missing_state'
+    - 'exposed_api_route_and_endpoint'
+    - 'submitted_job_id_and_parameters_when_available'
+    - 'resulting_workload_and_cluster_when_available'
+    - 'observed_execution_or_egress_when_present'
+    - 'attempted_versus_confirmed_hijack_disposition'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'self_propagation_or_secret_exfiltration_evidence'
+      condition: 'when network or workload telemetry shows the job reaching other clusters or exfiltrating secrets'
+  recommended_title: 'Internet-origin job submission to an exposed orchestration API, with execution evidence'
+  unsupported_title: 'Attacker took full control of the ML cluster and its data through the orchestration API'
+
+evidence:
+  confirmed_incident_behavior: >-
+    Oligo reports that ShadowRay 2.0, attributed to actor IronErn440, used unauthenticated Ray Job
+    Submission APIs on internet-exposed dashboards, tied to the disputed CVE-2023-48022, to build a
+    self-propagating botnet, pinned jobs per node with a node-affinity scheduling strategy, and
+    exfiltrated MySQL credentials from job environment variables. Oligo assesses the payloads were likely
+    LLM-generated, which the source frames as an assessment rather than proof; this pack carries it as
+    such and carries the actor attribution at medium confidence per missing_context.assumptions.
+  supported_conclusion: >-
+    The evidence supports that internet-exposed unauthenticated Ray Job Submission APIs were hijacked to
+    run attacker-controlled, self-propagating jobs that pinned per node and exfiltrated database
+    credentials. The behavior is detectable where an internet-origin submission is joined to
+    attack-surface inventory and execution evidence, and reportable as attempted access from an API or
+    network log alone.
+  unsupported_conclusions: >-
+    The evidence does not settle the disputed CVE classification, the victim count, the full extent of
+    self-propagation, or that the payloads were LLM-generated (an Oligo assessment). Those, and the actor
+    attribution, remain open, and the credential exfiltration is a follow-on behavior.
+  procedure_boundary: >-
+    This procedure is the hijack of an exposed orchestration API to run jobs and self-propagate. The MySQL
+    credential exfiltration from job environments, and any use of those credentials, are separate
+    behaviors; a reachable exposed endpoint is not evidence a job executed until the execution join is made.
+  references:
+    - id: 'REF-THREAT-OLIGO'
+      type: 'incident-procedure-primary-source'
+      title: 'ShadowRay 2.0: attackers turn AI against itself in a global self-propagating botnet campaign'
+      publisher: 'Oligo Security'
+      url: 'https://www.oligo.security/blog/shadowray-2-0-attackers-turn-ai-against-itself-in-global-campaign-that-hijacks-ai-into-self-propagating-botnet'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary procedure-level source for the unauthenticated Ray API hijack, the self-propagating
+        botnet, the node-affinity pinning, and the MySQL credential exfiltration; frames the
+        LLM-generated-payload claim as an assessment and does not resolve the CVE dispute or victim count.
+    - id: 'REF-THREAT-MALPEDIA'
+      type: 'incident-campaign-secondary-source'
+      title: 'IronErn440'
+      publisher: 'Malpedia (Fraunhofer FKIE)'
+      url: 'https://malpedia.caad.fkie.fraunhofer.de/actor/ironern440'
+      trust_tier: 'registry'
+      verification: 'not-resolved-out-of-scope'
+      citation_caveat: 'contradicted-elsewhere'
+      citation_caveat_note: >-
+        Used only for the actor label; an independent registry dates the campaign lineage earlier and a
+        later vendor post reportedly re-attributes the activity, so the attribution is medium confidence.
+        The detection claims survive discounting this citation entirely, since no detection logic depends
+        on the actor name.
+      evidence_use: >-
+        Supports the IronErn440 actor label carried at medium confidence; not relied on for any telemetry
+        or detection claim.
+    - id: 'REF-RAY-JOBS'
+      type: 'attack-surface-documentation'
+      title: 'Ray Job Submission REST API'
+      publisher: 'Ray (Anyscale)'
+      url: 'https://docs.ray.io/en/latest/cluster/running-applications/job-submission/rest.html'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the job-submission routes and the absence of any authentication or access-logging
+        mechanism, supporting the attack-surface description and the no-first-party-record standing
+        negative; supports no incident fact.
+    - id: 'REF-K8S-AUDIT'
+      type: 'telemetry-documentation'
+      title: 'Auditing'
+      publisher: 'Kubernetes'
+      url: 'https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/'
+      trust_tier: 'primary'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the audit policy levels and the create-verb, user and resource fields used by the
+        Kubernetes audit source to confirm the resulting workloads; supports no incident fact.
+    - id: 'REF-SYSMON'
+      type: 'telemetry-documentation'
+      title: 'Sysmon'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/sysinternals/downloads/sysmon'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the Sysmon 1 process-create and Sysmon 3 network-connection events used by the endpoint
+        and network sources to confirm entrypoint execution and egress; supports no incident fact.

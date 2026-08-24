@@ -1,0 +1,499 @@
+identity:
+  uuid: '51bbc87c-baaa-4a7e-a01b-0cf353cf7a8c'
+  id: 'DT-AAG1-AI-004'
+  aliases:
+    - 'P15'
+  name: 'Attackers publish lookalike MCP servers that users or agents install'
+  incident: >-
+    SmartLoader cloned and trojanized a legitimate Oura Ring MCP server and placed trojanized servers
+    into registries including MCP Market (Straiker); UpGuard separately found lookalike or mistyped
+    server names across 18,000 public Claude Code configurations, roughly one in fifteen.
+  first_observed: '2026-01'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'submitted-content-ingest'
+  secondary_attack_surfaces:
+    - 'ai-agent-harness'
+  behavior_classes:
+    - 'other'
+  behavior_classes_note: >-
+    mcp-server-lookalike-supply-chain: an attacker publishes a trojanized MCP server under a name
+    resembling a legitimate one so a user or agent selects the lookalike and executes
+    attacker-controlled tool code.
+  tags:
+    - 'ai'
+    - 'mcp'
+    - 'supply-chain'
+    - 'typosquatting'
+    - 'trojanized-server'
+
+behavior:
+  definition: >-
+    An attacker registers a trojanized MCP server under a name resembling a legitimate one; a user or
+    agent selects the lookalike and executes attacker-controlled tool code.
+  detailed_definition: >-
+    The adversary publishes a server whose name, and sometimes whole cloned implementation, imitates a
+    trusted one into a registry or configuration source that users and agents draw from. Selection
+    happens by name, so a mistyped or confusable name resolves to the attacker's server, and
+    connecting to it runs the attacker's tool code in the client's runtime and identity. The attempt
+    ends when the lookalike is published and reachable; success begins when a user or agent installs
+    or invokes it and its code runs. It is independent of registry product, client, and how the
+    lookalike name was constructed.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers publication of the lookalike and its selection and execution by a user or agent; does not
+      cover any specific payload the trojanized server then runs.
+    summary: >-
+      This can occur when an attacker can publish a server into a registry or config source a client
+      draws from, the selection is by a name close enough to a legitimate one to be chosen by mistake
+      or by an agent, and connecting to the server runs its tool code. Execution requires only that a
+      user or agent install or invoke the lookalike; the demonstrated cloning shows the code can be a
+      full trojanized copy of a real server.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      A connection to, or configuration of, a lookalike server is observable where MCP server-connection
+      or config-change telemetry exists; whether the chosen name is a lookalike is only decidable
+      against a customer-maintained inventory of approved servers, which no vendor signal supplies.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          Claude Code third-party server and plugin names appear as the literal "third-party" unless
+          OTEL_LOG_TOOL_DETAILS=1, and Cursor audit is bounded to a 30-day query range at 20 requests
+          per minute.
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          Whether MCP server-connection, config-change, or endpoint/network telemetry exists depends
+          on the client and platform deployed; GitHub Copilot audit pages document no MCP server event.
+      - condition: 'environment-inventory-required'
+        note: >-
+          Deciding that a connected server is a lookalike requires a customer-maintained inventory of
+          approved server names and URLs to compare against; no vendor emits a name-similarity signal.
+    summary: >-
+      The behavior is observable when a server connection or a config change names the server and,
+      ideally, its URL, and that name is compared to an approved inventory. A connection record alone
+      establishes that a server was used, not that its name imitates a trusted one; an endpoint DNS or
+      network record establishes the host reached, not the selection intent. Establishing the behavior
+      needs the server name or URL resolved against the approved set and, for effect, an execution or
+      outbound call.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Separable from a legitimate new tool when a first-seen server name or URL is a high-edit-distance
+      or Unicode-confusable match to an approved one; a genuinely new sanctioned server also fires
+      first-seen and must be distinguished by the similarity and approval signals, not novelty alone.
+    blocking_conditions:
+      - condition: 'environment-inventory-required'
+        note: >-
+          Lookalike scoring is defined against an approved-server inventory the estate must build and
+          maintain; without it, first-seen novelty cannot be separated from a lookalike and both read
+          the same.
+    summary: >-
+      Separation rests on normalising the server and tool name and URL and scoring them against an
+      approved inventory for first-seen appearance, high edit distance, or Unicode-confusable
+      characters. Package signature, owner approval, and a first outbound call to a rare destination
+      raise confidence. A first-seen server with no similarity to an approved one is likely benign
+      novelty; a lookalike with no inventory to compare against cannot be established at all.
+
+attack_surface_context:
+  surface: >-
+    MCP server registries such as MCP Market and ClawHub and the client MCP configuration files where
+    a user or agent selects a server by name, demonstrated against a cloned Oura Ring MCP server.
+  how_the_surface_works: >-
+    Registries list MCP servers by name and slug for discovery; a user or agent installs one by name
+    into a client's MCP configuration, and the client then connects to it and runs its advertised
+    tools. Selection is name-driven, so a name close to a trusted server's, or a full clone of it, can
+    be chosen in place of the legitimate server, after which the server's tool code executes.
+  incident_processing_path: >-
+    Straiker reports (source-attested) that SmartLoader cloned and trojanized a legitimate Oura Ring
+    MCP server and got trojanized servers into registries including MCP Market, exposing thousands of
+    developers. UpGuard separately reports (source-attested) lookalike or mistyped server names across
+    18,000 public Claude Code configurations, about one in fifteen. That the 18,000-configuration
+    figure is prevalence rather than confirmed compromise is this pack's reading, following the
+    source's own scope note, and is registered in missing_context.assumptions.
+  processing_stages:
+    - 'legitimate-server-identification'
+    - 'server-cloning-and-trojanizing'
+    - 'registry-publication'
+    - 'lookalike-naming'
+    - 'user-or-agent-selection'
+    - 'client-config-write'
+    - 'server-connection'
+    - 'tool-code-execution'
+  stage_evidence: >-
+    The stage instrumentation sits at fixes what it can prove: a registry publication proves the
+    lookalike exists, not that anyone chose it; a config write or connection proves selection and may
+    name the server; only an execution or outbound call proves the trojanized code ran, and only the
+    name or URL resolved against an approved inventory proves it was a lookalike.
+  trust_boundaries: >-
+    Untrusted publisher into the registry (reached: trojanized servers reached MCP Market); lookalike
+    name into the client configuration (reached: lookalike names appear across public configs); server
+    tool code into the client runtime (reached in the SmartLoader case: the trojanized server
+    executed). The 18,000-config prevalence marks reachable exposure, not confirmed execution in each.
+  security_control_context: >-
+    Registry moderation, package signing, and client approval decide what can be published and
+    selected; approved-server allowlists and name-similarity checks decide before connection where an
+    estate builds them. None of the evaluated products emits a name-similarity signal, so lookalike
+    detection is customer-built. Bypass representations include homoglyph and edit-distance names,
+    cloning a legitimate server wholesale, and publishing into a registry with weak moderation.
+  practitioner_implication: >-
+    An implementer must discover which registries and clients are in use, whether OTEL_LOG_TOOL_DETAILS
+    is set so third-party server names are not redacted to "third-party", whether an approved-server
+    inventory of names and URLs exists to score against, and what Cursor plan and query limits apply,
+    since lookalike scoring depends entirely on that customer-maintained inventory.
+
+threat_research:
+  why_it_matters: >-
+    MCP servers are selected by name and run tool code in the client's runtime, so a single confusable
+    name or a cloned server turns installation into code execution on developer hosts, and a
+    one-in-fifteen prevalence of lookalike names in public configs shows the selection error is common.
+  threat_actor: >-
+    SmartLoader, described by Straiker as the actor that cloned and trojanized the Oura Ring MCP
+    server and seeded registries. The UpGuard 18,000-configuration prevalence finding is not attributed
+    to SmartLoader.
+  actor_class: 'malware-loader-supply-chain'
+  campaign: 'SmartLoader trojanized MCP servers (Straiker, Feb 2026) and UpGuard MCP lookalike prevalence (May 2026).'
+  victim: >-
+    Thousands of developers exposed to the trojanized servers per Straiker; UpGuard measured lookalike
+    names across 18,000 public Claude Code configurations without confirming compromise of each.
+  capability: >-
+    A cloned and trojanized legitimate MCP server placed into registries including MCP Market, exposing
+    thousands of developers; a separate prevalence study found lookalike or mistyped names in roughly
+    one in fifteen public Claude Code configurations.
+  target: >-
+    Developers and agents selecting MCP servers by name from registries and configurations. The
+    SmartLoader trojanization is a real incident; the 18,000-config figure is prevalence for posture
+    and hunting, not per-host confirmed compromise.
+  victimology:
+    - 'Developers and agents that install MCP servers by name from public registries.'
+    - 'Estates without an approved-server inventory to score names and URLs against.'
+
+visibility:
+  telemetry_sources:
+    - source: 'AI coding-agent MCP server-connection telemetry (Claude Code)'
+      purpose: >-
+        Record the connection to an MCP server, with its name where enabled, as the primary event to
+        score against an approved inventory.
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'claude_code.mcp_server_connection (status, transport_type, server_scope, is_plugin, plugin_id_hash, plugin.name, server_name)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CLAUDE-OTEL'
+          load_bearing: true
+          note: 'plugin.name/server_name are the literal "third-party" unless OTEL_LOG_TOOL_DETAILS=1 is set.'
+        - name: 'mcp_server.name, mcp_tool.name, marketplace.name (on claude_code.token.usage / cost.usage)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CLAUDE-OTEL'
+          load_bearing: false
+          note: 'Usage-side attributes reinforce server and tool identity per invocation.'
+      details: >-
+        The connection event carries per-session server identity, transport, and scope, with standard
+        session, user, and organisation attributes; token and cost metrics add server, tool, and
+        marketplace names per invocation.
+      limitations:
+        - 'Third-party server and plugin names are redacted to "third-party" without OTEL_LOG_TOOL_DETAILS=1.'
+        - 'Carries no server URL or protocol version to resolve the exact host.'
+        - 'Only present where the client exports OpenTelemetry to a collector.'
+    - source: 'Cursor Admin API audit logs'
+      purpose: 'Record an MCP server configuration change to catch selection at config time.'
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'event_type=mcp_server_config (event_id, timestamp, user_email, ip_address, event_data)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CURSOR-ADMIN-API'
+          load_bearing: true
+          note: 'Records the configuration change only, within a 30-day query range.'
+      details: >-
+        GET /teams/audit-logs returns mcp_server_config events with actor email, IP, and event data,
+        using Basic auth with the API key, bounded to a 30-day query range and 20 requests per minute.
+      limitations:
+        - 'A 30-day maximum query range and a 20-request-per-minute rate limit.'
+        - 'Any Enterprise-plan requirement or retention window is not stated on the fetched page.'
+    - source: 'Microsoft Agent 365 ExecuteToolByMCPServer'
+      purpose: 'Name the MCP server execution path for the effect end of the behavior.'
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'on-by-default'
+      details: >-
+        The ExecuteToolByMCPServer ActionType in CloudAppEvents carries gen_ai.tool.server.name and
+        maps server.address to ServerAddress, naming the server whose tool executed.
+      limitations:
+        - 'Names the server execution path but not a name-similarity or approval verdict.'
+        - 'No server-URL or protocol-version field is documented.'
+    - source: 'Endpoint and network telemetry'
+      purpose: 'Resolve the lookalike host actually contacted and any outbound call, for the effect leg.'
+      event_vocabulary: 'host-process-event'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      details: >-
+        DeviceNetworkEvents or Sysmon 3 and 22 record the host and DNS name reached; DeviceFileEvents
+        or Sysmon 11 record the client MCP configuration file write.
+      limitations:
+        - 'Requires an endpoint or network sensor on the developer host.'
+        - 'A destination without the server selection context does not attribute the call to a lookalike.'
+    - source: 'Package and registry access logs'
+      purpose: 'Record acquisition of a redistributed server package where mirrored internally.'
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      details: >-
+        Artifactory access logs record DOWNLOAD and DEPLOY with repository path, user, and IP; ClawHub
+        install emits a best-effort install event whose name and payload are undocumented.
+      limitations:
+        - 'ClawHub install events are best-effort and their schema is undocumented.'
+        - 'Public registries such as MCP Market are not necessarily mirrored or logged internally.'
+
+detection:
+  scope: >-
+    Detection spans the lookalike server at rest in a registry, its selection into a client
+    configuration, the connection to it, and any tool execution or outbound call. The one materially
+    available strategy scores a first-seen server name and URL against an approved inventory for
+    lookalike similarity, because no vendor emits a name-similarity signal.
+  outcome_guardrails: >-
+    A registry publication establishes a lookalike exists, not that anyone selected it. A config change
+    or connection establishes selection and may name the server, not that the name imitates a trusted
+    one. A name resolved against the approved inventory establishes lookalike similarity, not
+    execution. An outbound call establishes the host reached, not the selection intent. These stay
+    distinct.
+  shared_normalization_context: >-
+    Normalise server and tool names and URLs to a canonical form, apply Unicode-confusable folding, and
+    compute edit distance to the approved-server inventory, treating the normalised name and host as
+    the comparison keys rather than the raw string.
+  shared_enrichment_context: >-
+    Join the normalised server name and URL to the approved-server inventory, owner and signing
+    metadata, and a first outbound destination where endpoint or network telemetry exists. A rolling
+    30-day history of seen servers, extended to 60 to 90 days for seasonal teams, seeds the first-seen
+    signal.
+  strategies:
+    - id: 'STRAT-FIRST-SEEN-LOOKALIKE'
+      name: 'first-seen and lookalike-name novelty'
+      objective: >-
+        Detect an MCP server that is first-seen for the estate and whose normalised name or URL is a
+        high-edit-distance or Unicode-confusable match to an approved server.
+      incident_relevance: >-
+        Detects the selection of a lookalike or trojanized server as seen in the SmartLoader incident
+        and the UpGuard prevalence; it detects configuration and connection novelty, while invocation
+        and payload effect are separate stages that require execution evidence.
+      detection_logic: >-
+        On MCP registration, configuration change, or invocation, normalise the server and tool name
+        and URL and compare them to the approved inventory. Raise on a first-seen server, a high
+        edit-distance or Unicode-confusable near-match to an approved name, or an unsanctioned host.
+        Raise confidence with an unsigned package, absent owner approval, or a first outbound call to a
+        rare destination. Do not exclude a server merely because it is new; novelty is the trigger, not
+        an exclusion.
+      minimum_evidence: >-
+        A first-seen server name or URL scored against the approved inventory as a lookalike near-match.
+        Without the inventory comparison, report first-seen server novelty only, not a confirmed
+        lookalike; without execution evidence, do not assert the trojanized code ran.
+      correlation_context: >-
+        Evaluate at registration or first invocation against a durable inventory and a rolling 30-day,
+        or 60-to-90-day seasonal, history of seen servers, keyed on normalised server name, URL or
+        host, tool name, agent id, and tenant.
+      detectors:
+        - detector_class: 'name-normalization-and-similarity-scoring'
+          technologies:
+            - 'SIEM regex / string normalization / Unicode inspection'
+            - 'First-seen and cardinality tracking'
+            - 'Durable lookups / KV / summary index'
+          contribution: 'Scores a normalised server name and URL against the approved inventory for lookalike similarity.'
+          limitations: 'Depends entirely on a maintained approved-server inventory; no vendor supplies the similarity signal.'
+        - detector_class: 'endpoint-and-network-corroboration'
+          technologies:
+            - 'DeviceNetworkEvents / Sysmon 3 and 22'
+            - 'DeviceFileEvents / Sysmon 11'
+          contribution: 'Corroborates the host actually reached and the config file written.'
+          limitations: 'Requires a host or network sensor; a destination alone does not prove lookalike selection.'
+      benign_explanations:
+        - explanation: >-
+            New legitimate tools and internal test servers appear for the first time and fire the
+            first-seen signal.
+          distinguishing_context: >-
+            A high edit-distance or Unicode-confusable near-match to an approved name, plus missing
+            signature or owner approval, separates a lookalike from sanctioned novelty; first-seen alone
+            does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding all first-seen servers to cut onboarding noise would suppress the lookalike, which
+            is by construction first-seen.
+      blind_spots:
+        - description: 'Missing telemetry: no vendor emits a name-similarity signal; lookalike scoring is customer-built.'
+          routes_to: null
+        - description: 'Missing telemetry: no documented server-URL or protocol-version field to resolve the exact host.'
+          routes_to: null
+        - description: 'Missing telemetry: third-party server names are redacted to "third-party" without OTEL_LOG_TOOL_DETAILS=1.'
+          routes_to: null
+      analyst_response: >-
+        Normalise the server name and URL, score them against the approved inventory for edit distance
+        and confusable characters, check package signature and owner approval, resolve the host
+        actually contacted on the endpoint, look for a first outbound call to a rare destination, and
+        determine whether the trojanized tool code executed.
+      safe_conclusion: >-
+        A first-seen MCP server was selected whose name resembles an approved one; confirming
+        trojanization and execution requires the host and payload evidence.
+
+detector_requirements:
+  required: >-
+    A maintained inventory of approved MCP server names and URLs; normalisation and Unicode-confusable
+    folding of server and tool names; edit-distance scoring against the inventory; MCP server-connection
+    or config-change telemetry with real server names, meaning OTEL_LOG_TOOL_DETAILS enabled where
+    Claude Code is used; first-seen tracking with durable state; and outcome-aware alert text separating
+    server novelty from confirmed lookalike selection and from execution.
+  optional: >-
+    Package signature and owner-approval enrichment and a first-outbound-call-to-rare-destination
+    signal raise confidence, and Cursor config-change audit catches selection before connection, but
+    none substitutes for the approved-server inventory.
+  correlation:
+    capability: >-
+      A durable approved-server inventory keyed by normalised name and URL, first-seen state per tenant
+      and agent, and endpoint or network telemetry to bind a connection to the host actually reached.
+    window: 'Real-time at registration or first invocation, against a rolling 30-day, or 60-to-90-day seasonal, history.'
+  baselines:
+    - name: 'Approved MCP server and tool inventory'
+      window: '30-day rolling, 60-to-90-day for seasonal teams'
+      seeded_from: >-
+        Sanctioned server names, URLs, and owners; never seeded from whatever servers appear in client
+        configs, which would enrol the lookalike as approved.
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on deployed
+    sensors, enabled logging, retained fields, and architecture. For this object, verification
+    specifically means confirming that an approved-server inventory exists and that server-connection or
+    config telemetry carries real server names and URLs, since no evaluated product emits a
+    name-similarity signal and third-party names may be redacted.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of the behavior; the catalog dates SmartLoader samples to end of January 2026 without a precise first-seen.'
+    - 'Whether the Cursor MCP audit requires an Enterprise plan and its retention window; not stated on the fetched page.'
+    - 'Whether each of the 18,000 lookalike-name configurations resulted in an install or execution.'
+    - 'The exact server URL and protocol version for a connection, which no documented field carries.'
+  assumptions:
+    - id: 'ASSUMPTION-PREVALENCE-NOT-COMPROMISE'
+      verdict_changing: false
+      statement: >-
+        The 18,000-configuration lookalike measurement is prevalence for posture and hunting, not
+        confirmed compromise of each host. UpGuard reports the presence of lookalike or mistyped names,
+        not an execution per config; this pack reads it as exposure following the source's scope note.
+        If wrong in either direction, the victim scale and the expected firing volume shift, but the
+        SmartLoader real-incident basis and the detection logic do not change. Resolve it by joining the
+        lookalike-name configs to connection or execution telemetry to count how many actually ran.
+  standing_negatives:
+    - statement: >-
+        No evaluated product emits a server-URL, protocol-version, or name-similarity field for MCP
+        servers: the fetched pages document server name and connection status but no URL, protocol
+        version, or vendor-side lookalike signal, and GitHub Copilot audit pages document no MCP event.
+      ref: 'REF-CLAUDE-OTEL'
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the Claude Code, Cursor, and Agent 365 telemetry pages for a newly documented MCP
+        server-URL, protocol-version, or name-similarity field.
+
+missing_states:
+  - id: 'MISSING_APPROVED_INVENTORY'
+    meaning: 'Missing capability: no maintained inventory of approved MCP server names and URLs to score against.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Report first-seen server novelty only; do not claim a lookalike, which is undefined without the
+      inventory.
+  - id: 'MISSING_SERVER_URL_FIELD'
+    meaning: 'Missing telemetry: no documented field carries the MCP server URL or protocol version.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Score on the normalised server name and corroborate the host through endpoint or network
+      telemetry; mark URL-level attribution incomplete.
+  - id: 'THIRD_PARTY_NAME_REDACTED'
+    meaning: 'Missing telemetry: third-party server and plugin names are redacted to "third-party" without a detail flag.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Require OTEL_LOG_TOOL_DETAILS to be enabled for scoring, and treat redacted names as unscored
+      rather than approved.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'actor_or_explicit_missing_state'
+    - 'normalized_server_name_and_url'
+    - 'approved_inventory_match_and_similarity_score'
+    - 'selecting_user_or_agent_and_tenant'
+    - 'observed_connection_or_config_change'
+    - 'host_reached_and_outbound_call_when_present'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'tool_execution_or_payload_evidence'
+      condition: 'when endpoint or network telemetry shows the trojanized server code ran or called out'
+  recommended_title: 'First-seen MCP server selected with a name resembling an approved server'
+  unsupported_title: 'Trojanized MCP server compromised the developer host'
+
+evidence:
+  confirmed_incident_behavior: >-
+    Straiker reports that SmartLoader cloned and trojanized a legitimate Oura Ring MCP server and got
+    trojanized servers into registries including MCP Market, exposing thousands of developers; UpGuard
+    reports lookalike or mistyped server names across 18,000 public Claude Code configurations, roughly
+    one in fifteen. That the 18,000-configuration figure is prevalence rather than confirmed compromise
+    is this pack's reading of the source's scope, registered in missing_context.assumptions.
+  supported_conclusion: >-
+    The evidence supports that trojanized and lookalike MCP servers are published into registries and
+    selected into client configurations at measurable scale, with at least one real trojanization
+    (SmartLoader). The behavior is detectable where a first-seen server name or URL is scored against an
+    approved inventory for lookalike similarity, and reportable as server novelty where no inventory
+    exists.
+  unsupported_conclusions: >-
+    The evidence does not establish that each of the 18,000 lookalike-name configurations executed the
+    trojanized code, the specific payloads run, or any post-execution objective. Per-host compromise,
+    persistence, and data theft require endpoint and network telemetry not carried by the cited sources.
+  procedure_boundary: >-
+    This procedure is the publication of a lookalike or trojanized server and its selection and
+    execution by a user or agent. Whatever payload the trojanized server then runs, and any persistence
+    or data theft, is a separate behavior and is not evidenced by the lookalike having been selected.
+  references:
+    - id: 'REF-THREAT-STRAIKER'
+      type: 'incident-procedure-primary-source'
+      title: 'SmartLoader clones Oura Ring MCP to deploy a supply-chain attack'
+      publisher: 'Straiker STAR Labs'
+      url: 'https://www.straiker.ai/blog/smartloader-clones-oura-ring-mcp-to-deploy-supply-chain-attack'
+      trust_tier: 'researcher'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary source for the SmartLoader trojanization of the Oura Ring MCP server and its
+        distribution through registries including MCP Market. It does not enumerate compromised hosts.
+    - id: 'REF-THREAT-UPGUARD'
+      type: 'incident-procedure-primary-source'
+      title: 'MCP server lookalikes'
+      publisher: 'UpGuard'
+      url: 'https://www.upguard.com/blog/mcp-server-lookalikes'
+      trust_tier: 'researcher'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary source for the prevalence of lookalike or mistyped MCP server names across 18,000
+        public Claude Code configurations; supports exposure scale, not per-host compromise.
+    - id: 'REF-CLAUDE-OTEL'
+      type: 'telemetry-documentation'
+      title: 'Monitoring usage with OpenTelemetry (Claude Code)'
+      publisher: 'Anthropic'
+      url: 'https://code.claude.com/docs/en/monitoring-usage'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents claude_code.mcp_server_connection and the token/cost usage attributes and their
+        redaction behaviour used by the server-connection telemetry source and the standing negative.
+    - id: 'REF-CURSOR-ADMIN-API'
+      type: 'telemetry-documentation'
+      title: 'Cursor Admin API (teams audit logs)'
+      publisher: 'Cursor'
+      url: 'https://cursor.com/docs/account/teams/admin-api'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the mcp_server_config audit event, its fields, and the 30-day query range and rate
+        limit used by the Cursor telemetry source; supports no incident fact.

@@ -1,0 +1,585 @@
+identity:
+  uuid: '36c7b65e-ba60-455b-b51b-d1b953850f5a'
+  id: 'DT-AAG1-AI-031'
+  aliases:
+    - 'P66'
+  name: 'An attacker dynamically registers a rogue OAuth client with an MCP authorization service'
+  incident: >-
+    Anthropic MCP SDK rogue OAuth client registration, a responsibly disclosed vulnerability reported
+    by Cato Networks in which an attacker uses OAuth 2.0 Dynamic Client Registration to register a
+    rogue client with an MCP authorization service.
+  first_observed: '2025'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'identity-provider'
+  secondary_attack_surfaces:
+    - 'ai-agent-harness'
+  behavior_classes:
+    - 'other'
+  behavior_classes_note: >-
+    rogue-oauth-client-registration-via-dynamic-client-registration: an attacker uses the OAuth 2.0
+    Dynamic Client Registration endpoint of an MCP authorization service to enrol a client it
+    controls, establishing a rogue registered identity in the authorization server.
+  tags:
+    - 'ai'
+    - 'mcp'
+    - 'oauth'
+    - 'dynamic-client-registration'
+    - 'authorization'
+
+behavior:
+  definition: >-
+    An attacker dynamically registers a rogue OAuth client with an MCP authorization service.
+    Authorization or token capture is chain context, not this procedure.
+  detailed_definition: >-
+    An adversary uses an authorization server's dynamic client-registration endpoint to enrol an
+    OAuth client it controls, supplying its own client metadata such as redirect URIs and grant
+    types. Because the endpoint accepts registrations without the client being a known, sanctioned
+    application, an attacker-controlled client identity is created in the trust boundary of the
+    authorization service. The attempt is the registration request; success is a persisted rogue
+    client credential associated with the issuing server. It is independent of any later
+    authorization or token issuance, which is separate chain context rather than part of this
+    behavior.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers the registration of a rogue OAuth client at an MCP authorization service that supports
+      dynamic client registration; it does not cover any subsequent authorization, consent, or token
+      issuance to that client.
+    summary: >-
+      This can occur where the MCP authorization service supports OAuth 2.0 Dynamic Client
+      Registration (advertised by a registration_endpoint) and accepts a POST to register a client
+      without restricting it to sanctioned applications. It requires only that the attacker reach the
+      registration endpoint and submit valid client metadata.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Observable where the authorization server records client-registration events in its own audit
+      (Okta System Log, Entra audit, or reverse-proxy logs for a self-hosted server); not observable
+      from MCP, which defines no registration audit record, and a registration is distinguishable as
+      rogue only against an approved-client inventory.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          The evidence is the authorization server's own audit (Okta app.oauth2.client.lifecycle.create,
+          Entra Add application, or proxy/WAF logs for a self-hosted server), which must be enabled and
+          retained; MCP itself defines no registration audit field.
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          MCP does not require an authorization server to support or log dynamic client registration
+          (RFC 7591 MAY), so where it is unsupported or unlogged the registration leaves no record and
+          absence is not proof of absence.
+      - condition: 'environment-inventory-required'
+        note: >-
+          Deciding a registered client is rogue requires an approved-MCP-client inventory as reference
+          data; without it a registration is visible but not classifiable.
+    summary: >-
+      The behavior is observable when the authorization server logs the client-registration event with
+      the registering actor, source, and client metadata (redirect URIs, grant types), joined to an
+      approved-client inventory to mark it rogue. A registration event with no inventory establishes
+      that a client was registered, not that it is rogue; and because MCP itself logs nothing, absence
+      of an event where DCR is unsupported or unlogged proves nothing.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Separable from legitimate registration where the registered client is checked against an
+      approved-client inventory and its metadata and source are assessed; a first legitimate
+      registration of a new sanctioned client overlaps and must not be excluded blindly.
+    blocking_conditions:
+      - condition: 'environment-inventory-required'
+        note: >-
+          The discriminator between a rogue and a sanctioned client is membership in an approved-MCP-client
+          inventory, which is estate-supplied reference data.
+      - condition: 'cross-source-join-required'
+        note: >-
+          Assessing a registration fully needs the authorization-server audit joined to the approved
+          inventory and, for self-hosted servers, to proxy or WAF logs for the source of POST /register.
+    summary: >-
+      Separation rests on comparing each registered client to the approved-MCP-client inventory and
+      assessing unusual redirect URIs, grant types, or a registration source outside expected
+      infrastructure. Legitimate onboarding also registers new clients, so the discriminator is the
+      inventory plus metadata and source anomaly; a registration event alone, or an anomaly with no
+      inventory, is too weak to establish a rogue client.
+
+attack_surface_context:
+  surface: >-
+    The dynamic client-registration endpoint of an MCP authorization service (an OAuth 2.0
+    authorization server implementing RFC 7591), reached by a POST to the registration endpoint.
+  how_the_surface_works: >-
+    An MCP authorization service is an OAuth 2.0 authorization server that may support Dynamic Client
+    Registration per RFC 7591, advertised by a registration_endpoint in its authorization-server
+    metadata or OpenID Connect discovery. A client POSTs its metadata to that endpoint and receives
+    client credentials; the server persists the client and associates it with the issuing issuer,
+    after which the client can participate in authorization flows.
+  incident_processing_path: >-
+    Cato Networks reports (source-attested) that an attacker can dynamically register a rogue OAuth
+    client with an MCP authorization service, abusing the DCR mechanism the MCP SDK exposes. That the
+    deciding evidence is the authorization server's own registration audit joined to an approved-client
+    inventory, rather than any MCP-defined record, is this pack's reading, since the specification
+    defines protocol behaviour and the 2026-07-28 page deprecates DCR without defining an audit field.
+  processing_stages:
+    - 'attacker-discovers-registration-endpoint'
+    - 'attacker-posts-client-registration'
+    - 'authorization-server-accepts-registration'
+    - 'rogue-client-credentials-persisted'
+    - 'rogue-client-associated-with-issuer'
+  stage_evidence: >-
+    Only the accept-and-persist stage produces evidence, and only in the authorization server's own
+    audit, not in MCP; a registration record proves a client was created but says nothing about
+    whether it is sanctioned, which is decided only by joining to the approved inventory. Anything
+    after this stage, authorization or token issuance, is separate chain context.
+  trust_boundaries: >-
+    Unauthenticated or untrusted registrant into the authorization server's set of registered clients
+    (crossed in the PoC: a rogue client was registered). Any crossing into issued authorization or
+    tokens is explicitly out of scope for this procedure and is treated as chain context, not a
+    boundary this behavior reaches.
+  security_control_context: >-
+    The preventive control is the authorization server's registration policy: whether it restricts DCR,
+    requires authentication, or vets client metadata. It decides at the registration endpoint and logs
+    the outcome only in its own audit (Okta, Entra, or proxy logs), not via MCP. Bypass representations
+    include registering when DCR is open, supplying attacker-controlled redirect URIs, and exploiting
+    that MCP requires neither support nor logging of DCR. The 2026-07-28 MCP spec deprecates DCR in
+    favour of Client ID Metadata Documents but retains it for backwards compatibility.
+  practitioner_implication: >-
+    An implementer must discover whether the MCP authorization service supports DCR at all, which
+    identity provider or self-hosted server backs it (Okta, Entra, or a proxied custom server), whether
+    that server's registration audit is enabled and retained, and whether an approved-MCP-client
+    inventory exists to classify a registration as rogue, since MCP itself supplies no registration
+    audit field.
+
+threat_research:
+  why_it_matters: >-
+    A rogue registered client is a foothold identity inside an authorization service's trust boundary:
+    once enrolled, it can participate in authorization flows and is positioned to obtain tokens later,
+    so an open or unvetted registration endpoint hands an attacker a standing client it controls.
+  threat_actor: >-
+    Unknown; the behavior was demonstrated by Cato Networks researchers as a responsibly disclosed
+    proof-of-concept against the MCP SDK, with no in-the-wild actor attributed.
+  campaign: >-
+    Cato CTRL research disclosure of vulnerabilities in Anthropic's MCP SDK, including rogue OAuth
+    client registration; no named victim organization.
+  victim: >-
+    Operators of MCP authorization services that support open or unvetted dynamic client registration;
+    the source demonstrates the class rather than naming a compromised organization.
+  capability: >-
+    A demonstrated proof-of-concept that an attacker can dynamically register a rogue OAuth client with
+    an MCP authorization service; the source shows the registration, and explicitly frames later
+    authorization or token capture as chain context rather than part of this procedure.
+  target: >-
+    The dynamic client-registration endpoint of an MCP authorization service; targeted and demonstrated
+    in a PoC, with real-world exploitation neither claimed nor evidenced.
+  victimology:
+    - 'MCP authorization services exposing RFC 7591 dynamic client registration without restriction.'
+    - 'Deployments lacking an approved-client inventory to distinguish sanctioned from rogue clients.'
+
+visibility:
+  telemetry_sources:
+    - source: 'MCP authorization specification (carrier definition)'
+      purpose: 'Define the registration mechanism and establish that MCP defines no registration audit record.'
+      event_vocabulary: 'none'
+      tier: 'not-applicable'
+      operational_viability: 'rejected-not-coverage'
+      fields:
+        - name: 'registration_endpoint (RFC 8414 metadata) and POST /register (RFC 7591 flow step)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-MCP-AUTH'
+          load_bearing: false
+          note: 'Defines the mechanism only; no audit record for a registration is specified, and support is optional (MAY).'
+        - name: 'client_id_metadata_document_supported (2026-07-28 deprecation of DCR)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-MCP-CLIENTREG'
+          load_bearing: false
+          note: 'DCR deprecated in favour of Client ID Metadata Documents but retained for backwards compatibility; still no audit field.'
+      details: >-
+        MCP defines DCR per RFC 7591, advertised via registration_endpoint in OAuth authorization-server
+        metadata or OIDC discovery, with the flow step POST /register returning client credentials and
+        application_type required from clients. The 2026-07-28 page deprecates DCR. Neither page defines
+        a registration audit record.
+      limitations:
+        - 'Defines protocol behaviour, not an audit record.'
+        - 'Support is optional (MAY), so absence of a record is not proof of absence of registration.'
+    - source: 'Okta System Log (OAuth client lifecycle events)'
+      purpose: 'Provide the authorization-server audit of the client registration, the primary evidence.'
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'app.oauth2.client.lifecycle.create / .update / .delete; application.lifecycle.create'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-OKTA-EVENTS'
+          load_bearing: true
+          note: 'Records the client creation and lifecycle; the registering actor and source ride the standard System Log envelope.'
+        - name: 'app.oauth2.admin.consent.grant / app.oauth2.client.privilege.grant'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-OKTA-EVENTS'
+          load_bearing: false
+          note: 'Consent and privilege grants are chain context after registration, not this procedure.'
+      details: >-
+        Okta System Log documents app.oauth2.client.lifecycle create/update/activate/deactivate/delete
+        and application.lifecycle events, plus consent and privilege grants, giving an audit of the
+        registration where Okta backs the MCP authorization service.
+      limitations:
+        - 'No fetched page states retention for this context.'
+        - 'The DCR request body fields (redirect_uris, grant_types) are not enumerated on the fetched page.'
+    - source: 'Microsoft Entra ID audit (ApplicationManagement activities)'
+      purpose: 'Provide the authorization-server audit where Entra backs the MCP authorization service.'
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'Add application; Add service principal; Add service principal credentials; Add delegated permission grant; Consent to application'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-ENTRA-AUDIT'
+          load_bearing: true
+          note: 'Add application and service principal record the registration; permission and consent are chain context.'
+      details: >-
+        Entra audit activities under ApplicationManagement include Add application, Add service
+        principal, Add service principal credentials, Add delegated permission grant, and Consent to
+        application, recording the registration and related grants.
+      limitations:
+        - 'No fetched page states retention for this context.'
+        - 'Activity names are documented but the DCR request body fields are not enumerated.'
+    - source: 'Reverse-proxy / WAF access logs and endpoint network telemetry (self-hosted servers)'
+      purpose: 'Record the POST /register request and its source where the authorization service is self-hosted.'
+      event_vocabulary: 'flow-record'
+      tier: 'request'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'POST /register access log (source address, user agent, status); DeviceNetworkEvents / Sysmon 3'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-DEFENDER-NET'
+          load_bearing: false
+          note: 'Provides the registration source for a self-hosted server that emits no OAuth-client audit event of its own.'
+      details: >-
+        For a self-hosted MCP authorization service, reverse-proxy or WAF access logs record the POST to
+        the registration endpoint with source address, user agent, and status; endpoint network events
+        record client-side connections.
+      limitations:
+        - 'Records the HTTP request, not the parsed client metadata or its sanction status.'
+        - 'Requires a proxy or WAF in front of the self-hosted registration endpoint.'
+
+detection:
+  scope: >-
+    The observable path is the registration itself, evidenced only in the authorization server's own
+    audit, not in MCP. Two materially distinct strategies divide coverage: one flags a registered
+    client absent from the approved-client inventory or carrying anomalous metadata in the identity
+    provider's audit, and one flags an anomalous POST /register at the proxy or WAF for a self-hosted
+    server.
+  outcome_guardrails: >-
+    A registration event establishes that a client was created, not that it obtained authorization or
+    tokens, which are chain context. A metadata or source anomaly establishes suspicion, not a
+    confirmed rogue client without the inventory. "Client registered" and "rogue client confirmed" are
+    different claims and must stay distinct.
+  shared_normalization_context: >-
+    Canonicalize each registration to its client_id, redirect URIs, grant and response types, and
+    registering source, and classify the client against an approved-MCP-client inventory; treat a
+    client absent from the inventory as unsanctioned pending review.
+  shared_enrichment_context: >-
+    Join the authorization-server registration audit to the approved-client inventory on client_id, and
+    for self-hosted servers to proxy or WAF logs on time and source. No join reaches into MCP, which
+    logs nothing; the inventory is required reference data.
+  strategies:
+    - id: 'STRAT-ROGUE-OAUTH-REGISTRATION'
+      name: 'rogue client registration against the approved inventory'
+      objective: >-
+        Flag dynamic registration of an OAuth client absent from the approved MCP OAuth client
+        inventory, or carrying unusual redirect URIs or an unexpected registration source.
+      incident_relevance: >-
+        Detects the registration the PoC performed, from the authorization server's own audit. It does
+        not by itself establish that the client obtained authorization or tokens, which are separate
+        chain context.
+      detection_logic: >-
+        From the authorization-server audit (Okta client-lifecycle create, Entra Add application),
+        select client-registration events and raise when the registered client is absent from the
+        approved-client inventory, or carries redirect URIs, grant types, or a registration source
+        outside the expected set. Associate the finding with the registering actor and source where the
+        audit records them. Do not treat every new client as benign; the predicate is inventory absence
+        plus metadata or source anomaly.
+      minimum_evidence: >-
+        A registration event naming a client_id absent from the approved inventory, or with anomalous
+        metadata or source. Without an inventory, report a client registration with anomalous metadata,
+        not a confirmed rogue client.
+      correlation_context: >-
+        Match the registered client_id against the approved inventory at registration time; a first
+        legitimate onboarding of a sanctioned client is expected and must be reconciled with the
+        inventory rather than alerted blindly.
+      detectors:
+        - detector_class: 'identity-provider-audit-analytics'
+          technologies:
+            - 'Okta System Log'
+            - 'Microsoft Entra ID audit'
+            - 'SIEM identity analytics (Splunk, Microsoft Sentinel, Elastic, Google SecOps)'
+          contribution: 'Carries the registration event and metadata to test against the approved inventory.'
+          limitations: 'Requires the IdP audit enabled and an approved-client inventory; DCR body fields may be unenumerated.'
+      benign_explanations:
+        - explanation: >-
+            A legitimate new MCP client is onboarded and registers for the first time, so it is
+            momentarily absent from the approved inventory.
+          distinguishing_context: >-
+            A registration whose metadata or source is anomalous, or which is never reconciled into the
+            inventory, separates the rogue case; a sanctioned onboarding is added to the inventory.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding all first-time client registrations to cut onboarding noise also suppresses the
+            rogue registration, which is itself a first-time event.
+      blind_spots:
+        - description: 'Missing telemetry: MCP defines no registration audit, so absence of an IdP event where DCR is unlogged proves nothing.'
+          routes_to: null
+        - description: 'Missing context: no approved-client inventory to distinguish sanctioned from rogue clients.'
+          routes_to: null
+        - description: 'Attribution limit: the DCR request body fields (redirect_uris, grant_types) may be unenumerated in the audit.'
+          routes_to: null
+      analyst_response: >-
+        Retrieve the registration event, the client_id and its metadata, and the registering actor and
+        source, check the client against the approved inventory, determine whether authorization or
+        token issuance followed, and disable or quarantine an unsanctioned client.
+      safe_conclusion: >-
+        A client not in the approved inventory was dynamically registered; authorization or token
+        issuance to it is not implied and must be established separately.
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: >-
+          No source or estate figure is available; volume depends on client-onboarding cadence and
+          whether an approved inventory is maintained.
+    - id: 'STRAT-SELFHOSTED-REGISTER-ANOMALY'
+      name: 'self-hosted POST /register anomaly'
+      objective: >-
+        Detect an anomalous POST to the registration endpoint of a self-hosted MCP authorization
+        service that emits no OAuth-client audit event of its own.
+      incident_relevance: >-
+        Detects the registration request where the authorization service is self-hosted and lacks an
+        IdP audit; it observes the HTTP request, not the parsed client sanction status.
+      detection_logic: >-
+        From reverse-proxy or WAF access logs, select POST requests to the registration endpoint and
+        raise on an unexpected source address, user agent, or request rate, or a status indicating a
+        successful registration from outside expected infrastructure. Use network telemetry to
+        corroborate the client-side source.
+      minimum_evidence: >-
+        A POST /register in proxy or WAF logs from an unexpected source with a success status. Naming the
+        client rogue requires the parsed client metadata and the inventory this log does not carry.
+      correlation_context: >-
+        Correlate the proxy request with any downstream authorization-server behaviour on time and
+        source; a self-hosted server without its own audit may offer no client_id to join on.
+      detectors:
+        - detector_class: 'proxy-and-network-registration-analytics'
+          technologies:
+            - 'Reverse-proxy / WAF access logs'
+            - 'Endpoint network telemetry (Microsoft Defender, Sysmon)'
+          contribution: 'Records the registration request and its source for a self-hosted server.'
+          limitations: 'Sees the HTTP request, not the client metadata or its sanction status; needs a proxy or WAF.'
+      benign_explanations:
+        - explanation: >-
+            A legitimate client or automation registers against the self-hosted endpoint from expected
+            infrastructure.
+          distinguishing_context: >-
+            A registration from an unexpected source or at an unusual rate separates the suspicious
+            case; a registration from sanctioned infrastructure does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Allowlisting the registration endpoint wholesale would suppress rogue registrations along
+            with legitimate ones.
+      blind_spots:
+        - description: 'Missing telemetry: proxy logs carry the HTTP request, not the parsed client metadata.'
+          routes_to: null
+        - description: 'Attribution limit: a self-hosted server may emit no client_id to join to an inventory.'
+          routes_to: null
+      analyst_response: >-
+        Identify the POST /register source and status, corroborate with network telemetry, determine
+        whether the self-hosted server persisted a client, and reconcile against the approved inventory
+        where a client_id can be recovered.
+      safe_conclusion: >-
+        An anomalous registration request reached a self-hosted authorization endpoint; whether a rogue
+        client was persisted and later authorized requires the server's own audit.
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: 'Depends on self-hosted registration traffic and proxy or WAF coverage.'
+
+detector_requirements:
+  required: >-
+    Canonicalization of each registration to its client_id, redirect URIs, grant and response types,
+    and registering source; an approved-MCP-client inventory as reference data; the authorization
+    server's registration audit or, for self-hosted servers, proxy or WAF logs, enabled and retained;
+    and outcome-aware alert text that separates a client registration from a confirmed rogue client and
+    from any later authorization or token issuance.
+  optional: >-
+    Consent and privilege-grant audit and downstream token-issuance telemetry add chain context after
+    registration, but neither gates detection of the registration itself.
+  correlation:
+    capability: >-
+      Aligned clocks and retention on the authorization-server audit and proxy logs, a stable client_id
+      to join to the approved inventory, and the registering actor and source where the audit records
+      them.
+    window: 'At registration time for the inventory check; a short window to associate a self-hosted POST with server behaviour.'
+  baselines:
+    - name: 'Approved MCP OAuth clients and expected registration sources'
+      window: 'Config-current, re-read on change'
+      seeded_from: >-
+        The sanctioned client inventory and onboarding process; never extended with a client merely
+        because it registered, which would enrol the rogue client as approved.
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on deployed
+    sensors, enabled logging, retained fields, and architecture. For this object, verification
+    specifically means confirming whether the MCP authorization service supports DCR, which IdP or
+    self-hosted server backs it and whether its registration audit is enabled and retained, and whether
+    an approved-client inventory exists, since MCP itself defines no registration audit field and does
+    not require DCR to be logged.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of the behavior; the cited disclosure is undated in the catalog.'
+    - 'Whether any rogue client obtained authorization or tokens in the PoC or in the wild.'
+    - 'The retention of Okta System Log or Entra audit for client-registration events in this context.'
+    - 'The DCR request body fields (redirect_uris, grant_types, response_types) recorded by each authorization server.'
+  assumptions:
+    - id: 'ASSUMPTION-IDP-AUDIT-IS-PRIMARY-EVIDENCE'
+      verdict_changing: true
+      statement: >-
+        The authorization server's own registration audit, joined to an approved-client inventory, is
+        the primary and deciding evidence, because MCP defines no registration record. The disclosure
+        describes the DCR abuse but names no MCP audit field; this pack inferred that the IdP or proxy
+        audit is the sole carrier of the registration, which is reasoning from the telemetry audit to
+        an evidence claim. If wrong and MCP or the SDK does emit a registration record, the observable
+        gate understates coverage and a protocol-native strategy is missing. Resolve it by re-checking
+        the MCP authorization and client-registration specifications for a documented registration
+        audit event.
+  standing_negatives:
+    - statement: >-
+        Neither MCP page fetched documents a registration audit record: client_id, redirect_uris,
+        grant_types, response_types, the registering actor, and the source IP are absent as
+        protocol-defined log fields and must come from the authorization server's own audit; the MCP
+        pages fetched define protocol behaviour and the 2026-07-28 deprecation only.
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the MCP authorization and client-registration specifications for a newly documented
+        registration audit record with named fields.
+      ref: 'REF-MCP-CLIENTREG'
+
+missing_states:
+  - id: 'MISSING_REGISTRATION_AUDIT'
+    meaning: 'Missing telemetry: MCP defines no registration audit and the authorization server may not log DCR (RFC 7591 MAY).'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Rely on the IdP or proxy audit where present, and state that absence of a registration event is
+      not proof of absence of registration where DCR is unsupported or unlogged.
+  - id: 'MISSING_APPROVED_CLIENT_INVENTORY'
+    meaning: 'Missing context: no approved-MCP-client inventory to classify a registered client as rogue.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Do not claim a rogue client; report a client registration with any metadata anomaly and recover
+      the approved-client inventory before classifying it.
+  - id: 'MISSING_REGISTRATION_METADATA'
+    meaning: 'Attribution gap: the audit records the registration but not the client redirect URIs or grant types.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report the registration on client_id and inventory membership and mark the metadata assessment as
+      unavailable where the body fields are not logged.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'registering_actor_or_source_or_explicit_missing_state'
+    - 'registered_client_id_and_inventory_membership'
+    - 'client_redirect_uris_and_grant_types_when_logged'
+    - 'authorization_service_and_backing_identity_provider'
+    - 'registration_source_and_endpoint'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'self_hosted_post_register_source_and_status'
+      condition: 'when the authorization service is self-hosted and evidence comes from proxy or WAF logs'
+  recommended_title: 'Unsanctioned OAuth client dynamically registered with the MCP authorization service (no authorization implied)'
+  unsupported_title: 'Attacker obtained MCP access tokens by registering a rogue OAuth client'
+
+evidence:
+  confirmed_incident_behavior: >-
+    Cato Networks reports a proof-of-concept in which an attacker uses OAuth 2.0 Dynamic Client
+    Registration to register a rogue client with an MCP authorization service, and frames later
+    authorization or token capture as chain context rather than part of this procedure. That the
+    deciding evidence is the authorization server's own registration audit joined to an approved-client
+    inventory, rather than any MCP-defined record, is this pack's reading, registered in
+    missing_context.assumptions, not a logging claim the disclosure makes.
+  supported_conclusion: >-
+    The evidence supports that an attacker can dynamically register a rogue OAuth client with an MCP
+    authorization service that supports DCR, as demonstrated in a responsibly disclosed PoC. A detector
+    can report an unsanctioned client registration where the IdP or proxy audit and an approved-client
+    inventory exist; it cannot confirm a rogue client without the inventory, nor imply authorization or
+    token issuance.
+  unsupported_conclusions: >-
+    The evidence does not establish that any rogue client obtained authorization, consent, or tokens, a
+    count of affected services, or real-world exploitation. Those are chain context requiring
+    authorization and token telemetry the source does not carry.
+  procedure_boundary: >-
+    This procedure is the registration of a rogue OAuth client. Any subsequent authorization, consent,
+    or token issuance to that client is separate chain context and is not evidenced by the registration
+    having occurred.
+  references:
+    - id: 'REF-THREAT-OAUTH'
+      type: 'incident-procedure-primary-source'
+      title: 'Cato CTRL: two vulnerabilities in Anthropic''s MCP SDK'
+      publisher: 'Cato Networks'
+      url: 'https://www.catonetworks.com/blog/cato-ctrl-two-vulnerabilities-in-anthropics-mcp-sdk/'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary source for the PoC that an attacker dynamically registers a rogue OAuth client with an
+        MCP authorization service. It frames authorization or token capture as chain context and does
+        not document a victim count or real-world exploitation.
+    - id: 'REF-MCP-AUTH'
+      type: 'attack-surface-documentation'
+      title: 'MCP authorization specification'
+      publisher: 'Model Context Protocol'
+      url: 'https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the DCR mechanism, registration_endpoint advertisement, and POST /register flow;
+        supports the surface mechanics and that no registration audit record is specified.
+    - id: 'REF-MCP-CLIENTREG'
+      type: 'attack-surface-documentation'
+      title: 'MCP client registration specification (2026-07-28)'
+      publisher: 'Model Context Protocol'
+      url: 'https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the deprecation of DCR in favour of Client ID Metadata Documents and the retention of
+        DCR for backwards compatibility; supports the control context and the standing negative.
+    - id: 'REF-OKTA-EVENTS'
+      type: 'telemetry-documentation'
+      title: 'Okta System Log event types'
+      publisher: 'Okta'
+      url: 'https://developer.okta.com/docs/reference/api/event-types/'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents app.oauth2.client.lifecycle and application.lifecycle events used as the primary
+        registration audit; supports those fields and the retention and body-field limitations.
+    - id: 'REF-ENTRA-AUDIT'
+      type: 'telemetry-documentation'
+      title: 'Microsoft Entra ID audit activities reference'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/entra/identity/monitoring-health/reference-audit-activities'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the ApplicationManagement activities (Add application, Add service principal) used as
+        the registration audit where Entra backs the service; supports those fields and their
+        limitations.
+    - id: 'REF-DEFENDER-NET'
+      type: 'telemetry-documentation'
+      title: 'DeviceNetworkEvents table (advanced hunting)'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-devicenetworkevents-table'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the network fields used to corroborate the registration source for a self-hosted
+        server; supports that proxy and network evidence, not the parsed client metadata.

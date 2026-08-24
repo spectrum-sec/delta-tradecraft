@@ -1,0 +1,574 @@
+identity:
+  uuid: '085f2273-27f9-41d4-a484-4ee83d00c496'
+  id: 'DT-AAG1-AI-030'
+  aliases:
+    - 'P65'
+  name: 'A malicious MCP server sends a sampling request containing hidden instructions'
+  incident: >-
+    MCP server-initiated sampling injection, a responsibly disclosed proof-of-concept reported by
+    Unit 42 in which a malicious MCP server uses the server-initiated sampling path to deliver hidden
+    instructions to the client agent.
+  first_observed: '2025'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'ai-agent-harness'
+  secondary_attack_surfaces:
+    - 'submitted-content-ingest'
+  behavior_classes:
+    - 'other'
+  behavior_classes_note: >-
+    indirect-prompt-injection-via-server-initiated-sampling: a connected MCP server initiates a
+    sampling request whose message content carries hidden instructions, so attacker-controlled text
+    reaches the client agent through a trusted server-to-client protocol path.
+  tags:
+    - 'ai'
+    - 'mcp'
+    - 'prompt-injection'
+    - 'sampling'
+    - 'agent'
+
+behavior:
+  definition: >-
+    A malicious MCP server initiates a sampling request containing hidden instructions so the client
+    agent receives attacker-controlled content through the server-initiated sampling path.
+  detailed_definition: >-
+    An adversary who operates a connected server in an agent's tool ecosystem uses a server-to-client
+    request channel to send content the client will place before its model, embedding instructions in
+    that content. Because the client trusts the server enough to forward an approved request to the
+    model and return the response, attacker-authored text crosses from an external server into the
+    agent's model-input path. The attempt is the delivery of the crafted request; success is the
+    agent acting on the hidden instructions. It is independent of the client product and depends on
+    the client mediating server-initiated sampling without recording or vetting its content.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers a connected server initiating a sampling request whose content carries hidden
+      instructions to the client; it does not cover proof that the agent complied with them, which
+      requires separate corroboration.
+    summary: >-
+      This can occur where the client supports the server-initiated sampling path, a server the agent
+      has connected to is attacker-controlled or compromised, and the client forwards the server's
+      message content toward its model. It requires only that the server issue a sampling request and
+      that the client not strip or block the embedded instructions.
+  observable:
+    answer: 'no'
+    answer_scope: >-
+      The server connection and the network transport are observable, and a downstream tool call the
+      response triggers may be observable; the deciding evidence, that a sampling request was received
+      and that its content carried hidden instructions, is recorded by no fetched client product and
+      is therefore not observable as the behavior itself.
+    blocking_conditions:
+      - condition: 'deciding-property-not-in-any-schema'
+        note: >-
+          No MCP client product fetched documents any event for a received sampling request; the
+          request, its messages content, its systemPrompt, the human-approval decision, and the model
+          response returned to the server are all absent as native fields.
+      - condition: 'action-emits-no-record'
+        note: >-
+          The server-initiated sampling request produces no client-side audit record; the MCP logging
+          utility is server-driven and can be silent or forged, so it is not client audit evidence.
+    summary: >-
+      To observe the behavior itself an implementer would need a client-side record of the received
+      sampling request and its content, which no product emits. Proxy signals exist: a server
+      connection (claude_code.mcp_server_connection proves a server was connected, not that it
+      initiated sampling), the network transport to the server, and any tool call the sampling
+      response triggers. A connection record with no sampling event, or transport bytes with no
+      content, is too weak to establish that a hidden-instruction sampling request occurred.
+  detectable:
+    answer: 'no'
+    answer_scope: >-
+      A malicious server-initiated sampling request cannot be separated from a legitimate one because
+      the client emits no record of the request or its content, and the MCP logging that does exist is
+      under the server's control and untrustworthy.
+    blocking_conditions:
+      - condition: 'deciding-property-not-in-any-schema'
+        note: >-
+          The field that would separate a hidden-instruction sampling request from a benign one is the
+          request content and its approval decision, which is in no client schema.
+      - condition: 'only-unreliable-negative-evidence'
+        note: >-
+          The one sampling-adjacent stream, the MCP logging utility, is server-controlled and can be
+          silent or forged, so its absence or content proves nothing about a malicious server.
+    summary: >-
+      Separation would require the client to record each received sampling request, its message and
+      systemPrompt content, and the human-approval outcome, and to attribute it to a server whose
+      trust is known. Because the client emits none of this and the only sampling-adjacent log is the
+      server's own, benign and malicious sampling are indistinguishable in native telemetry, and the
+      reformulated question a detector can pursue is untrusted-server connection and downstream
+      tool-call behavior, not the sampling content itself.
+
+attack_surface_context:
+  surface: >-
+    The MCP server-initiated sampling path (sampling/createMessage, server to client) by which a
+    connected server asks the client agent to run a model completion on its behalf.
+  how_the_surface_works: >-
+    In the Model Context Protocol, a connected server can initiate a sampling request in which the
+    client forwards an approved prompt to its model and returns the approved response to the server.
+    The request carries messages with text or image content, a systemPrompt, token and model
+    preferences, and optional tools and tool-choice, so the server supplies content that the client
+    places before its model, subject to whatever approval the client mediates.
+  incident_processing_path: >-
+    Unit 42 reports (source-attested) that a malicious MCP server can abuse the server-initiated
+    sampling path to deliver hidden instructions to the client agent, injecting attacker content
+    through a trusted protocol channel. That the deciding evidence, the received request and its
+    hidden-instruction content, is absent from every fetched client telemetry surface, leaving only
+    connection and transport proxies, is this pack's reading of the telemetry audit, since no client
+    documents a sampling event.
+  processing_stages:
+    - 'client-connects-to-mcp-server'
+    - 'server-initiates-sampling-createmessage-request'
+    - 'request-carries-hidden-instruction-content'
+    - 'client-mediates-approval'
+    - 'client-forwards-content-to-model'
+    - 'model-response-returned-to-server-or-agent-acts'
+  stage_evidence: >-
+    The connection stage proves only that a server was connected; the sampling-request and
+    approval stages, which would prove the behavior, emit no client record; the downstream stage,
+    where the response triggers a tool call, may emit a record but attests the effect, not the hidden
+    instruction. Every observable event thus sits either before or after the unobserved deciding step.
+  trust_boundaries: >-
+    External MCP server into the client agent's model-input path (crossed in the PoC: the sampling
+    content reached the client); client agent into any action the response triggers (reachable, and
+    treated as the unverified success half). Whether the agent complied with the hidden instructions
+    is not established and is corroborated only by downstream behavior.
+  security_control_context: >-
+    The preventive control is the client's mediation of server-initiated sampling, typically a
+    human-approval prompt before the client forwards the request to the model. It decides in-client
+    and, on the products fetched, records neither the request content nor the approval outcome, so a
+    malicious request is neither visibly blocked nor logged. Bypass representations include
+    instructions concealed within otherwise-plausible sampling message text, and a server that
+    suppresses or forges its own MCP logging.
+  practitioner_implication: >-
+    An implementer must discover which MCP client the estate runs and that none emits a sampling-request
+    event, which servers are connected and their trust (from connection records and local config
+    inventory such as the MCP-server configuration file), and that the only sampling-adjacent log is
+    server-controlled, so any content-level signal must be built as client instrumentation rather than
+    read from a log.
+
+threat_research:
+  why_it_matters: >-
+    Server-initiated sampling is a trusted channel by which a connected server can place text before
+    the client's model; a malicious server that hides instructions there injects attacker intent into
+    the agent without ever touching the user's prompt, and the client keeps no record of it.
+  threat_actor: >-
+    Unknown; the behavior was demonstrated by Unit 42 researchers as a responsibly disclosed
+    proof-of-concept, with no in-the-wild actor attributed.
+  campaign: >-
+    Unit 42 research disclosure of MCP attack vectors including server-initiated sampling injection;
+    no named campaign or victim organization.
+  victim: >-
+    Users of MCP clients that support server-initiated sampling and connect to third-party servers;
+    the source demonstrates the class rather than naming a compromised organization.
+  capability: >-
+    A demonstrated proof-of-concept that a malicious MCP server can deliver hidden instructions
+    through the server-initiated sampling path; the source shows the injection channel, not a measured
+    population of agents that complied.
+  target: >-
+    The MCP client's server-initiated sampling path; targeted and demonstrated in a PoC, with
+    real-world exploitation neither claimed nor evidenced.
+  victimology:
+    - 'Agents that support MCP server-initiated sampling and connect to third-party or unvetted servers.'
+    - 'Deployments that approve sampling requests without recording or inspecting their content.'
+
+visibility:
+  telemetry_sources:
+    - source: 'MCP protocol sampling path (specification, carrier definition)'
+      purpose: 'Define the carrier and its content fields; establish that the protocol defines no client audit record.'
+      event_vocabulary: 'none'
+      tier: 'not-applicable'
+      operational_viability: 'rejected-not-coverage'
+      fields:
+        - name: 'sampling/createMessage params (messages[].content type text/image, systemPrompt, maxTokens, tools[], toolChoice.mode)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-MCP-SAMPLING'
+          load_bearing: false
+          note: 'Defines what the request can carry, but the protocol specifies no client-side audit event for a received request.'
+      details: >-
+        The sampling/createMessage request runs server to client and carries messages with text or
+        image content, a systemPrompt, token and model preferences, tools, and tool-choice. The
+        specification defines protocol behaviour only, not an audit record.
+      limitations:
+        - 'Defines the carrier, not a client audit event.'
+        - 'No approval-decision or received-request field is specified.'
+    - source: 'MCP logging utility (server-driven notifications)'
+      purpose: 'Consider the only sampling-adjacent log stream and why it is not client audit evidence.'
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'rejected-not-coverage'
+      fields:
+        - name: 'notifications/message (params.level, logger, data); logging/setLevel'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-MCP-LOGGING'
+          load_bearing: false
+          note: 'Server-controlled operational logging; can be silent or forged by a malicious server, so not client audit.'
+      details: >-
+        The MCP logging facility is server-to-client operational logging under the server's control,
+        with levels from debug to emergency; it is not a client-side audit trail of received sampling.
+      limitations:
+        - 'Under server control; a malicious server can suppress or forge it.'
+        - 'Not client-side audit evidence of a received sampling request.'
+    - source: 'Anthropic Claude Code OpenTelemetry (MCP connection and tool records)'
+      purpose: 'Recover proxy signals: that a server was connected and any tool call the sampling response triggers.'
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'claude_code.mcp_server_connection (status, transport_type, server_scope, duration_ms, error_code, is_plugin, plugin_id_hash)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CLAUDECODE-OTEL'
+          load_bearing: false
+          note: 'Proves a server was connected, not that it initiated sampling; server_name withheld unless OTEL_LOG_TOOL_DETAILS=1, plugin.name reported as "third-party" without it.'
+        - name: 'claude_code.tool_result (mcp_server_scope, tool_parameters.mcp_server_name, mcp_tool_name)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CLAUDECODE-OTEL'
+          load_bearing: false
+          note: 'Records a tool call the sampling response may trigger; no sampling event is documented.'
+      details: >-
+        Claude Code documents no sampling event. The closest records are mcp_server_connection for a
+        server connection and tool_result for any tool call, which can serve as downstream proxies but
+        do not carry the sampling request or its content.
+      limitations:
+        - 'No sampling-request event is documented.'
+        - 'server_name and third-party plugin.name are withheld unless OTEL_LOG_TOOL_DETAILS=1.'
+    - source: 'Endpoint and network telemetry plus local MCP-server config inventory'
+      purpose: 'Attribute the client-server transport and enumerate which servers are configured.'
+      event_vocabulary: 'flow-record'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'DeviceNetworkEvents (RemoteIP, RemoteUrl, RemotePort, InitiatingProcessFileName); Sysmon 1 command line'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-DEFENDER-NET'
+          load_bearing: false
+          note: 'Transport and stdio server process only; carries no sampling content.'
+      details: >-
+        DeviceNetworkEvents or Sysmon 3 record the client-server transport and Sysmon 1 the stdio
+        server process; local config inventory files that name configured MCP servers (the MCP-server
+        configuration file) help establish which servers exist and their trust.
+      limitations:
+        - 'Records transport and process, not the sampling request or content.'
+        - 'Config inventory names servers but not their runtime behaviour.'
+
+detection:
+  scope: >-
+    The observable path has an unobserved centre: a server connects and transports bytes, an
+    unrecorded sampling request carrying hidden instructions is mediated, and a downstream tool call
+    may follow. Coverage is a reformulation around that gap: one strategy flags server-initiated
+    sampling behavior from untrusted or newly approved servers where any client instrumentation
+    exists, and one correlates an untrusted server connection with downstream tool-call activity.
+  outcome_guardrails: >-
+    A server connection establishes that a server was reachable, not that it initiated sampling or
+    hid instructions. A downstream tool call establishes an effect to review, not confirmed
+    compliance with injected instructions. "Untrusted server connected" and "hidden-instruction
+    sampling confirmed" are different claims and must stay distinct.
+  shared_normalization_context: >-
+    Canonicalize each connected server to a stable identity (name where OTEL_LOG_TOOL_DETAILS exposes
+    it, plus transport and scope) and classify it against an approved-server inventory; treat a server
+    as untrusted until it is on that inventory.
+  shared_enrichment_context: >-
+    Join server connection records to any subsequent tool_result on server scope and time, and to the
+    local MCP-server config inventory for trust. No available join supplies the sampling request or
+    its content, which stays an instrumented or absent field.
+  strategies:
+    - id: 'STRAT-UNTRUSTED-MCP-SAMPLING'
+      name: 'server-initiated sampling from an untrusted server'
+      objective: >-
+        Flag server-initiated sampling requests from untrusted or newly approved MCP servers,
+        especially with instruction-like content or unexpected sampling volume.
+      incident_relevance: >-
+        Targets the behavior the PoC demonstrated. On the products fetched it cannot be implemented
+        from native telemetry and requires client-side instrumentation that records received sampling
+        requests and their content.
+      detection_logic: >-
+        Where the client can be instrumented, record each received sampling request with its server
+        identity, message and systemPrompt content, and approval outcome, then raise when an untrusted
+        or newly approved server initiates sampling carrying instruction-like content or at unexpected
+        volume. Classify server trust against the approved inventory. Do not trust the MCP logging
+        utility as evidence; it is server-controlled.
+      minimum_evidence: >-
+        An instrumented record of a received sampling request bound to an untrusted server, with its
+        content. Without instrumentation, only connection and transport proxies exist, which support
+        reporting an untrusted-server connection, not a confirmed hidden-instruction request.
+      correlation_context: >-
+        Bind the sampling record to the server identity and to any downstream tool call on server
+        scope and time; the request-to-content link is instrumented, not recoverable from native logs.
+      detectors:
+        - detector_class: 'mcp-client-sampling-instrumentation'
+          technologies:
+            - 'Client-side MCP sampling instrumentation (first-party build)'
+            - 'MCP client guardrail or approval hooks where exposed'
+          contribution: 'Can record the received sampling request and content the client does not emit.'
+          limitations: 'Must be built; unavailable as native telemetry on every MCP client fetched.'
+        - detector_class: 'siem-mcp-server-trust-correlation'
+          technologies:
+            - 'Splunk'
+            - 'Microsoft Sentinel'
+            - 'Elastic'
+          contribution: 'Classifies connected servers against an approved inventory and flags untrusted or new ones.'
+          limitations: 'Consumes connection and config records but no sampling event or content.'
+      benign_explanations:
+        - explanation: >-
+            A legitimate MCP server initiates sampling as a normal part of its workflow, carrying
+            instruction-like text that is genuinely intended.
+          distinguishing_context: >-
+            An untrusted or newly approved server, or content unrelated to the server's stated
+            function, separates the suspicious case; sampling from an approved server does not.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding all instruction-like sampling content to cut noise also suppresses the hidden
+            instructions, which are delivered exactly as sampling content.
+      blind_spots:
+        - description: 'Missing telemetry: no MCP client emits a received-sampling-request event or its content.'
+          routes_to: null
+        - description: 'Missing telemetry: the MCP logging utility is server-controlled and can be silent or forged.'
+          routes_to: null
+        - description: 'Evasion: hidden instructions concealed within plausible sampling message text.'
+          routes_to: null
+      analyst_response: >-
+        Identify the connected server and its trust from connection and config records, recover the
+        sampling request and content where instrumentation exists, determine any downstream tool call,
+        and assess whether the agent acted on injected instructions.
+      safe_conclusion: >-
+        Attempt-level: an untrusted server initiated sampling or connected; agent compliance with any
+        hidden instructions requires separate corroboration and native telemetry does not confirm the
+        request content.
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: >-
+          No source or estate figure is available; on native telemetry the content strategy cannot
+          fire, and volume under instrumentation depends on the built sensor.
+    - id: 'STRAT-UNTRUSTED-SERVER-DOWNSTREAM-TOOLCALL'
+      name: 'untrusted server connection then downstream tool call'
+      objective: >-
+        Correlate a connection to an untrusted or newly approved MCP server with a subsequent tool
+        call, as the observable consequence of an accepted sampling response.
+      incident_relevance: >-
+        Detects a possible downstream consequence, not the sampling injection itself. A positive is an
+        untrusted-server activity pattern to investigate, not proof of a hidden-instruction request.
+      detection_logic: >-
+        From client connection and tool records, select connections to servers not on the approved
+        inventory and raise when such a server is connected and a tool call follows within the same
+        session, particularly a sensitive action. Scope by server identity and session, not by user
+        alone.
+      minimum_evidence: >-
+        An untrusted-server connection correlated in session and time with a subsequent tool call.
+        Naming it a sampling injection requires the received-request content this strategy does not
+        have.
+      correlation_context: >-
+        Correlate within a session on server scope and time; concurrent trusted-server activity in the
+        session weakens attribution of the tool call to the untrusted server.
+      detectors:
+        - detector_class: 'mcp-connection-and-toolcall-correlation'
+          technologies:
+            - 'Anthropic Claude Code OTel (mcp_server_connection, tool_result)'
+            - 'Local MCP-server config inventory'
+            - 'Endpoint network telemetry (Microsoft Defender, Sysmon)'
+          contribution: 'Ties an untrusted-server connection to a downstream tool call in the same session.'
+          limitations: 'Carries no sampling request or content; server_name may be withheld without a tool-detail flag.'
+      benign_explanations:
+        - explanation: >-
+            A newly added but legitimate MCP server connects and its tools are used as intended in the
+            same session.
+          distinguishing_context: >-
+            A server never sanctioned, or a sensitive tool call unrelated to the user task, separates
+            the suspicious case; ordinary use of a new but approved server does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Allowlisting any newly connected server would suppress the malicious server on first use.
+      blind_spots:
+        - description: 'Attribution limit: a tool call cannot be tied to a sampling request the client never records.'
+          routes_to: null
+        - description: 'Missing telemetry: server_name and third-party plugin.name withheld unless OTEL_LOG_TOOL_DETAILS=1.'
+          routes_to: null
+      analyst_response: >-
+        Identify the untrusted server, confirm its trust against the inventory, determine the
+        downstream tool calls in the session and their sensitivity, and scope any resulting actions.
+      safe_conclusion: >-
+        An untrusted MCP server connected and a tool call followed in the same session; attribution to
+        a hidden-instruction sampling request requires content the client does not record.
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: 'Depends on how often new servers are added and how tool calls are baselined per session.'
+
+detector_requirements:
+  required: >-
+    A canonical server identity and an approved-server inventory to classify trust; retention of
+    connection and tool records and, where instrumented, of received sampling requests and their
+    content and approval outcome; session correlation from connection to downstream tool call; and
+    outcome-aware alert text that separates an untrusted-server connection from a confirmed
+    hidden-instruction sampling request.
+  optional: >-
+    Client-side sampling instrumentation that records the received request, its content, and the
+    approval outcome turns the reformulated proxy into a direct detection; it is the only thing that
+    does, and it must be built. Local MCP-server config inventory adds trust context.
+  correlation:
+    capability: >-
+      Aligned clocks across client and endpoint streams, retained connection and tool records, a
+      stable server identity, and an approved-server inventory; a shared session and server scope is
+      the join key from a connection to a downstream tool call.
+    window: 'Within-session, from server connection to the subsequent tool call.'
+  baselines:
+    - name: 'Approved MCP servers and their sanctioned tools'
+      window: 'Config-current, re-read on change'
+      seeded_from: >-
+        The sanctioned MCP-server inventory and configuration; never extended with a server merely
+        because it connected, which would enrol an attacker server as approved.
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on deployed
+    sensors, enabled logging, retained fields, and architecture. For this object, verification
+    specifically means confirming that no MCP client emits a sampling-request event (so the direct
+    strategy needs instrumentation), which servers are connected and their trust, and that the MCP
+    logging utility is server-controlled and cannot be relied on as client audit evidence.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of the behavior; the cited disclosure is undated in the catalog.'
+    - 'Whether any agent complied with the hidden instructions in the PoC or in the wild.'
+    - 'Which MCP clients mediate sampling with a human-approval step and whether any records it.'
+    - 'How server identity maps to a downstream tool call within a session on each client.'
+  assumptions:
+    - id: 'ASSUMPTION-NO-CLIENT-SAMPLING-RECORD'
+      verdict_changing: true
+      statement: >-
+        No MCP client emits a record of a received sampling request or its content, so the deciding
+        evidence is structurally absent and only connection and downstream proxies remain. The
+        disclosure describes the injection channel but names no client telemetry; this pack inferred
+        the total absence from the fetched client documentation, which is reasoning from a
+        documentation audit to an evidence claim. If wrong and a client does record received sampling,
+        the observable gate should be yes-conditional rather than no and a content strategy is
+        missing. Resolve it by re-checking MCP client telemetry references for a documented
+        received-sampling-request or approval-decision event.
+  standing_negatives:
+    - statement: >-
+        No MCP client product fetched documents any event for a received sampling/createMessage
+        request: the request, its messages content, its systemPrompt, the approval decision, and the
+        returned model response are all absent as native fields, and the only sampling-adjacent log is
+        the server-controlled MCP logging utility; the client pages fetched document connection and
+        tool records only.
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the Claude Code OTel reference and the MCP sampling specification for a newly
+        documented client-side received-sampling-request or approval-decision event.
+      ref: 'REF-CLAUDECODE-OTEL'
+
+missing_states:
+  - id: 'MISSING_SAMPLING_REQUEST_RECORD'
+    meaning: 'Missing telemetry: no client records a received sampling request, its content, or the approval decision.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Do not claim a hidden-instruction sampling request from native telemetry; report at most an
+      untrusted-server connection or downstream tool call, and mark the request content as
+      instrumented-only.
+  - id: 'MISSING_SERVER_TRUST_INVENTORY'
+    meaning: 'Missing context: no approved-server inventory to classify a connected server as trusted or not.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Do not classify a server as untrusted without an inventory; recover the sanctioned MCP-server
+      configuration first, then re-evaluate.
+  - id: 'MISSING_SAMPLING_TO_TOOLCALL_LINK'
+    meaning: 'Attribution gap: a downstream tool call cannot be tied to a sampling request the client never records.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report the downstream tool call under an untrusted-server pattern and mark the tie to a sampling
+      request as inferred, not established.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'actor_or_explicit_missing_state'
+    - 'mcp_server_identity_and_trust_classification'
+    - 'sampling_request_content_when_instrumented_or_explicit_missing_state'
+    - 'approval_decision_when_recorded'
+    - 'downstream_tool_call_when_present'
+    - 'session_and_transport_context'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'received_sampling_message_and_systemprompt'
+      condition: 'when client-side sampling instrumentation records the received request content'
+  recommended_title: 'Untrusted MCP server initiated activity toward the agent (sampling content not recorded)'
+  unsupported_title: 'Malicious MCP server took over the agent through a hidden sampling instruction'
+
+evidence:
+  confirmed_incident_behavior: >-
+    Unit 42 reports a proof-of-concept in which a malicious MCP server abuses the server-initiated
+    sampling path to deliver hidden instructions to the client agent, injecting attacker content
+    through a trusted protocol channel. That the received request and its hidden-instruction content
+    are absent from every fetched client telemetry surface, leaving only connection and transport
+    proxies, is this pack's reading of the telemetry audit, registered in missing_context.assumptions,
+    not a logging claim the disclosure makes.
+  supported_conclusion: >-
+    The evidence supports that a malicious MCP server can deliver hidden instructions through the
+    server-initiated sampling path, as demonstrated in a responsibly disclosed PoC. A detector can
+    report an untrusted-server connection or a downstream tool call; it cannot confirm the
+    hidden-instruction sampling request from native telemetry because no client emits the request or
+    its content.
+  unsupported_conclusions: >-
+    The evidence does not establish that any agent complied with the hidden instructions, a count of
+    affected deployments, real-world exploitation, or the client's internal approval handling. Those
+    require client-side instrumentation the source does not carry.
+  procedure_boundary: >-
+    This procedure is the delivery of a hidden-instruction sampling request from a malicious server to
+    the client. Any action the agent takes in response, and any downstream compromise, is a separate
+    behavior and is not evidenced by the request having been delivered.
+  references:
+    - id: 'REF-THREAT-SAMPLING'
+      type: 'incident-procedure-primary-source'
+      title: 'Model Context Protocol attack vectors'
+      publisher: 'Palo Alto Networks Unit 42'
+      url: 'https://unit42.paloaltonetworks.com/model-context-protocol-attack-vectors/'
+      trust_tier: 'researcher'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary source for the PoC that a malicious MCP server injects hidden instructions via the
+        server-initiated sampling path. It does not document agent compliance, a count of affected
+        deployments, or real-world exploitation.
+    - id: 'REF-MCP-SAMPLING'
+      type: 'attack-surface-documentation'
+      title: 'MCP client sampling specification'
+      publisher: 'Model Context Protocol'
+      url: 'https://modelcontextprotocol.io/specification/2025-11-25/client/sampling'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Defines the sampling/createMessage carrier and its content fields; supports the surface
+        mechanics and the point that the protocol specifies no client audit event.
+    - id: 'REF-MCP-LOGGING'
+      type: 'telemetry-documentation'
+      title: 'MCP logging utility'
+      publisher: 'Model Context Protocol'
+      url: 'https://modelcontextprotocol.io/specification/2025-11-25/server/utilities/logging'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the server-driven logging facility; supports the limitation that it is
+        server-controlled and not client audit evidence, not any incident fact.
+    - id: 'REF-CLAUDECODE-OTEL'
+      type: 'telemetry-documentation'
+      title: 'Claude Code monitoring and OpenTelemetry reference'
+      publisher: 'Anthropic'
+      url: 'https://code.claude.com/docs/en/monitoring-usage'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents mcp_server_connection and tool_result as the closest native records and that no
+        sampling event exists; supports the proxy fields, their withholding without the tool-detail
+        flag, and the standing negative.
+    - id: 'REF-DEFENDER-NET'
+      type: 'telemetry-documentation'
+      title: 'DeviceNetworkEvents table (advanced hunting)'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-devicenetworkevents-table'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the network fields used to attribute the client-server transport; supports that
+        source as transport-only proxy evidence, not the sampling content.

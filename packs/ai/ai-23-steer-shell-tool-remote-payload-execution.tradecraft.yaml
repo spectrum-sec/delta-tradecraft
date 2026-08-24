@@ -1,0 +1,600 @@
+identity:
+  uuid: '3ee4dfe5-44cc-4d7e-b0bb-12fbb7ff5d69'
+  id: 'DT-AAG1-AI-023'
+  aliases:
+    - 'P58'
+  name: 'Attackers steer an agent shell tool into remote payload execution or safety-classifier bypass'
+  incident: >-
+    PromptArmor reported a GitHub Copilot CLI env-prefix bypass leading to remote retrieval and
+    execution; GHSA-g8r9 documents a shell parameter-expansion safety-classifier bypass; ClawHavoc
+    documented staged download, xattr/chmod, and execute via malicious agent skills.
+  first_observed: '2025'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'ai-agent-harness'
+  secondary_attack_surfaces:
+    - 'host-os'
+    - 'egress-control'
+  behavior_classes:
+    - 'other'
+  behavior_classes_note: >-
+    agent-shell-steered-remote-execution-or-classifier-bypass: injected or malicious content drives an
+    agent's shell/command tool to fetch and execute remote content (pipe-to-interpreter or staged
+    download/chmod/execute), or hides side effects behind a command the tool's safety classifier
+    treats as read-only.
+  tags:
+    - 'ai'
+    - 'agent-shell'
+    - 'prompt-injection'
+    - 'remote-execution'
+    - 'copilot-cli'
+
+behavior:
+  definition: >-
+    Injected content steers an agent shell tool into a command/process event that fetches and executes
+    remote content, including pipe-to-interpreter or staged download/chmod/execute variants, or hides
+    side effects behind a command its safety classifier treats as read-only.
+  detailed_definition: >-
+    An adversary controls content the agent will act on and uses it to make the agent's shell or
+    command tool run an operation the operator never intended: retrieving remote content and executing
+    it in-line, or staging a file, marking it executable, and running it. A second form crosses no
+    execution boundary directly but defeats the tool's own guardrail, presenting a command with side
+    effects as read-only so the classifier auto-approves it. The attempt ends at the agent emitting the
+    command; success begins when the interpreter runs the remote content or the classifier admits a
+    side-effecting command as safe. It is independent of which agent product, shell, or interpreter is
+    used.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers an agent shell tool being steered into remote fetch-and-execute or into a classifier-bypass
+      command; does not cover the objective of the executed payload, which is a separate behavior.
+    summary: >-
+      This can occur when an agent has a shell or command tool, an adversary can place content the agent
+      will act on (a skill, a repository file, tool output, a prompt), the host permits the fetch and
+      the interpreter, and either the tool auto-approves the command or the operator approves it. The
+      classifier-bypass form additionally requires a guardrail that classifies commands and a construct
+      that reads as safe while carrying a side effect.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      The fetch-and-execute effect is observable on the host and, where content capture is on, in agent
+      tool telemetry; the classifier-bypass form ("command treated as read-only") is not observable as
+      attempt evidence because no product emits a safety-classifier verdict field.
+    blocking_conditions:
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          Proving execution and destination depends on endpoint process/network telemetry on the agent
+          host; a host with no EDR or Sysmon records neither the interpreter nor the callback.
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          Agent-side command text is opt-in and truncated (Claude Code OTEL_LOG_TOOL_DETAILS=1, 512
+          char / ~4 K bounds); Codex logs no command text; without these the command content is absent.
+      - condition: 'deciding-property-not-in-any-schema'
+        note: >-
+          The classifier-bypass half is structurally unobservable: no fetched product documents a
+          safety-classifier verdict field, so "command treated as read-only" has no native event and
+          that part of the scope cannot be evidenced as attempt.
+    summary: >-
+      The remote-execution form is observable when endpoint telemetry records the interpreter or dropped
+      binary (process create with command line and hash) and the payload fetch (network connect or DNS
+      to the destination), and, where agent content capture is enabled, when agent tool telemetry
+      records the command text tying the sequence to the agent. A process/network event alone establishes
+      execution but not that the agent drove it; agent tool text alone (where captured) establishes the
+      agent's command but not that it ran. The classifier verdict is emitted by nothing, so the bypass is
+      inferred from a side-effecting command that was auto-approved, never read directly.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Separable from benign agent shell use when a fetch-then-execute or download/chmod/execute sequence
+      from an agent-launched process is joined to the agent's command context; a legitimate agent that
+      installs tooling overlaps and must be separated by destination and image, not by loader name.
+    blocking_conditions:
+      - condition: 'cross-source-join-required'
+        note: >-
+          Attributing host execution to the agent needs the agent tool telemetry joined to the endpoint
+          process/network signal on host, process lineage, and time; neither stream alone attributes the
+          sequence to the agent.
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          The join requires both an agent-side content stream and an endpoint stream to exist on the
+          same host; many estates have one but not the other.
+    summary: >-
+      Separation rests on recognizing an agent-launched process that pipes remote content to an
+      interpreter, or fetches then marks executable and runs a new file, and joining it to the agent
+      command that emitted it. Normalizing the sequence (fetch, then execute; download, chmod, run) and
+      requiring an unexpected destination or a newly-written executable is what distinguishes it; a shell
+      command with no execution, or an execution with no agent linkage, is too weak. Benign agent-driven
+      installs are the overlap that must be separated by destination and image rather than tuned out.
+
+attack_surface_context:
+  surface: >-
+    An agentic coding or assistant CLI (GitHub Copilot CLI, Claude Code, Codex, Cowork, OpenClaw and
+    similar) with a shell or command-execution tool, and its optional safety classifier that gates
+    which commands run without approval.
+  how_the_surface_works: >-
+    The agent plans actions and calls a shell/command tool to run them on the host. A permission or
+    approval layer decides whether each command runs automatically, prompts the operator, or is blocked;
+    some products classify commands as read-only versus side-effecting to auto-approve the former.
+    Content the agent reads (skills, repository files, tool output, prompts) can influence the commands
+    it chooses to run.
+  incident_processing_path: >-
+    PromptArmor reports (researcher-attested) a GitHub Copilot CLI env-prefix bypass that led to remote
+    retrieval and execution. GHSA-g8r9 documents (vendor-attested) a shell parameter-expansion bypass of
+    the safety classifier, characterized as classifier-bypass and not as download-and-execute. Koi's
+    ClawHavoc reporting (researcher-attested) documents staged download, xattr/chmod, and execute via
+    malicious skills. This pack treats these as three variants of one procedure: two produce host
+    execution, one defeats the guardrail, and it does not merge the GHSA finding into a download-execute
+    claim the advisory does not make.
+  processing_stages:
+    - 'untrusted-content-reaches-agent'
+    - 'agent-plans-a-shell-command'
+    - 'safety-classification-or-approval'
+    - 'shell-tool-invocation'
+    - 'remote-content-fetch'
+    - 'interpreter-execution-or-staged-run'
+    - 'file-stage-chmod-execute'
+    - 'payload-side-effect'
+  stage_evidence: >-
+    The stage instrumentation sits at fixes what it can prove: a captured agent command proves the agent
+    emitted the instruction; the safety-classification stage emits no verdict, so an auto-approval is
+    inferred rather than read; only a host process/network event proves the interpreter ran and the fetch
+    reached a destination.
+  trust_boundaries: >-
+    Untrusted content into the agent's planning (reached: injected/malicious content steered the tool);
+    agent command into the host shell (reached in the execution variants); host to remote network
+    (reached: the payload fetch). The classifier-bypass variant crosses the guardrail boundary without
+    necessarily reaching host execution, which is why it is scoped separately.
+  security_control_context: >-
+    The approval layer decides per command: auto-allow (Claude Code source="config"), prompt, or block,
+    with modes such as bypassPermissions/--dangerously-skip-permissions removing prompts entirely. A
+    safety classifier, where present, labels commands read-only versus side-effecting to auto-approve the
+    former, and logs no verdict field. Bypass representations include env-prefix tricks, shell
+    parameter-expansion that hides side effects, and staging that separates download from execution across
+    commands.
+  practitioner_implication: >-
+    An implementer must discover which agent products are deployed and whether their content capture is
+    enabled (Claude Code OTEL_LOG_TOOL_DETAILS=1; Codex captures no command text), whether endpoint
+    process/network telemetry exists on the agent hosts, how agent process lineage is recorded so a
+    child interpreter can be tied back to the agent, and that no classifier verdict exists to key on.
+
+threat_research:
+  why_it_matters: >-
+    An agent shell tool turns injected or malicious content into command execution on a developer or
+    operator host that holds source, credentials, and network reach; the same steering can defeat the
+    tool's own guardrail, so the control meant to stop it becomes part of the bypass.
+  threat_actor: >-
+    Injected or malicious content authors. PromptArmor and Koi describe demonstrated bypasses and
+    malicious skills; no named threat group is attributed, and GHSA-g8r9 is a vulnerability advisory.
+  campaign: >-
+    GitHub Copilot CLI remote-execution bypass (PromptArmor), GHSA-g8r9 classifier-bypass advisory, and
+    the ClawHavoc malicious-skill campaign (Koi, Snyk).
+  victim: >-
+    Users of agentic coding and assistant CLIs whose shell tool can be steered into fetch-and-execute or
+    whose safety classifier can be bypassed.
+  capability: >-
+    Demonstrated: an env-prefix bypass leading to remote retrieval and execution (PromptArmor); a
+    shell parameter-expansion classifier bypass (GHSA-g8r9), which the advisory scopes as bypass, not
+    download-and-execute; and staged download, xattr/chmod, and execute via malicious skills (ClawHavoc).
+  target: >-
+    The agent host's shell and the agent's safety classifier. Host execution was demonstrated in the
+    PromptArmor and ClawHavoc variants; the GHSA variant demonstrated a guardrail bypass without an
+    established download-and-execute outcome.
+  victimology:
+    - 'Developer and operator workstations running agentic coding CLIs with shell tools.'
+    - 'Agent-skill and extension ecosystems where third-party skills reach the shell tool.'
+
+visibility:
+  telemetry_sources:
+    - source: 'Agent tool telemetry (Claude Code / Cowork OpenTelemetry)'
+      purpose: 'Establish that the agent emitted the shell command and carry its text where capture is enabled.'
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'claude_code.tool_result tool_name=Bash; tool_parameters.bash_command / full_command / dangerouslyDisableSandbox; tool_input; success; error_type; duration_ms'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CLAUDE-OTEL'
+          load_bearing: true
+          note: 'Command text requires OTEL_LOG_TOOL_DETAILS=1 and is truncated at 512 chars / ~4 K payload.'
+        - name: 'claude_code.tool_decision decision / source (incl. source="config" auto-allowed, "hook")'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CLAUDE-OTEL'
+          load_bearing: false
+      details: >-
+        tool_result carries the Bash command and outcome; tool_decision carries the approval path,
+        including config-based auto-allowance. Cowork tool_parameters carries command arguments and file
+        paths with approval/rejection state.
+      limitations:
+        - 'Command content is opt-in and truncated; without it only tool_name/success/duration remain.'
+        - 'Records the agent''s intended command, not proof the host executed it.'
+    - source: 'Agent tool telemetry (Codex / OpenClaw OpenTelemetry)'
+      purpose: 'Corroborate the approval policy and tool outcome where these agents are used.'
+      event_vocabulary: 'application-record'
+      tier: 'request'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'codex.conversation_starts (sandbox/approval policy); codex.tool_decision; codex.tool_result (duration, success, output snippet)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CODEX-OTEL'
+          load_bearing: false
+          note: 'Codex logs no command text, so pipe-to-interpreter content is invisible here.'
+      details: >-
+        Codex records sandbox/approval policy and tool decisions but no command text; OpenClaw exposes
+        bounded/redacted tool inputs, outputs, and definitions when diagnostics.otel.captureContent=true.
+      limitations:
+        - 'Codex carries no command text; the deciding content is absent.'
+        - 'OpenClaw content capture is opt-in and redacted.'
+    - source: 'Endpoint process telemetry on the agent host'
+      purpose: 'Prove the interpreter or dropped binary ran and tie it to the agent process lineage.'
+      event_vocabulary: 'host-process-event'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'DeviceProcessEvents ProcessCommandLine / FileName / FolderPath / SHA256 / InitiatingProcessCommandLine / InitiatingProcessParentFileName / AccountName'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-DEFENDER-PROC'
+          load_bearing: true
+        - name: 'Sysmon Event ID 1 ProcessCreate (ProcessGUID, full command line, hash)'
+          attestation: 'community-attested'
+          attestation_ref: 'REF-SYSMON'
+          load_bearing: true
+      details: >-
+        DeviceProcessEvents / Sysmon 1 record the interpreter or downloaded binary and its parent lineage,
+        which is what ties a spawned child back to the agent shell tool.
+      limitations:
+        - 'Requires an EDR or Sysmon sensor on the agent host.'
+        - 'Process-command-line capture depends on sensor configuration.'
+    - source: 'Endpoint file and network telemetry on the agent host'
+      purpose: 'Establish the payload fetch destination and the staged executable file.'
+      event_vocabulary: 'host-process-event'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'DeviceNetworkEvents RemoteUrl / RemoteIP / RemotePort; DeviceFileEvents FolderPath / SHA256 / FileOriginUrl; Sysmon 3/11/22/29'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-DEFENDER-NET'
+          load_bearing: true
+      details: >-
+        DeviceNetworkEvents / Sysmon 3 and 22 and Route 53 Resolver or Cloud DNS record the fetch;
+        DeviceFileEvents / Sysmon 11 record the staged file and Sysmon 29 an executable detection.
+      limitations:
+        - 'Requires network/file endpoint telemetry or resolver logging on the path.'
+        - 'A fetch to a common CDN or package host overlaps benign installs.'
+
+detection:
+  scope: >-
+    Detection spans the agent's command, the fetch, and the host execution. Two materially distinct
+    strategies divide the path: one correlates an agent-launched process sequence with the payload fetch
+    on the host, and one inspects the agent's own captured command text for a fetch-and-execute or
+    classifier-bypass construct. The classifier-bypass form is reformulated to a side-effecting command
+    that was auto-approved, since no verdict field exists.
+  outcome_guardrails: >-
+    A captured agent command establishes intent, not execution. A host process establishes execution,
+    and with a captured destination a completed fetch. An auto-approval of a side-effecting command
+    establishes a classifier bypass only by inference, never from a verdict field. "Agent emitted a
+    fetch-execute command" and "host executed remote content" are different alerts.
+  shared_normalization_context: >-
+    Normalize the sequence to fetch-then-execute and download/chmod/execute canonical forms, decode
+    obfuscated command constructs and shell expansions, and classify destinations into approved versus
+    unrecognized rather than matching literal URLs.
+  shared_enrichment_context: >-
+    Join the agent tool event to the endpoint process/network events on host, process lineage, and a
+    tight time window. Where only one side exists, carry the reduced conclusion. A destination allowlist
+    seeded from sanctioned package hosts helps separate benign installs.
+  strategies:
+    - id: 'STRAT-AGENT-SHELL-REMOTE-EXECUTION'
+      name: 'agent-launched remote-execution sequence'
+      objective: >-
+        Detect an agent-launched shell/process sequence that pipes remote content to an interpreter, or
+        fetches then marks a new file executable and runs it.
+      incident_relevance: >-
+        Detects the executed outcome in the PromptArmor and ClawHavoc variants. A positive host signal
+        must be tied to the agent process lineage before it is attributed to this procedure.
+      detection_logic: >-
+        Select process-create and network-connect events whose initiating lineage is an agent CLI and
+        raise on a spawned interpreter consuming remote content, or a newly-written file that is
+        chmod-marked executable and run, with an outbound fetch to an unrecognized destination shortly
+        before. Exclude only explicitly approved installers by image and destination, never by agent name
+        alone. Where the agent tool event is present, require or strengthen with the matching command text.
+      minimum_evidence: >-
+        A host process/network sequence attributed to an agent-launched process, showing a fetch and an
+        execution of the fetched content. Naming the agent command requires the agent-tool join; without
+        it, report agent-lineage remote execution on the host.
+      correlation_context: >-
+        Correlate on host, agent process lineage, and time (seconds-to-minutes between fetch and execute),
+        and to the agent command via the tool event when captured. Concurrent legitimate installs on the
+        same host weaken attribution.
+      detectors:
+        - detector_class: 'endpoint-process-and-network-analytics'
+          technologies:
+            - 'Microsoft Defender for Endpoint advanced hunting'
+            - 'Sysmon (events 1, 3, 11, 22, 29)'
+            - 'Endpoint or workload platforms with process-network telemetry'
+          contribution: 'Attributes the fetch and execution to the agent-launched process lineage.'
+          limitations: 'Requires a deployed sensor; a common-CDN fetch overlaps benign installs.'
+      benign_explanations:
+        - explanation: >-
+            Agents legitimately install tooling by fetching and running installers or piping setup
+            scripts to a shell.
+          distinguishing_context: >-
+            An unrecognized destination or a newly-written executable outside sanctioned package flows
+            separates the malicious case; an approved installer to an approved host does not.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Allowlisting an agent wholesale, rather than by destination and image, would pass its
+            malicious fetch-execute through.
+      blind_spots:
+        - description: 'Missing telemetry: no EDR or Sysmon on the agent host, so execution is unseen.'
+          routes_to: null
+        - description: 'Evasion: a fetch to a trusted CDN or package host indistinguishable from benign installs by destination alone.'
+          routes_to: null
+        - description: 'Attribution limit: without agent tool capture, the host sequence cannot be named as the agent''s command.'
+          routes_to: null
+      analyst_response: >-
+        Identify the agent process and its child interpreter, determine the fetch destination and any
+        staged file hash, recover the agent command from tool telemetry where captured, check the approval
+        path, and scope follow-on activity from the host.
+      safe_conclusion: >-
+        An agent-launched process fetched and executed remote content; attributing the specific command
+        requires the agent-tool join.
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: 'Depends on agent-host EDR coverage and install patterns in the estate; the source states no rate.'
+    - id: 'STRAT-AGENT-COMMAND-TEXT-INSPECTION'
+      name: 'agent command-text inspection'
+      objective: >-
+        Detect a fetch-and-execute construct, or a side-effecting command auto-approved as read-only, in
+        the agent's captured tool command text.
+      incident_relevance: >-
+        Detects the attempt at the agent boundary, including the classifier-bypass variant that produces
+        no host execution. It establishes intent and, for the bypass form, an auto-approved side effect,
+        not that the payload ran.
+      detection_logic: >-
+        Inspect captured agent tool command text (Claude Code tool_result bash_command/full_command,
+        Cowork tool_parameters) for pipe-to-interpreter of a fetched URL, download-then-chmod-then-run, or
+        shell parameter-expansion and env-prefix constructs with side effects, and cross-reference the
+        tool_decision source: a side-effecting command auto-approved via source="config" is the reformulated
+        classifier-bypass signal. GHSA-g8r9 is treated as a classifier-bypass variant only.
+      minimum_evidence: >-
+        A captured agent command whose text carries a fetch-and-execute or side-effecting construct, plus
+        its approval path. Absent host corroboration, report an agent fetch-execute or classifier-bypass
+        attempt, not a completed payload action.
+      correlation_context: >-
+        Where present, join to the host process/network sequence to confirm execution; where content
+        capture is off or the agent is Codex, this strategy has no command text to inspect and yields to
+        the endpoint strategy.
+      detectors:
+        - detector_class: 'agent-tool-content-inspection'
+          technologies:
+            - 'Claude Code / Cowork OpenTelemetry (OTEL_LOG_TOOL_DETAILS=1)'
+            - 'OpenClaw diagnostics.otel.captureContent'
+            - 'SIEM string/normalization over forwarded agent tool events'
+          contribution: 'Reads the agent''s command text and approval path where capture is enabled.'
+          limitations: 'Opt-in and truncated; Codex logs no command text; no classifier verdict field exists.'
+      benign_explanations:
+        - explanation: >-
+            Agents routinely run curl-to-shell installers and chmod new binaries as part of legitimate
+            setup.
+          distinguishing_context: >-
+            An unrecognized destination, or a construct engineered to read as read-only while carrying a
+            side effect, separates the malicious case; a sanctioned installer does not.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding all curl-pipe-shell commands to cut noise would suppress the malicious fetch-execute.
+      blind_spots:
+        - description: 'Missing telemetry: content capture is off, or the agent is Codex, so no command text exists.'
+          routes_to: null
+        - description: 'Missing telemetry: no safety-classifier verdict field, so classifier-bypass is inferred from auto-approval, never read.'
+          routes_to: null
+        - description: 'Evasion: truncation at 512 chars / ~4 K hides a payload past the boundary.'
+          routes_to: null
+      analyst_response: >-
+        Read the captured command text and its approval source, decode any obfuscation, determine the
+        fetch destination, check whether a host process confirms execution, and assess whether a
+        side-effecting command was auto-approved as read-only.
+      safe_conclusion: >-
+        The agent emitted a fetch-and-execute or side-effecting command that was auto-approved;
+        confirming the payload ran requires host process/network corroboration.
+
+detector_requirements:
+  required: >-
+    Agent process lineage recorded so a child interpreter can be tied to the agent; normalization of
+    fetch-then-execute and download/chmod/execute sequences and of obfuscated shell constructs;
+    classification of fetch destinations into approved versus unrecognized; endpoint process/network
+    telemetry on the agent host for execution proof; and outcome-aware alert text keeping an agent
+    command distinct from a confirmed host execution.
+  optional: >-
+    Agent tool content capture (Claude Code OTEL_LOG_TOOL_DETAILS=1, OpenClaw captureContent) adds the
+    command text and approval path; a destination allowlist adds install separation; neither gates the
+    endpoint strategy.
+  correlation:
+    capability: >-
+      Aligned clocks between agent tool telemetry and endpoint streams; process lineage that survives
+      from the agent to the spawned interpreter; and host plus time keys to bind a fetch to its execution.
+    window: 'Seconds to minutes between fetch and execution; agent-command-to-host join within one minute.'
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on deployed
+    sensors, enabled logging, retained fields, and architecture. For this object, verification
+    specifically means confirming that endpoint telemetry exists on the agent hosts, that agent tool
+    content capture is enabled where the command-text strategy is relied on, and that no product emits a
+    safety-classifier verdict, so the classifier-bypass form is only ever inferred from an auto-approved
+    side-effecting command.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of the behavior; the catalog dates it to 2025 without a fetched exact date.'
+    - 'The exact command and destination for each variant beyond what the advisories summarize.'
+    - 'Whether Codex or other agents emit any command text under configurations not fetched here.'
+    - 'The truncation and retention behaviour of agent tool content across products.'
+  assumptions:
+    - id: 'ASSUMPTION-AGENT-LINEAGE-VISIBLE'
+      verdict_changing: true
+      statement: >-
+        The interpreter or dropped binary runs as a child of the agent CLI process, so endpoint process
+        lineage ties the execution to the agent. The advisories describe the agent causing execution but
+        publish no process tree; this pack infers the parent-child relationship from the agent invoking a
+        shell tool. If wrong, STRAT-AGENT-SHELL-REMOTE-EXECUTION cannot attribute host execution to the
+        agent and detectable narrows to command-text inspection where capture exists. Resolve it by
+        running a reference agent through a fetch-execute skill in a lab and recording the process tree.
+  standing_negatives:
+    - statement: >-
+        No fetched agent product documents a safety-classifier verdict field for shell commands: the OTel
+        and config references list tool results, decisions, and approval sources but no field recording
+        that a command was classified read-only, so classifier-bypass has no native attempt evidence.
+      ref: 'REF-CLAUDE-OTEL'
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the Claude Code, Codex, and OpenClaw telemetry references for a newly documented
+        safety-classification verdict or command-risk field.
+
+missing_states:
+  - id: 'MISSING_CLASSIFIER_VERDICT'
+    meaning: 'Missing telemetry: no product emits a safety-classifier verdict, so classifier-bypass has no native attempt evidence.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Do not claim a classifier bypass from a verdict; infer it only from a side-effecting command that
+      was auto-approved, and mark the inference explicitly.
+  - id: 'MISSING_AGENT_COMMAND_TEXT'
+    meaning: 'Missing telemetry: content capture is off or the agent (Codex) logs no command text.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Fall back to the endpoint remote-execution strategy and report agent-lineage execution without the
+      naming command text.
+  - id: 'MISSING_ENDPOINT_TELEMETRY'
+    meaning: 'Missing telemetry: no EDR or Sysmon on the agent host.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Do not claim the payload executed; limit the conclusion to the captured agent command and its
+      approval path.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'actor_or_explicit_missing_state'
+    - 'agent_product_and_process_lineage'
+    - 'observed_shell_command_or_sequence'
+    - 'fetch_destination_when_present'
+    - 'staged_file_or_interpreter_child_when_present'
+    - 'approval_path_and_classifier_inference'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'captured_agent_command_text'
+      condition: 'when agent tool content capture is enabled on the acting product'
+    - field: 'auto_approved_side_effecting_command'
+      condition: 'when the classifier-bypass form is inferred from an auto-approved decision'
+  recommended_title: 'Agent shell tool steered into remote fetch-and-execute or auto-approved side-effecting command'
+  unsupported_title: 'Agent safety classifier confirmed the command as malicious before execution'
+
+evidence:
+  confirmed_incident_behavior: >-
+    PromptArmor reports a GitHub Copilot CLI env-prefix bypass leading to remote retrieval and execution;
+    GHSA-g8r9 documents a shell parameter-expansion safety-classifier bypass, characterized as bypass and
+    not as download-and-execute; Koi's ClawHavoc reporting documents staged download, xattr/chmod, and
+    execute via malicious skills. That the three are variants of one steer-the-shell procedure, two of
+    which reach host execution and one of which only defeats the guardrail, is this pack's reading; it
+    does not read the GHSA advisory as a download-execute claim.
+  supported_conclusion: >-
+    The evidence supports that an agent shell tool can be steered into remote fetch-and-execute and that
+    a safety classifier can be bypassed with crafted shell constructs. A detector can emit "an agent-launched
+    process fetched and executed remote content" when a host sequence is tied to the agent lineage, and
+    "the agent emitted a fetch-execute or auto-approved side-effecting command" from captured tool text.
+  unsupported_conclusions: >-
+    The evidence does not establish the payload's objective, persistence, lateral movement, or that the
+    GHSA classifier-bypass variant produced host execution. Nor does any source provide a classifier
+    verdict field; the bypass is always inferred. Those require host, network, and product telemetry the
+    cited sources do not carry.
+  procedure_boundary: >-
+    This procedure is steering an agent shell tool into remote execution or defeating its safety
+    classifier. What the executed payload then does (command-and-control, persistence, theft) is a
+    separate behavior and is not evidenced by the fetch-and-execute having occurred.
+  references:
+    - id: 'REF-THREAT-PROMPTARMOR'
+      type: 'incident-procedure-primary-source'
+      title: 'GitHub Copilot CLI downloads and executes malware'
+      publisher: 'PromptArmor'
+      url: 'https://www.promptarmor.com/resources/github-copilot-cli-downloads-and-executes-malware'
+      trust_tier: 'researcher'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary source for the Copilot CLI env-prefix bypass leading to remote retrieval and execution;
+        does not document the downstream payload objective.
+    - id: 'REF-THREAT-GHSA'
+      type: 'incident-procedure-primary-source'
+      title: 'GHSA-g8r9-g2v8-jv6f'
+      publisher: 'GitHub'
+      url: 'https://github.com/advisories/GHSA-g8r9-g2v8-jv6f'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      citation_caveat: 'partial-use'
+      citation_caveat_note: >-
+        Used only for the shell parameter-expansion classifier-bypass, which the advisory scopes as a
+        bypass and not as download-and-execute; the download-execute claims rest on the other sources, so
+        the finding survives discounting this one.
+      evidence_use: 'Documents the safety-classifier bypass variant; not evidence of host execution.'
+    - id: 'REF-THREAT-KOI'
+      type: 'incident-campaign-primary-source'
+      title: 'ClawHavoc: 341 malicious skills found by the bot they were targeting'
+      publisher: 'Koi'
+      url: 'https://www.koi.ai/blog/clawhavoc-341-malicious-clawedbot-skills-found-by-the-bot-they-were-targeting'
+      trust_tier: 'researcher'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents staged download, xattr/chmod, and execute via malicious agent skills.'
+    - id: 'REF-THREAT-SNYK'
+      type: 'incident-campaign-secondary-source'
+      title: 'ToxicSkills: malicious AI agent skills on ClawHub'
+      publisher: 'Snyk'
+      url: 'https://snyk.io/blog/toxicskills-malicious-ai-agent-skills-clawhub/'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Corroborates the malicious-skill ecosystem behind the ClawHavoc download-execute variant.'
+    - id: 'REF-CLAUDE-OTEL'
+      type: 'telemetry-documentation'
+      title: 'Monitoring usage (Claude Code OpenTelemetry) and CLI reference'
+      publisher: 'Anthropic'
+      url: 'https://code.claude.com/docs/en/monitoring-usage'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents claude_code.tool_result/tool_decision fields, the OTEL_LOG_TOOL_DETAILS gate and
+        truncation, and the permission modes; supports the agent-tool telemetry source and the standing
+        negative on the absent classifier verdict.
+    - id: 'REF-CODEX-OTEL'
+      type: 'telemetry-documentation'
+      title: 'Codex config reference and OpenClaw OpenTelemetry'
+      publisher: 'OpenAI and OpenClaw'
+      url: 'https://learn.chatgpt.com/docs/config-file/config-advanced'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents Codex sandbox/approval telemetry with no command text and OpenClaw content capture.'
+    - id: 'REF-DEFENDER-PROC'
+      type: 'telemetry-documentation'
+      title: 'DeviceProcessEvents table (advanced hunting)'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-deviceprocessevents-table'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the process fields used to prove the interpreter or dropped binary ran.'
+    - id: 'REF-DEFENDER-NET'
+      type: 'telemetry-documentation'
+      title: 'DeviceNetworkEvents and DeviceFileEvents tables (advanced hunting)'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-devicenetworkevents-table'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the network and file fields used to establish the payload fetch and staged file.'
+    - id: 'REF-SYSMON'
+      type: 'telemetry-documentation'
+      title: 'Sysmon event reference'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/sysinternals/downloads/sysmon'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents Sysmon events 1, 3, 11, 22, and 29 used as the endpoint equivalent to Defender tables.'

@@ -1,0 +1,537 @@
+identity:
+  uuid: '96d459d6-268c-483c-b232-e871b5123b55'
+  id: 'DT-AAG1-AI-002'
+  aliases:
+    - 'P12'
+  name: 'Attackers use code-host issues to make an agent disclose another repository'
+  incident: >-
+    Invariant Labs toxic agent flow on the official GitHub MCP server: a malicious GitHub Issue
+    hijacked an agent (Claude Desktop, Claude 4 Opus) into pulling private-repository data into a
+    public pull request.
+  first_observed: '2025'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'submitted-content-ingest'
+  secondary_attack_surfaces:
+    - 'ai-agent-harness'
+  behavior_classes:
+    - 'other'
+  behavior_classes_note: >-
+    indirect-prompt-injection-to-cross-repository-disclosure: an untrusted code-host issue the agent
+    processes redirects it to read a private repository and write that data into a public artifact
+    under the agent's own access.
+  tags:
+    - 'ai'
+    - 'prompt-injection'
+    - 'github'
+    - 'mcp'
+    - 'data-exfiltration'
+
+behavior:
+  definition: >-
+    An attacker creates a malicious issue in a code-hosting project; an agent processing that issue
+    follows its instruction and transfers private-repository information into a public artifact.
+  detailed_definition: >-
+    The adversary controls the body of an issue in a project an agent will read, and the agent has
+    access spanning private repositories and the ability to create public artifacts. The agent treats
+    issue text as data, but the model may act on instructions embedded in it, so processing the issue
+    crosses from untrusted published content into repository reads and writes taken under the agent's
+    own identity and access. The attempt ends when the issue is created and readable; success begins
+    when the agent processes it, reads a private repository, and publishes that data where the issue
+    author could not reach it. It is independent of code-host product, MCP server, and agent client.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers creation of the malicious issue and the agent's read-then-public-write acting on it;
+      does not cover any later use of the disclosed data beyond its appearance in the public artifact.
+    summary: >-
+      This can occur when an attacker can create an issue in a project an agent reads, the agent's
+      access spans a private repository and the ability to open a public pull request or comment, and
+      the model follows instructions embedded in the issue body. Disclosure requires that the agent's
+      access bridges the private and public repositories and that a tool-confirmation habit such as
+      Always Allow does not interrupt the chain.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      The resulting public write is recorded by agentic audit and the ordered tool sequence by
+      AI-runtime logs where enabled; the issue read and the private-repository read that connect them
+      have no documented audit action and must be inferred.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          GitHub agentic audit and streamed Copilot API usage records are Enterprise Managed Users or
+          GHEC-with-data-residency features, and Claude Code tool parameters need OTEL_LOG_TOOL_DETAILS=1.
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          Whether AI-runtime tool telemetry showing the read-then-write sequence is exported at all
+          depends on the agent client deployed and whether the estate wired it to a collector.
+      - condition: 'cross-source-join-required'
+        note: >-
+          No documented event records the untrusted issue body entering context or the private-repo
+          read; the cross-repository causation is a derived correlation across audit and tool logs.
+    summary: >-
+      The behavior is observable when GitHub agentic audit records the public write with
+      actor_is_agent and an agent session, and an AI-runtime tool log carries the ordered
+      issue-read then private-read then public-write sequence. The audit write alone establishes that
+      a public artifact was created by an agent, not why; a tool log alone may show the sequence but
+      not the private/public classification. Establishing the behavior needs the ordered sequence tied
+      to a private-to-public repository crossing and an external issue author.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Separable from legitimate cross-repo automation when an agent's private-repo read and public
+      write are joined to an external-authored issue and a private-to-public classification; benign
+      cross-repo PR automation overlaps and must not be tuned out on repo-pair crossing alone.
+    blocking_conditions:
+      - condition: 'cross-source-join-required'
+        note: >-
+          The audit event proves the write happened, not that the issue text caused it; separating
+          malicious from benign needs the agent tool log joined to the audit on session, issue, and
+          repo ids.
+    summary: >-
+      Separation rests on correlating the ordered issue-read, private-repo read, and public write by
+      one agent session with a private-to-public repository classification and an external issue
+      author. Normalising repo ids and visibility, requiring the ordered chain rather than a lone
+      write, and enriching with issue trust level are what make it distinguishable; a public write
+      with no linked private read, or a private read with no public write, is too weak to establish it.
+
+attack_surface_context:
+  surface: >-
+    GitHub Issues consumed by an agent through the official GitHub MCP server, demonstrated with
+    Claude Desktop and Claude 4 Opus, where the agent can read repositories and open pull requests.
+  how_the_surface_works: >-
+    The GitHub MCP server exposes tools to list and read issues, read repository contents, and create
+    pull requests. An agent invoked to triage or act on issues reads issue bodies as input and can
+    then read other repositories the connected token permits and open public pull requests. Issue
+    text is intended as data, but the model can follow imperative instructions embedded in it.
+  incident_processing_path: >-
+    Invariant Labs reports (source-attested) that a malicious GitHub Issue hijacked an agent running
+    on the official GitHub MCP server into pulling private-repository data into a public pull request,
+    and that the flow is amplified by Always Allow tool-confirmation habits. That the behavior
+    decomposes into an ordered issue-read, private-repository read, and public write chain is this
+    pack's reading of the demonstrated flow, used to structure detection, not a sequence the source
+    instruments event by event.
+  processing_stages:
+    - 'issue-authoring'
+    - 'issue-creation'
+    - 'agent-issue-processing'
+    - 'instruction-following'
+    - 'private-repository-read'
+    - 'public-pull-request-create'
+    - 'cross-repository-disclosure'
+  stage_evidence: >-
+    The stage instrumentation sits at fixes what it can prove: an issue-create audit proves an issue
+    exists, not that the agent read it; a tool log proves the agent read a repository and may name it;
+    only the public-write audit tied to a preceding private read proves data crossed from private to
+    public, and only the artifact content proves what was disclosed.
+  trust_boundaries: >-
+    Untrusted issue author into the agent's context (reached: the issue was processed); the private
+    repository access boundary (reached: private data was read via the agent's token); public artifact
+    publication (reached: the data was written into a public pull request). No privilege escalation
+    occurred; the agent used access it already held.
+  security_control_context: >-
+    Repository visibility and token scopes decide what the agent can read and write; the agent acts
+    within its own granted access, so the issue redirects that access rather than escalating it.
+    Tool-confirmation prompts can interrupt each tool call, but an Always Allow habit removes that
+    check. GitHub agent-actor audit records the resulting write. Bypass representations include
+    normalising Always Allow and phrasing the injection as a plausible maintenance task.
+  practitioner_implication: >-
+    An implementer must discover whether GitHub agentic audit is available on the plan, whether the
+    agent client exports tool telemetry showing the read-then-write sequence, how repo visibility and
+    ownership are classified, and which repo pairs and automations are sanctioned, since no event
+    directly records the issue read or the private-repo read that connect the chain.
+
+threat_research:
+  why_it_matters: >-
+    An agent connected to a code host acts with a token spanning private and public repositories, so
+    a single crafted issue can move private source or secrets into a public artifact without any
+    privilege escalation, and a tool-confirmation habit removes the last human check.
+  threat_actor: >-
+    Unknown. The behavior was demonstrated by Invariant Labs security research; no threat group is
+    attributed and there is no CVE.
+  campaign: 'Invariant Labs toxic agent flow against the official GitHub MCP server (research disclosure).'
+  victim: >-
+    Users of the official GitHub MCP server with agents that can read private repositories; the
+    demonstration targeted the server itself rather than a named victim organisation.
+  capability: >-
+    A malicious GitHub Issue that hijacked an agent on the official GitHub MCP server into pulling
+    private-repository data into a public pull request, amplified by Always Allow tool-confirmation
+    habits; demonstrated as research, not observed in the wild.
+  target: >-
+    An agent's connected private repositories and the public artifacts it can create. Disclosure was
+    demonstrated end to end; the source does not enumerate affected repositories or organisations.
+  victimology:
+    - 'Agents connected to code hosts with tokens spanning private and public repositories.'
+    - 'Teams that normalise Always Allow tool confirmation, removing the per-call human check.'
+
+visibility:
+  telemetry_sources:
+    - source: 'GitHub agentic audit log'
+      purpose: >-
+        Record the agent-authored public write and attribute it to an agent session and actor for the
+        effect end of the chain.
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'action (e.g. pull_request.create), actor_is_agent, agent_session_id, user'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-GH-AGENTIC-AUDIT'
+          load_bearing: true
+          note: >-
+            actor_is_agent is always true for agentic events; agent_session_id is present only when
+            the event results from an agent session; enterprise owners view up to 180 days.
+      details: >-
+        Filtering actor:Copilot surfaces agentic events; streamed Copilot API usage records add
+        request/response bodies with a 1 MB truncation, but only for Enterprise Managed Users or
+        GHEC with data residency, in public preview.
+      limitations:
+        - 'Records the resulting write, not the issue read or the private-repository read.'
+        - 'Agentic view and streamed API usage are gated to EMU or data-residency plans.'
+        - 'Streamed request/response bodies are truncated at a 1 MB document limit.'
+    - source: 'AI coding-agent OpenTelemetry (Claude Code / Cowork)'
+      purpose: >-
+        Carry the ordered MCP tool calls so the issue-read, private-repo read, and public write can be
+        sequenced within one session.
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'claude_code.tool_result (tool_parameters.mcp_server_name, mcp_tool_name, mcp_server_scope, tool_use_id, success, duration_ms)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CLAUDE-OTEL'
+          load_bearing: true
+          note: 'MCP tool parameters require OTEL_LOG_TOOL_DETAILS=1; without it only counts and status remain.'
+      details: >-
+        tool_result events name the MCP server and tool per call with session correlation, giving the
+        ordered read-then-write tool sequence the audit log cannot express.
+      limitations:
+        - 'Tool parameters are gated behind OTEL_LOG_TOOL_DETAILS=1.'
+        - 'Only present where the agent client exports OpenTelemetry to a collector.'
+    - source: 'Microsoft Agent 365 execute_tool spans'
+      purpose: 'Would record the MCP tool name, arguments, and result for the read and write calls.'
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'other'
+      operational_viability_note: >-
+        gen_ai.tool.call.arguments and gen_ai.tool.call.result are mandatory and captured but not
+        surfaced in advanced hunting, so the deciding tool io exists in the span yet is not queryable.
+      details: >-
+        execute_tool spans map gen_ai.tool.name to CloudAppEvents.RawEventData.ToolName and
+        gen_ai.tool.server.name and server.address to ServerAddress, with conversation id mapped to
+        ConversationId, but the arguments and result are not surfaced.
+      limitations:
+        - 'Tool arguments and results are captured but not queryable in advanced hunting.'
+        - 'mcp.method.name is not available as a queryable field.'
+    - source: 'GitHub enterprise audit log and Git events'
+      purpose: 'Corroborate repository, actor, and timing for the write, and repository access via REST.'
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'on-by-default'
+      fields:
+        - name: '@timestamp, action, actor, actor_is_agent, repo, repo_id, org, request_id'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-GH-ENTERPRISE-AUDIT'
+          load_bearing: false
+          note: 'api.request events require audit-log streaming with API Request Events enabled.'
+      details: >-
+        General audit fields cover actor, repo, org, and request id; Git events are available through
+        the REST API with 7-day retention.
+      limitations:
+        - 'Git events carry only 7-day retention via REST.'
+        - 'No action records the poisoned issue read or the private-repo pull directly.'
+
+detection:
+  scope: >-
+    Detection spans the malicious issue at rest, the agent reading it, the private-repository read,
+    and the public write. Two materially distinct strategies divide the path: one detects an agent
+    moving data from a private to a public repository regardless of cause, and one detects the ordered
+    untrusted-issue-to-public-write causal chain that establishes the injection.
+  outcome_guardrails: >-
+    An issue-create audit establishes an issue exists, not that it was read. A tool log establishes a
+    repository was read, not its visibility. A public-write audit establishes an agent created a
+    public artifact, not what it contains or why. Only the ordered chain with a private-to-public
+    classification establishes cross-repository disclosure driven by the issue. These stay distinct.
+  shared_normalization_context: >-
+    Normalise repositories to ids and a private/public visibility class, canonicalise the agent to a
+    session and actor, and treat an issue authored by a non-member as an untrusted-input class rather
+    than matching literal injection strings.
+  shared_enrichment_context: >-
+    Join agentic audit, AI-runtime tool logs, and repository visibility on session, issue, repo, and
+    PR ids. A rolling 30-day repo visibility and ownership history and an approved-repo-pair list help
+    prioritise, but the ordered private-read-then-public-write chain is actionable without a baseline.
+  strategies:
+    - id: 'STRAT-CROSS-REPO-AGENT-MOVEMENT'
+      name: 'cross-repository agent data movement'
+      objective: >-
+        Detect an agent session that reads a private repository and then writes to a public artifact
+        it does not normally bridge.
+      incident_relevance: >-
+        Detects the disclosure effect regardless of trigger; it does not by itself establish that an
+        injected issue caused it, so it must be paired with the causal-chain strategy or treated as
+        suspected.
+      detection_logic: >-
+        Select agent tool and audit events within one session where a private-repository read is
+        followed by a public write, and raise when the repository pair is not on the approved list or
+        is first-seen for that agent. Classify each repository's visibility and normalise to ids.
+        Exclude only explicitly approved repo pairs, by id, not by agent name alone.
+      minimum_evidence: >-
+        A private-repository read and a public write attributed to one agent session, with a
+        private-to-public visibility classification. Without an external-authored issue linkage,
+        report suspected cross-repo movement, not a confirmed issue-driven disclosure.
+      correlation_context: >-
+        Correlate on agent session id, repo ids, and PR id within up to one hour, with an explicit
+        maximum gap of thirty minutes, against a 30-day repo visibility and ownership history.
+      detectors:
+        - detector_class: 'agent-audit-and-tool-correlation'
+          technologies:
+            - 'Splunk'
+            - 'Elastic'
+            - 'Microsoft Sentinel'
+            - 'Google SecOps'
+          contribution: 'Joins the private read and public write within one agent session across audit and tool logs.'
+          limitations: 'Depends on agentic audit availability and exported tool telemetry; visibility class must be enriched.'
+      benign_explanations:
+        - explanation: >-
+            Legitimate cross-repo PR automation moves content between repositories a team has
+            deliberately connected.
+          distinguishing_context: >-
+            An approved repo-pair list and a private-to-public classification separate sanctioned
+            automation from an unapproved private-to-public crossing; repo-pair crossing alone does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Allowlisting an agent wholesale, rather than by approved repo pair, would let the same
+            agent''s malicious private-to-public write through.
+      blind_spots:
+        - description: 'Missing telemetry: no documented audit action records the private-repository read directly.'
+          routes_to: null
+        - description: 'Attribution limit: without the causal chain, the movement is not tied to an injected issue.'
+          routes_to: null
+      analyst_response: >-
+        Identify the agent session, the private repository read and the public artifact written,
+        classify both repositories' visibility, check the repo pair against the approved list, and
+        pivot to the issue-to-write chain to establish cause.
+      safe_conclusion: >-
+        An agent moved data from a private to a public repository in one session; attributing it to an
+        injected issue requires the causal-chain join.
+    - id: 'STRAT-ISSUE-TO-PUBLIC-WRITE-CHAIN'
+      name: 'untrusted-issue-to-public-write causal chain'
+      objective: >-
+        Detect the ordered issue-read, private-repository read, and public write by one agent where
+        the issue was authored by an untrusted party.
+      incident_relevance: >-
+        Detects the documented injection chain end to end, establishing that an untrusted issue drove
+        the private-to-public disclosure rather than sanctioned automation.
+      detection_logic: >-
+        Select an agent session where an issue read is followed by a private-repository read and then
+        a public write, and raise when the issue author is external or non-member and the visibility
+        crosses private to public. Order the tool sequence and enrich with issue trust level. Do not
+        exclude on the agent actor being an agent, which is the load-bearing attribution.
+      minimum_evidence: >-
+        An ordered issue-read, private-read, and public-write in one agent session with an external
+        issue author and a private-to-public crossing. Weaker evidence, such as the write with no
+        linked issue read, may be reported as suspected agent-led disclosure only.
+      correlation_context: >-
+        Correlate on session id, issue id, repo ids, and PR id within up to one hour, with an explicit
+        maximum gap of thirty minutes; graph or entity state helps hold the ordered chain.
+      detectors:
+        - detector_class: 'ordered-sequence-complex-event-correlation'
+          technologies:
+            - 'Splunk (transaction / sequence)'
+            - 'Elastic (EQL sequence)'
+            - 'Microsoft Sentinel'
+            - 'Google SecOps'
+          contribution: 'Expresses the ordered read-then-read-then-write chain with issue-author enrichment.'
+          limitations: 'Requires the issue read and private read to be present or derivable, which the audit alone lacks.'
+      benign_explanations:
+        - explanation: >-
+            A maintainer-driven agent legitimately reads an internal issue and opens a public PR that
+            references internal context.
+          distinguishing_context: >-
+            An external or non-member issue author and an unapproved private-to-public crossing
+            separate the malicious chain; an internal author and a sanctioned repo pair do not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding chains where the actor is an agent to reduce noise would suppress exactly the
+            agentic disclosure this strategy targets.
+      blind_spots:
+        - description: 'Missing telemetry: no documented event records the untrusted issue body entering the agent context.'
+          routes_to: null
+        - description: 'Missing telemetry: Agent 365 tool arguments and results are captured but not queryable.'
+          routes_to: null
+        - description: 'Evasion: the injection phrased as a plausible maintenance task passes issue-trust heuristics.'
+          routes_to: null
+      analyst_response: >-
+        Reconstruct the ordered tool sequence for the session, identify the issue and its author,
+        confirm the private-repository read and the public artifact and its content, and determine
+        whether the repo pair and the crossing are sanctioned.
+      safe_conclusion: >-
+        An agent read an untrusted issue and then moved private data to a public artifact in one
+        session; confirming the disclosure content requires the written artifact.
+
+detector_requirements:
+  required: >-
+    Availability of agentic audit for the resulting write; exported AI-runtime tool telemetry
+    carrying the ordered MCP tool sequence; repository visibility and ownership classification; a join
+    across audit, tool logs, and visibility on session, issue, repo, and PR ids; issue-author trust
+    enrichment; retention long enough to hold the chain; and outcome-aware alert text separating a
+    public write from a confirmed issue-driven disclosure.
+  optional: >-
+    Streamed Copilot API usage records add request/response bodies where the plan allows, and an
+    approved-repo-pair list reduces cross-repo false positives, but neither gates the ordered-chain
+    detection.
+  correlation:
+    capability: >-
+      Aligned clocks across agentic audit and AI-runtime tool streams; a stable agent session id
+      carried across both; repository ids with a private/public visibility class; and issue-author
+      membership to establish the input was untrusted.
+    window: 'Up to one hour across the chain, with an explicit maximum gap of thirty minutes.'
+  baselines:
+    - name: 'Per-agent approved repository pairs and repo visibility/ownership history'
+      window: '30-day rolling'
+      seeded_from: >-
+        Sanctioned automation configuration and repository metadata; never seeded from the agent's own
+        cross-repo writes, which would enrol the attack crossing as approved.
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on deployed
+    sensors, enabled logging, retained fields, and architecture. For this object, verification
+    specifically means confirming that agentic audit is available on the plan and that the agent
+    client exports the tool sequence, since the audit records only the resulting write and the issue
+    and private reads must be derived.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of the behavior; the cited research page is undated in the catalog.'
+    - 'The claim rests on a single primary source; no independent replication was retrievable.'
+    - 'Whether MCP tool arguments and results are queryable in any deployed hunting table.'
+    - 'The exact MCP tool call path each agent client emits for an issue read and a private-repo read.'
+  assumptions:
+    - id: 'ASSUMPTION-ISSUE-CAUSED-WRITE'
+      verdict_changing: true
+      statement: >-
+        The public write was caused by the instruction in the untrusted issue, not by a coincident
+        legitimate task. The source demonstrates the hijack but the audit event proves only that the
+        write happened; this pack inferred the causal link from the demonstrated flow, which is
+        reasoning from a co-occurring write back to the issue as cause. If wrong, the causal-chain
+        strategy fires on benign maintainer flows and the detectable scope narrows to mere cross-repo
+        movement. Resolve it by reproducing the flow in a lab and confirming that removing the
+        imperative issue text stops the private-to-public write.
+  standing_negatives:
+    - statement: >-
+        No documented GitHub audit action records the poisoned issue read or the private-repository
+        pull: the fetched agentic and enterprise audit pages document only the resulting agent action
+        such as pull_request.create.
+      ref: 'REF-GH-AGENTIC-AUDIT'
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the GitHub agentic and enterprise audit event references for a newly documented
+        issue-read or repository-read action attributable to an agent.
+
+missing_states:
+  - id: 'MISSING_ISSUE_AND_PRIVATE_READ_EVENT'
+    meaning: 'Missing telemetry: no audit action records the issue read or the private-repository read.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Derive the read legs from AI-runtime tool logs; do not claim the causal chain from the public
+      write audit alone.
+  - id: 'MISSING_TOOL_IO_QUERYABLE'
+    meaning: 'Missing telemetry: MCP tool arguments and results are captured but not queryable in hunting tables.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Rely on tool name and server sequencing where argument content is unavailable, and mark the
+      disclosed content as unconfirmed until the written artifact is inspected.
+  - id: 'MISSING_AGENTIC_AUDIT_TIER'
+    meaning: 'Missing telemetry: agentic audit is unavailable outside EMU or data-residency plans.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Without agentic audit, fall back to enterprise audit and REST Git events and report at most a
+      suspected agent-authored public write.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'actor_or_explicit_missing_state'
+    - 'agent_session_identity'
+    - 'issue_identity_and_author_trust'
+    - 'private_repository_read_and_visibility'
+    - 'public_artifact_and_repository_crossing'
+    - 'observed_audit_action_and_tool_sequence'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'disclosed_content_summary'
+      condition: 'when the written public artifact content is retrievable for inspection'
+  recommended_title: 'Agent moved private-repository data into a public artifact after processing an untrusted issue'
+  unsupported_title: 'Attacker exfiltrated all private source code via a GitHub issue'
+
+evidence:
+  confirmed_incident_behavior: >-
+    Invariant Labs reports that a malicious GitHub Issue hijacked an agent running on the official
+    GitHub MCP server (Claude Desktop, Claude 4 Opus) into pulling private-repository data into a
+    public pull request, and that the flow is amplified by Always Allow tool-confirmation habits. That
+    the flow decomposes into an ordered issue-read, private-repository read, and public-write chain is
+    this pack's reading used to structure detection, registered in missing_context.assumptions, not a
+    per-event sequence the source instruments.
+  supported_conclusion: >-
+    The evidence supports that an untrusted code-host issue can drive an agent with cross-repository
+    access into disclosing private-repository data through a public artifact, without privilege
+    escalation, demonstrated as research on the official GitHub MCP server. The behavior is detectable
+    where the ordered issue-read, private-read, and public-write chain is correlated with a
+    private-to-public classification and an untrusted issue author, and reportable as suspected
+    cross-repo movement from partial evidence.
+  unsupported_conclusions: >-
+    The evidence does not establish in-the-wild use, a threat actor, the repositories or organisations
+    affected, or any use of the disclosed data beyond its appearance in the public artifact.
+    Persistence, credential theft, or onward movement require telemetry not carried by the cited source.
+  procedure_boundary: >-
+    This procedure is the creation of the malicious issue and the agent's read-then-public-write acting
+    on it. Any later use of the disclosed private data, additional writes, or account compromise is a
+    separate behavior and is not evidenced by this disclosure having occurred.
+  references:
+    - id: 'REF-THREAT-INVARIANTLABS'
+      type: 'incident-procedure-primary-source'
+      title: 'GitHub MCP exploited: accessing private repositories via MCP'
+      publisher: 'Invariant Labs'
+      url: 'https://invariantlabs.ai/blog/mcp-github-vulnerability'
+      trust_tier: 'researcher'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Single primary source for the toxic agent flow, the private-to-public disclosure, and the
+        Always Allow amplification. It does not document in-the-wild use, affected repositories, or a
+        per-event tool sequence.
+    - id: 'REF-GH-AGENTIC-AUDIT'
+      type: 'telemetry-documentation'
+      title: 'Agentic audit log events'
+      publisher: 'GitHub'
+      url: 'https://docs.github.com/en/copilot/reference/enterprise-administrators/agentic-audit-log-events'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents actor_is_agent, agent_session_id, and the agentic actions used by the agentic audit
+        telemetry source and the standing negative; supports no incident fact.
+    - id: 'REF-CLAUDE-OTEL'
+      type: 'telemetry-documentation'
+      title: 'Monitoring usage with OpenTelemetry (Claude Code)'
+      publisher: 'Anthropic'
+      url: 'https://code.claude.com/docs/en/monitoring-usage'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents claude_code.tool_result with MCP tool parameters used by the AI-runtime telemetry
+        source; supports no incident fact.
+    - id: 'REF-GH-ENTERPRISE-AUDIT'
+      type: 'telemetry-documentation'
+      title: 'Audit log events for your enterprise'
+      publisher: 'GitHub'
+      url: 'https://docs.github.com/en/enterprise-cloud@latest/admin/monitoring-activity-in-your-enterprise/reviewing-audit-logs-for-your-enterprise/audit-log-events-for-your-enterprise'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the general audit fields and REST Git-event retention used by the enterprise audit
+        telemetry source; supports no incident fact.

@@ -1,0 +1,608 @@
+identity:
+  uuid: '4325b1c1-0d89-4732-ba71-ad3dfdd05c5d'
+  id: 'DT-AAG1-AI-005'
+  aliases:
+    - 'P16'
+  name: 'Attackers publish backdoored third-party agent packages, extensions, or skills'
+  incident: >-
+    Malicious marketplace artifacts across agent ecosystems: postmark-mcp as a malicious MCP package,
+    and the ClawHavoc and ToxicSkills reports of malicious agent skills in the OpenClaw/ClawHub
+    marketplace.
+  first_observed: '2025'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'submitted-content-ingest'
+  secondary_attack_surfaces:
+    - 'ai-agent-harness'
+  behavior_classes:
+    - 'other'
+  behavior_classes_note: >-
+    backdoored-agent-artifact-supply-chain: an attacker distributes a backdoored MCP package, agent
+    extension, or marketplace skill; the procedure is its acquisition or runtime load, before any
+    later payload action.
+  tags:
+    - 'ai'
+    - 'supply-chain'
+    - 'mcp'
+    - 'agent-skills'
+    - 'marketplace'
+
+behavior:
+  definition: >-
+    An attacker distributes a backdoored third-party MCP package, agent extension, or marketplace
+    skill; the procedure is acquisition or runtime load of that artifact, not a later payload action.
+  detailed_definition: >-
+    The adversary publishes a backdoored artifact into a marketplace or registry that agents and their
+    users draw from, and a consumer acquires it by name and loads it into the agent runtime. Acquiring
+    or loading the artifact crosses from untrusted published content into code that runs in the agent's
+    identity and access, independent of any later payload behaviour. The attempt ends when the
+    backdoored artifact is published and installable; success, for this procedure, is its acquisition
+    or runtime load. Any subsequent download, permission change, or execution is corroborating or a
+    separate behaviour. It is independent of marketplace, package manager, and agent runtime.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers publication of the backdoored artifact and its acquisition or runtime load by a consumer;
+      does not cover the later payload the artifact runs, which is a separate procedure.
+    summary: >-
+      This can occur when an attacker can publish an artifact into a marketplace or registry a
+      consumer installs from, the consumer selects and installs it by name, and the agent runtime
+      loads it. Acquisition requires only that an install command run or the artifact be written; a
+      runtime-load signal additionally requires that the ecosystem emit a load event, which only one
+      evaluated channel does.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Acquisition is observable through endpoint process and file telemetry, and a runtime load through
+      one first-party counter where enabled; whether an acquired artifact is unapproved is only
+      decidable against a customer-maintained allowlist, and several channels emit no consumer-side
+      install record at all.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          The only documented first-party load signal, OpenClaw openclaw.skill.used, requires
+          diagnostics-otel enabled with diagnostics.otel.enabled=true (content needs captureContent=true);
+          ClawHub's install event is best-effort and disabled by CLAWHUB_DISABLE_TELEMETRY=1.
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          Acquisition evidence for package-manager channels is endpoint or CI-side only, so it exists
+          only where a host or pipeline sensor is deployed; Claude Code emits no install event at all.
+      - condition: 'environment-inventory-required'
+        note: >-
+          Deciding that an acquired or loaded artifact is unapproved requires a customer-maintained
+          allowlist of approved artifacts and digests to compare against.
+    summary: >-
+      The behavior is observable when an install command or artifact write is recorded on the host, or
+      when a runtime-load counter names the loaded skill, and the artifact source or digest is compared
+      to an allowlist. An install command alone establishes acquisition, not approval; a load counter
+      establishes use, not that the artifact is backdoored. Establishing the behavior needs the acquired
+      or loaded artifact resolved against the approved set; the later payload is a separate stage.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Separable from an approved install when the artifact source or digest is compared to an allowlist
+      and found unapproved or from an unsanctioned registry; a first install of a newly sanctioned
+      artifact overlaps and must be distinguished by the allowlist, not by novelty alone.
+    blocking_conditions:
+      - condition: 'environment-inventory-required'
+        note: >-
+          The malicious-versus-approved decision is defined against an allowlist of approved artifacts,
+          sources, and digests the estate must build; without it, an unapproved acquisition cannot be
+          separated from a sanctioned one.
+    summary: >-
+      Separation rests on comparing the acquired or loaded artifact's source, name, and digest to an
+      approved allowlist and flagging an unapproved registry, an unlisted digest, or a load with no
+      approved artifact record. Package signature, owner approval, and a first outbound call raise
+      confidence. An install with no allowlist to compare against, or a load counter with no digest, is
+      too weak to establish the behavior, and the payload effect is explicitly out of scope.
+
+attack_surface_context:
+  surface: >-
+    Agent package marketplaces and registries across three acquisition channels: OpenClaw ClawHub
+    skills, Claude Code plugin marketplaces, and npm or PyPI package registries, from which a user or
+    agent installs an artifact by name.
+  how_the_surface_works: >-
+    A consumer installs a skill, plugin, or package by name through a CLI, for example openclaw skills
+    install or clawhub install, claude plugin install, or npm install, which writes the artifact into a
+    skills, plugin, or module path such as ~/.openclaw/skills, ~/.claude/skills, or node_modules, and
+    the agent runtime loads it. Selection is by name and source, so a backdoored artifact published
+    under an attractive or familiar name is acquired and loaded like any other.
+  incident_processing_path: >-
+    The sources report (source-attested) that postmark-mcp was a malicious MCP package and that
+    ClawHavoc and ToxicSkills document malicious agent skills in marketplace ecosystems. That the
+    procedure boundary is acquisition or runtime load, with later download, chmod, and execution being
+    corroborating or separate execution evidence, is the catalog's framing, kept here, and registered
+    in missing_context.assumptions.
+  processing_stages:
+    - 'artifact-authoring'
+    - 'marketplace-publication'
+    - 'name-selection'
+    - 'install-command'
+    - 'artifact-write'
+    - 'runtime-load'
+    - 'separate-payload-execution'
+  stage_evidence: >-
+    The stage instrumentation sits at fixes what it can prove: a marketplace publication proves the
+    artifact exists, not that anyone installed it; an install command or file write proves acquisition
+    and may name the source; a load counter proves the artifact was loaded; only a later process or
+    outbound call proves the payload ran, and that last stage is a separate procedure.
+  trust_boundaries: >-
+    Untrusted publisher into the marketplace or registry (reached: malicious artifacts were published);
+    installed artifact into the local skill, plugin, or module path (reached: the artifact is written);
+    loaded artifact into the agent runtime (reached where a load signal exists). The payload's own
+    boundary crossings belong to the separate execution procedure and are not claimed here.
+  security_control_context: >-
+    Marketplace moderation, package signing, install-policy acknowledgment prompts, and approved-artifact
+    allowlists decide what can be published, installed, and loaded. No signature or signing-key field is
+    documented across the channels, so unsigned status is informational. Bypass representations include
+    the three channels' differing and partly absent telemetry, ClawHub install telemetry being
+    disable-able by CLAWHUB_DISABLE_TELEMETRY=1, and npm or PyPI acquisitions producing no consumer-side
+    registry audit at all.
+  technology_variants:
+    - variant: 'openclaw-clawhub-skills'
+      context: >-
+        openclaw skills install and clawhub install write to skills paths with .clawhub/origin.json and
+        .clawhub/lock.json provenance on disk; the openclaw.skill.used counter is the one documented
+        first-party runtime-load signal but needs diagnostics-otel enabled, and the ClawHub install
+        event is best-effort, undocumented in schema, and disabled by CLAWHUB_DISABLE_TELEMETRY=1.
+    - variant: 'claude-code-plugins-and-skills'
+      context: >-
+        claude plugin install and marketplace-add write to plugin and skill paths, and metrics carry
+        skill.name, plugin.name, and marketplace.name attributes, but Claude Code emits no install event
+        at all, so acquisition is visible only through endpoint process and file telemetry.
+    - variant: 'npm-pypi-packages'
+      context: >-
+        npm or PyPI acquisition of a backdoored package produces no documented consumer-side registry
+        audit and no openclaw.skill.used evidence, since OpenClaw skill installs do not support npm
+        specs; acquisition evidence for this channel is endpoint or CI-side only.
+  practitioner_implication: >-
+    An implementer must discover which of the three channels are in use, whether endpoint process and
+    file telemetry covers the installing hosts and pipelines, whether OpenClaw diagnostics-otel is
+    enabled for the load counter, and whether an allowlist of approved artifacts, sources, and digests
+    exists, since the channels differ sharply in what they record and some record nothing consumer-side.
+
+threat_research:
+  why_it_matters: >-
+    Agent skills, plugins, and packages load into the agent's runtime and identity, so a backdoored
+    marketplace artifact turns a routine install into attacker-controlled code inside the agent, and
+    the acquisition itself is the earliest catchable stage before any payload runs.
+  threat_actor: >-
+    Unknown and varied. The sources document malicious artifacts (postmark-mcp) and marketplace skill
+    campaigns (ClawHavoc, ToxicSkills) rather than attributing a single named group.
+  campaign: 'postmark-mcp malicious package and the ClawHavoc and ToxicSkills malicious agent-skill reports.'
+  victim: >-
+    Consumers of agent marketplaces and package registries who install third-party skills, plugins, or
+    packages; the sources describe ecosystem campaigns rather than a single named victim organisation.
+  capability: >-
+    A malicious MCP package (postmark-mcp) and malicious agent skills documented in marketplace
+    ecosystems (ClawHavoc, ToxicSkills); the demonstrated capability is publication and distribution of
+    backdoored artifacts that consumers acquire and load.
+  target: >-
+    Agents and developers that install third-party artifacts from marketplaces and registries.
+    Publication and distribution are documented; the sources treat later payload execution as separate
+    or corroborating rather than the procedure itself.
+  victimology:
+    - 'Agents and developers installing third-party skills, plugins, or MCP packages from marketplaces.'
+    - 'Estates without an approved-artifact allowlist or endpoint coverage of installing hosts and pipelines.'
+
+visibility:
+  telemetry_sources:
+    - source: 'OpenClaw gateway OpenTelemetry (openclaw.skill.used)'
+      purpose: 'Signal that a skill was loaded and used at runtime, the one documented first-party load signal.'
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'openclaw.skill.used (openclaw.skill.name, openclaw.skill.source, openclaw.skill.activation)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-OPENCLAW-OTEL'
+          load_bearing: true
+          note: >-
+            Counter requires diagnostics-otel enabled and diagnostics.otel.enabled=true; content such as
+            tool inputs needs captureContent=true; OTEL_SDK_DISABLED=true disables all plugin-owned routes.
+      details: >-
+        The counter carries the skill name, source, and activation, with optional agent and tool name,
+        as the only documented first-party runtime load or use signal; provenance itself lives on disk
+        in .clawhub/origin.json and .clawhub/lock.json, not in a log.
+      limitations:
+        - 'Requires diagnostics-otel enabled; sampling via diagnostics.otel.sampleRate can drop events.'
+        - 'Only covers OpenClaw skills; npm-delivered packages produce no openclaw.skill.used evidence.'
+    - source: 'Claude Code usage metrics and tool events'
+      purpose: 'Carry skill, plugin, and marketplace names on usage, though no install event is emitted.'
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'skill.name, plugin.name, marketplace.name (on claude_code.token.usage / cost.usage); tool_parameters.skill_name; is_plugin, plugin_id_hash, plugin.name'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CLAUDE-OTEL'
+          load_bearing: true
+          note: 'Usage-side attributes only; tool_parameters.skill_name needs OTEL_LOG_TOOL_DETAILS=1.'
+      details: >-
+        Metrics and tool events attribute usage to a skill, plugin, and marketplace and mark plugin
+        loads, giving a runtime-use signal, but there is no install or acquisition event.
+      limitations:
+        - 'Claude Code emits no skill or plugin install event; only usage attributes.'
+        - 'Acquisition for this channel must be recovered from endpoint telemetry.'
+    - source: 'Endpoint process and file telemetry'
+      purpose: 'Record the install command and the written artifact files, mandatory for acquisition.'
+      event_vocabulary: 'host-process-event'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'DeviceProcessEvents (ProcessCommandLine, FileName, SHA256, InitiatingProcessParentFileName, AccountName)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-DEFENDER-PROC'
+          load_bearing: true
+          note: 'Captures openclaw skills install, clawhub install, claude plugin install, and npm install commands.'
+        - name: 'DeviceFileEvents (FolderPath, FileName, SHA256, FileOriginUrl)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-DEFENDER-FILE'
+          load_bearing: true
+          note: 'Captures the written skill, plugin, and package files including .clawhub/origin.json and lock.json.'
+      details: >-
+        DeviceProcessEvents or Sysmon 1 record the install command with its full command line and hash;
+        DeviceFileEvents or Sysmon 11 record the written artifact and its origin URL and digest.
+      limitations:
+        - 'Requires an endpoint or CI sensor on the installing host or pipeline.'
+        - 'A command or file write alone does not establish the artifact is unapproved.'
+    - source: 'Registry and artifact access logs'
+      purpose: 'Record acquisition where artifacts are served from a controlled registry.'
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'Artifactory access log (DOWNLOAD/DEPLOY, ACCEPTED/DENIED, repository path, user, IP)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-ARTIFACTORY'
+          load_bearing: false
+          note: 'Present only where artifacts are mirrored through Artifactory; audit-trail log adds change events.'
+      details: >-
+        Artifactory access and audit-trail logs record DOWNLOAD and DEPLOY with repository path, user,
+        and IP; Hugging Face audit logs record repository and token events for Team and Enterprise tiers.
+      limitations:
+        - 'Public marketplaces and npm or PyPI are not necessarily mirrored or logged internally.'
+        - 'No consumer-side registry audit is documented for npm or PyPI acquisition.'
+
+detection:
+  scope: >-
+    Detection spans the backdoored artifact at rest in a marketplace, its acquisition by install command
+    and file write, and its runtime load, but stops before the separate payload execution. Two
+    materially distinct strategies divide the path: one compares an acquired artifact's source and
+    digest to an allowlist at install time, and one flags a runtime load of an artifact with no approved
+    record.
+  outcome_guardrails: >-
+    A marketplace publication establishes an artifact exists, not that it was installed. An install
+    command or file write establishes acquisition, not approval. A load counter establishes use, not
+    that the artifact is backdoored. A later process or outbound call establishes payload execution, a
+    separate procedure. These stay distinct, and acquisition or load must never be reported as executed
+    payload.
+  shared_normalization_context: >-
+    Normalise the artifact to a name, source or registry, and content digest, and normalise the install
+    channel across openclaw, clawhub, claude plugin, and npm or PyPI commands, so the same artifact is
+    recognised regardless of the acquisition path.
+  shared_enrichment_context: >-
+    Join the artifact name, source, and digest to an approved-artifact allowlist, to on-disk provenance
+    such as .clawhub/origin.json, and to any signature or owner metadata. A first outbound call to a
+    rare destination corroborates but belongs to the separate payload stage.
+  strategies:
+    - id: 'STRAT-ACQUISITION-ALLOWLIST-DIFF'
+      name: 'unapproved acquisition against an allowlist'
+      objective: >-
+        Detect acquisition of an agent skill, plugin, or MCP package from an unapproved registry or with
+        a digest absent from the approved allowlist.
+      incident_relevance: >-
+        Detects the acquisition stage of the documented malicious artifacts at the earliest catchable
+        point; it does not establish that any payload ran, which is a separate procedure corroborated by
+        execution evidence.
+      detection_logic: >-
+        Select install commands and artifact writes across the openclaw, clawhub, claude plugin, and npm
+        or PyPI channels, normalise the artifact source and digest, and raise when the source is an
+        unapproved registry or the digest is absent from the allowlist. Enrich with on-disk provenance
+        and signature status. Do not exclude a channel merely because it lacks a runtime-load event;
+        acquisition evidence stands on its own.
+      minimum_evidence: >-
+        An install command or artifact write naming the artifact and its source or digest, compared to
+        the approved allowlist. Without the allowlist, report an install from a given source only, not a
+        confirmed unapproved acquisition; never assert the payload executed.
+      correlation_context: >-
+        Correlate the install command and the written artifact on host, user, and digest at install
+        time, against a durable allowlist; retain acquisition provenance long enough to investigate a
+        later-discovered malicious artifact.
+      detectors:
+        - detector_class: 'endpoint-acquisition-and-allowlist-diff'
+          technologies:
+            - 'DeviceProcessEvents / Sysmon 1'
+            - 'DeviceFileEvents / Sysmon 11'
+            - 'SIEM durable lookups / KV / summary index'
+          contribution: 'Captures the install command and written artifact and compares source and digest to the allowlist.'
+          limitations: 'Requires an endpoint or CI sensor and a maintained allowlist; some channels emit no consumer registry audit.'
+      benign_explanations:
+        - explanation: >-
+            Developers routinely install new legitimate skills, plugins, and packages from sanctioned
+            marketplaces and registries.
+          distinguishing_context: >-
+            An unapproved registry source or a digest absent from the allowlist separates a malicious
+            acquisition from a sanctioned install; a new but allowlisted artifact does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding all first installs to reduce onboarding noise would suppress the malicious
+            acquisition, which is by nature a first install.
+      blind_spots:
+        - description: 'Missing telemetry: npm and PyPI acquisition produces no documented consumer-side registry audit.'
+          routes_to: null
+        - description: 'Missing telemetry: ClawHub install events are best-effort, undocumented in schema, and disable-able.'
+          routes_to: null
+        - description: 'Missing telemetry: no signature or signing-key field is documented across the channels.'
+          routes_to: null
+      analyst_response: >-
+        Identify the install command, channel, and written artifact, normalise its source and digest,
+        compare them to the allowlist, read on-disk provenance such as .clawhub/origin.json, check
+        signature and owner status, and pivot to execution telemetry only to scope a separate payload.
+      safe_conclusion: >-
+        An agent artifact was acquired from an unapproved source or with an unlisted digest; whether its
+        payload ran is a separate question requiring execution evidence.
+    - id: 'STRAT-RUNTIME-LOAD-NOVELTY'
+      name: 'runtime load of an artifact with no approved record'
+      objective: >-
+        Detect a runtime load or use of a skill or plugin that has no approved-artifact record for the
+        estate.
+      incident_relevance: >-
+        Detects the runtime-load stage where a load signal exists, catching an artifact that loads
+        without having passed acquisition review; it still does not establish payload execution.
+      detection_logic: >-
+        Select openclaw.skill.used loads and Claude Code skill, plugin, and marketplace usage
+        attributes, normalise the loaded artifact to a name and source, and raise when it has no
+        approved-artifact record or its source is unapproved. Require the load telemetry to be enabled;
+        do not treat an absent load event as evidence of no load.
+      minimum_evidence: >-
+        A runtime-load or use record naming the loaded skill or plugin, matched against the approved
+        record. Without a digest the match is name-and-source only; report unapproved load, not a
+        confirmed backdoor, and never assert payload execution.
+      correlation_context: >-
+        Correlate the load record to the prior acquisition on artifact name, source, and host where both
+        exist; the load counter alone lacks a digest, so tie it to the endpoint artifact write for
+        integrity.
+      detectors:
+        - detector_class: 'runtime-load-signal-and-approval-check'
+          technologies:
+            - 'OpenClaw gateway OpenTelemetry (openclaw.skill.used)'
+            - 'Claude Code usage metrics and tool events'
+          contribution: 'Flags a loaded or used artifact that has no approved record for the estate.'
+          limitations: 'Requires the load telemetry enabled; carries no digest, and does not cover npm-delivered packages.'
+      benign_explanations:
+        - explanation: >-
+            Agents legitimately load newly approved skills and plugins that have not yet been added to
+            the approved record.
+          distinguishing_context: >-
+            An unapproved source or a load with no approved record and no matching sanctioned install
+            separates the malicious case; a lag in updating the approved record does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Allowlisting a marketplace wholesale, rather than by approved artifact, would let a
+            backdoored artifact from that marketplace load unremarked.
+      blind_spots:
+        - description: 'Missing telemetry: Claude Code emits no install event, so a load lacks an acquisition counterpart there.'
+          routes_to: null
+        - description: 'Missing telemetry: the load counter carries no content digest to verify integrity.'
+          routes_to: null
+        - description: 'Missing telemetry: npm-delivered packages produce no openclaw.skill.used evidence.'
+          routes_to: null
+      analyst_response: >-
+        Identify the loaded skill or plugin and its source, check it against the approved record, tie it
+        to the endpoint install and written artifact for a digest, confirm signature and owner status,
+        and scope any separate payload only after establishing the load.
+      safe_conclusion: >-
+        A skill or plugin loaded at runtime with no approved record; confirming a backdoor and any
+        payload requires the artifact digest and execution evidence.
+
+detector_requirements:
+  required: >-
+    A maintained allowlist of approved artifacts, sources, and digests; endpoint process and file
+    telemetry on installing hosts and CI pipelines; normalisation of install commands and artifact
+    identity across the openclaw, clawhub, claude plugin, and npm or PyPI channels; the OpenClaw load
+    counter enabled where that channel is used; retention of acquisition provenance for
+    later-discovered malicious artifacts; and outcome-aware alert text separating acquisition and load
+    from payload execution.
+  optional: >-
+    On-disk provenance such as .clawhub/origin.json, signature or owner metadata where present, and
+    registry access logs where artifacts are mirrored, all raise confidence, but none is available on
+    every channel and none gates the endpoint-based acquisition detection.
+  correlation:
+    capability: >-
+      A durable allowlist keyed by artifact name, source, and digest; endpoint install and file-write
+      records to supply the digest; and the runtime-load counter where enabled, aligned on host, user,
+      and artifact name so a load can be tied to its acquisition.
+    window: 'Acquisition at install time; load tied to the prior acquisition on artifact name, source, and host.'
+  baselines:
+    - name: 'Approved agent-artifact allowlist (skills, plugins, MCP packages) with sources and digests'
+      window: '90-day-plus retained provenance'
+      seeded_from: >-
+        Reviewed and sanctioned artifacts and their digests; never seeded from whatever is already
+        installed across hosts, which would enrol a backdoored artifact as approved.
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on deployed
+    sensors, enabled logging, retained fields, and architecture. For this object, verification
+    specifically means confirming that endpoint telemetry covers the installing hosts and pipelines,
+    that the OpenClaw load counter is enabled where used, and that an approved-artifact allowlist exists,
+    since Claude Code emits no install event, ClawHub's is disable-able, and npm or PyPI emit no
+    consumer-side audit.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of the behavior; the catalog does not date the postmark-mcp, ClawHavoc, or ToxicSkills artifacts precisely.'
+    - 'The schema, fields, storage, and identifiers of any ClawHub install event; the page documents only a best-effort event.'
+    - 'Whether npm or PyPI expose any consumer-side install audit; none is documented on the fetched pages.'
+    - 'Whether any channel documents a signature or signing-key field for acquired artifacts.'
+  assumptions:
+    - id: 'ASSUMPTION-PROCEDURE-BOUNDARY-LOAD'
+      verdict_changing: false
+      statement: >-
+        The procedure boundary is acquisition or runtime load of the backdoored artifact, with later
+        download, chmod, and execution treated as corroborating or separate execution evidence. The
+        catalog frames the procedure this way and this pack keeps that boundary rather than folding the
+        payload in. If wrong, the detection under-claims by stopping at load when execution should be
+        part of the same object, mis-scoping coverage rather than inverting a manifestation verdict.
+        Resolve it by confirming with the sources whether the payload execution is treated as the same
+        procedure or a distinct one.
+  standing_negatives:
+    - statement: >-
+        No consumer-side install audit is documented for npm or PyPI and Claude Code emits no
+        skill or plugin install event, while ClawHub's install event is best-effort, schema-undocumented,
+        and disabled by CLAWHUB_DISABLE_TELEMETRY=1: the fetched pages document usage attributes and
+        endpoint-side acquisition only.
+      ref: 'REF-CLAUDE-OTEL'
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the Claude Code plugin, ClawHub, and package-registry documentation for a newly
+        documented consumer-side install or acquisition audit event with named fields.
+
+missing_states:
+  - id: 'MISSING_INSTALL_EVENT'
+    meaning: 'Missing telemetry: Claude Code emits no install event and ClawHub install events are undocumented and disable-able.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Recover acquisition from endpoint process and file telemetry; do not rely on a first-party install
+      event that may not exist or may be disabled.
+  - id: 'MISSING_REGISTRY_CONSUMER_AUDIT'
+    meaning: 'Missing telemetry: npm and PyPI acquisition produces no documented consumer-side registry audit.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Cover the package-manager channel with endpoint or CI telemetry only; do not expect a registry-side
+      consumer record.
+  - id: 'MISSING_APPROVED_ALLOWLIST'
+    meaning: 'Missing capability: no allowlist of approved artifacts, sources, and digests to compare against.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Report an install or load from a given source only; the unapproved decision is undefined without
+      the allowlist.
+  - id: 'MISSING_SIGNATURE_FIELD'
+    meaning: 'Missing telemetry: no signature or signing-key field is documented across the channels.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Treat unsigned status as informational, not decisive, and lean on source and digest allowlisting
+      instead.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'actor_or_explicit_missing_state'
+    - 'artifact_name_source_and_digest'
+    - 'acquisition_channel'
+    - 'installing_host_user_or_pipeline'
+    - 'allowlist_match_or_explicit_missing_state'
+    - 'observed_install_command_or_load_signal'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'runtime_load_record'
+      condition: 'when a load signal such as openclaw.skill.used or a Claude Code usage attribute is present'
+    - field: 'separate_payload_execution_reference'
+      condition: 'when later execution evidence corroborates a distinct payload procedure'
+  recommended_title: 'Agent artifact acquired or loaded from an unapproved source with no allowlist match'
+  unsupported_title: 'Backdoored agent package executed its payload and compromised the host'
+
+evidence:
+  confirmed_incident_behavior: >-
+    The sources report that postmark-mcp was a malicious MCP package and that ClawHavoc and ToxicSkills
+    document malicious agent skills in marketplace ecosystems. That the procedure is acquisition or
+    runtime load, with later download, chmod, and execution being corroborating or separate execution
+    evidence, is the catalog's framing kept here and registered in missing_context.assumptions, not a
+    claim that the sources merged load and payload into one event.
+  supported_conclusion: >-
+    The evidence supports that backdoored agent skills, plugins, and MCP packages are published into
+    marketplaces and registries and acquired by consumers across three channels. The behavior is
+    detectable at acquisition when an artifact's source or digest is compared to an approved allowlist,
+    and at runtime load where a load signal exists, and reportable as an install from a given source
+    where no allowlist exists.
+  unsupported_conclusions: >-
+    The evidence does not establish that any acquired artifact's payload executed, what the payload did,
+    persistence, or data theft, all of which are the separate execution procedure. It also does not
+    establish per-host compromise counts or a single attributed actor across the campaigns.
+  procedure_boundary: >-
+    This procedure is the publication of a backdoored artifact and its acquisition or runtime load. The
+    later download, permission change, and execution of the payload are a separate behavior and are not
+    evidenced by the artifact having been acquired or loaded.
+  references:
+    - id: 'REF-THREAT-KOI'
+      type: 'incident-procedure-primary-source'
+      title: 'ClawHavoc: 341 malicious ClawedBot skills found by the bot they were targeting'
+      publisher: 'Koi'
+      url: 'https://www.koi.ai/blog/clawhavoc-341-malicious-clawedbot-skills-found-by-the-bot-they-were-targeting'
+      trust_tier: 'researcher'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary source for the ClawHavoc malicious agent-skill campaign; supports the acquisition and
+        publication behavior, not any payload-execution or per-host compromise claim.
+    - id: 'REF-THREAT-SNYK'
+      type: 'incident-procedure-primary-source'
+      title: 'ToxicSkills: malicious AI agent skills in ClawHub'
+      publisher: 'Snyk'
+      url: 'https://snyk.io/blog/toxicskills-malicious-ai-agent-skills-clawhub/'
+      trust_tier: 'researcher'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary source for the ToxicSkills malicious agent-skill artifacts in the ClawHub marketplace;
+        supports the publication and acquisition behavior only.
+    - id: 'REF-THREAT-UNIT42'
+      type: 'incident-procedure-primary-source'
+      title: 'OpenClaw AI supply-chain risk'
+      publisher: 'Unit 42'
+      url: 'https://unit42.paloaltonetworks.com/openclaw-ai-supply-chain-risk/'
+      trust_tier: 'researcher'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary source for the OpenClaw agent supply-chain risk including the postmark-mcp malicious
+        package context; supports the publication and acquisition behavior, not payload execution.
+    - id: 'REF-OPENCLAW-OTEL'
+      type: 'telemetry-documentation'
+      title: 'OpenClaw gateway OpenTelemetry'
+      publisher: 'OpenClaw'
+      url: 'https://docs.openclaw.ai/gateway/opentelemetry'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the openclaw.skill.used counter and its enablement used by the OpenClaw telemetry
+        source; supports no incident fact.
+    - id: 'REF-CLAUDE-OTEL'
+      type: 'telemetry-documentation'
+      title: 'Monitoring usage with OpenTelemetry (Claude Code)'
+      publisher: 'Anthropic'
+      url: 'https://code.claude.com/docs/en/monitoring-usage'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the skill, plugin, and marketplace usage attributes and the absence of an install
+        event, used by the Claude Code telemetry source and the standing negative.
+    - id: 'REF-DEFENDER-PROC'
+      type: 'telemetry-documentation'
+      title: 'DeviceProcessEvents table (advanced hunting)'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-deviceprocessevents-table'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the process fields used to capture install commands in the endpoint telemetry source.'
+    - id: 'REF-DEFENDER-FILE'
+      type: 'telemetry-documentation'
+      title: 'DeviceFileEvents table (advanced hunting)'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-devicefileevents-table'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the file fields used to capture written artifacts in the endpoint telemetry source.'
+    - id: 'REF-ARTIFACTORY'
+      type: 'telemetry-documentation'
+      title: 'Artifactory access log'
+      publisher: 'JFrog'
+      url: 'https://docs.jfrog.com/administration/docs/access-log'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the DOWNLOAD/DEPLOY access records used by the registry telemetry source where
+        artifacts are mirrored; supports no incident fact.

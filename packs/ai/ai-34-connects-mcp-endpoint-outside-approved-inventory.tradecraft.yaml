@@ -1,0 +1,561 @@
+identity:
+  uuid: 'dc9ebf0f-050f-42d0-8c1a-a68123a579bb'
+  id: 'DT-AAG1-AI-034'
+  aliases:
+    - 'P69'
+  name: 'An agent connects to an MCP endpoint outside the approved inventory'
+  incident: >-
+    Mitiga demonstrated Claude Code MCP hijacking, redirecting an agent's MCP traffic to an endpoint
+    outside the approved inventory; Elastic ships a detection precedent for agent connections to
+    unusual domains.
+  first_observed: '2026'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'ai-agent-harness'
+  secondary_attack_surfaces:
+    - 'name-resolution-path'
+  behavior_classes:
+    - 'other'
+  behavior_classes_note: >-
+    agent-connection-to-endpoint-outside-approved-inventory: an agent process opens an MCP transport to
+    a server that is not on the customer-maintained inventory of approved endpoints, independent of
+    whether any credential or token is transmitted over that connection.
+  tags:
+    - 'ai'
+    - 'agent'
+    - 'mcp'
+    - 'network'
+    - 'allowlist'
+
+behavior:
+  definition: >-
+    An agent process connects to an MCP endpoint outside the approved inventory. Credentials are not
+    presumed transmitted; any credential exposure is scenario context.
+  detailed_definition: >-
+    An agent process establishes a Model Context Protocol connection to a server whose endpoint is not
+    on the sanctioned inventory the operator maintains. The boundary crossed is from the set of
+    approved tool endpoints into an unapproved one, whether by a redirected configuration, a
+    skill-supplied server, or a resolver or transport interception. The attempt ends at the connection
+    to the unapproved endpoint; success as compromise begins only if that endpoint then receives
+    credentials, tokens, or tool traffic. It is independent of agent product, MCP transport, and the
+    form the approved inventory takes.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers an agent connecting to an MCP endpoint absent from the approved inventory; does not cover
+      whether credentials or tool data were transmitted to that endpoint.
+    summary: >-
+      This can occur when an agent's MCP configuration, a skill-supplied server, or an intercepted
+      transport points a connection at an endpoint the operator has not approved, and the agent opens
+      that connection. Credential exposure additionally requires the agent to send authentication or
+      tool traffic to the unapproved endpoint.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      The connection is observable through native agent telemetry (under enablement flags) and through
+      DNS or proxy egress; deciding that it is outside the approved inventory additionally requires a
+      customer-maintained inventory that no product ships, and the native connection event carries no
+      endpoint host.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          The Claude Code MCP connection event requires CLAUDE_CODE_ENABLE_TELEMETRY=1 and an OTEL logs
+          exporter, and the server name is redacted and third-party plugins report a literal
+          third-party label unless OTEL_LOG_TOOL_DETAILS=1; Cowork MCP events need an admin-configured
+          OTLP endpoint on Team or Enterprise.
+      - condition: 'environment-inventory-required'
+        note: >-
+          The approved-endpoint inventory is a customer-maintained list that no product publishes; the
+          behavior is definable only against an inventory the estate must build and keep current.
+      - condition: 'cross-source-join-required'
+        note: >-
+          The Anthropic connection event includes no URL or host field, so the endpoint identity that
+          decides approval must be recovered from DNS or proxy egress and joined to the agent
+          connection.
+    summary: >-
+      The connection is observable when native agent telemetry records an MCP server connection, or when
+      DNS or proxy egress records the agent process reaching a destination host. The native event
+      establishes that a connection happened but, without the tool-details flag and without a host
+      field, not to which endpoint; DNS or proxy establishes the destination host but not that it was an
+      MCP connection or that it is unapproved. Deciding approval needs the destination joined to a
+      maintained inventory; a connection event with a redacted server name and no host is too weak to
+      place the endpoint.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Separable from approved MCP use when the destination endpoint is recovered and compared to a
+      current approved inventory; without the inventory, or without recovering the host the native event
+      omits, an unapproved connection cannot be told from an approved one.
+    blocking_conditions:
+      - condition: 'environment-inventory-required'
+        note: >-
+          The discriminator is membership in the approved inventory; there is nothing to separate
+          against until that inventory is built and maintained.
+      - condition: 'cross-source-join-required'
+        note: >-
+          Separation needs the destination host (from DNS, proxy, or the flag-gated server name) joined
+          to the agent connection and then compared to the inventory; no single stream both identifies
+          the endpoint and confirms it is an MCP connection.
+    summary: >-
+      Separation rests on recovering the endpoint identity the native event omits and comparing it to a
+      maintained inventory of approved MCP servers, with first-seen and unusual-port context to
+      prioritise. Normalizing destinations to a comparable host form, keeping the inventory current, and
+      confirming the connection is the agent's MCP transport are what make it separable; a connection to
+      a new host with no inventory, or a native event with a redacted server name and no host, is too
+      weak to call unapproved.
+
+attack_surface_context:
+  surface: >-
+    The set of MCP server endpoints an agent is configured and permitted to connect to, expressed in
+    the agent's MCP configuration and per-scope settings and in skill-supplied server definitions, and
+    the outbound connections the agent opens to them.
+  how_the_surface_works: >-
+    An agent reads MCP server definitions from its configuration and settings files and from
+    skill-supplied provenance, then opens a transport (stdio, sse, or http) to each server to call its
+    tools. The operator's notion of which endpoints are approved lives in a separately maintained
+    inventory; nothing in the protocol or the products enforces or publishes that inventory, so a
+    redirected configuration or an intercepted transport can point a connection at an unapproved server.
+  incident_processing_path: >-
+    Mitiga reports (source-attested) that Claude Code MCP traffic can be hijacked to steal SaaS tokens
+    via a man-in-the-middle, and Elastic ships a prebuilt rule (source-attested) that flags a generative
+    AI process connecting to an unusual domain. That the deciding event for this procedure is the
+    connection to an endpoint outside the approved inventory, with credential transmission held as
+    separate scenario context, is this pack's framing carried from the catalog rather than a connection
+    call path either source publishes.
+  processing_stages:
+    - 'mcp-configuration-or-skill-source'
+    - 'endpoint-selection'
+    - 'name-resolution'
+    - 'agent-mcp-connection'
+    - 'inventory-comparison'
+    - 'tool-or-credential-traffic'
+  stage_evidence: >-
+    The stage an event sits at fixes what it can prove: a native connection event proves a connection
+    but not the endpoint host; a DNS or proxy record proves the destination host but not that it is an
+    MCP connection; only comparison to the approved inventory proves the endpoint is unapproved; only
+    tool or credential traffic proves exposure beyond the connection.
+  trust_boundaries: >-
+    Approved endpoint set into an unapproved endpoint (reached: the agent opens the connection); agent
+    into the unapproved server's control of the tool channel (reached only if tool or credential traffic
+    follows). Whether tokens crossed to the unapproved endpoint is not established by the connection
+    alone.
+  security_control_context: >-
+    MCP configuration allowlists, per-scope settings, egress proxies, and DNS policy decide and record
+    which endpoints an agent may reach where an estate deploys them. The native connection event redacts
+    the server name by default and carries no host, so the control that most needs the endpoint identity
+    is the least served by native telemetry. Bypass representations include a configuration or skill that
+    adds an unapproved server, a transport man-in-the-middle that leaves the configured name intact, and
+    a resolver redirection that changes the host behind an approved name.
+  practitioner_implication: >-
+    An implementer must discover which agent products are in use and their MCP telemetry enablement,
+    whether DNS or proxy egress captures agent destinations, where the approved-endpoint inventory lives
+    and how current it is, and how to recover the destination host that the native connection event
+    omits before judging any connection unapproved.
+
+threat_research:
+  why_it_matters: >-
+    An agent that connects to an MCP endpoint outside the approved set exposes its tool channel, and any
+    credentials or tokens it sends over it, to a server the operator never sanctioned, which is the
+    precondition for MCP-hijacking token theft even though the connection itself transmits nothing by
+    definition.
+  threat_actor: >-
+    None named as an in-the-wild group. Mitiga demonstrated the MCP-hijacking man-in-the-middle as
+    research, and Elastic ships the unusual-domain rule as a detection precedent.
+  campaign: 'Mitiga Claude Code MCP hijacking research and the Elastic unusual-domain detection precedent.'
+  victim: >-
+    Users of Claude Code and comparable MCP-enabled agents whose tool traffic can be redirected to an
+    unapproved endpoint, as characterised by the research; no in-the-wild victim set is claimed.
+  capability: >-
+    Mitiga demonstrated redirecting Claude Code MCP traffic to an attacker endpoint via a
+    man-in-the-middle to steal SaaS tokens; Elastic demonstrated a shipped detection for a generative AI
+    process reaching an unusual domain.
+  target: >-
+    The agent's MCP tool channel and the endpoints it connects to. The research establishes that traffic
+    can be redirected to an unapproved endpoint; the connection procedure itself does not establish token
+    transmission.
+  victimology:
+    - 'MCP-enabled coding and agent tooling that connects to configurable or skill-supplied tool servers.'
+    - 'Estates without a maintained inventory of approved MCP endpoints or egress capture of agent destinations.'
+
+visibility:
+  telemetry_sources:
+    - source: 'Anthropic Claude Code MCP telemetry (OTel)'
+      purpose: 'Record that an MCP server connection occurred and, under the tool-details flag, its server name.'
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'claude_code.mcp_server_connection (status, transport_type, server_scope, duration_ms, error_code, is_plugin, plugin_id_hash, plugin.name; server_name only with OTEL_LOG_TOOL_DETAILS=1)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CC-OTEL'
+          load_bearing: true
+          note: >-
+            Logged when an MCP server connects, disconnects, or fails; carries no URL or host field, and
+            the server name is redacted and third-party plugins report a literal third-party label unless
+            OTEL_LOG_TOOL_DETAILS=1. Requires CLAUDE_CODE_ENABLE_TELEMETRY=1 and an OTEL logs exporter.
+      details: >-
+        A companion claude_code.tool_result carries mcp_server_scope and the MCP server and tool names
+        under the same tool-details flag, giving per-call context where the connection event alone does
+        not name the endpoint.
+      limitations:
+        - 'No URL or host field on the connection event: endpoint identity is not carried natively.'
+        - 'Server name redacted and plugin name generic unless the tool-details flag is set.'
+        - 'Requires telemetry enablement and a logs exporter.'
+    - source: 'Other agent MCP telemetry (Claude Cowork, Microsoft Agent 365, Cursor, OpenClaw)'
+      purpose: 'Record MCP invocation, tool identity, or configuration changes where the product carries them.'
+      event_vocabulary: 'application-record'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'Microsoft Agent 365 ExecuteToolByMCPServer (ToolName, ServerAddress, ServerPort)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-AGENT365'
+          load_bearing: true
+          note: >-
+            The one fetched source that carries a server address and port in a hunting table; the
+            documented gen_ai.tool.server.name attribute is not surfaced in CloudAppEvents.
+      details: >-
+        Cowork emits tool and MCP invocation events with server and tool names when an admin configures
+        an OTLP endpoint on Team or Enterprise; Cursor's audit log carries an mcp_server_config event for
+        configuration changes only, with a 30-day query range and a 20-requests-per-minute cap; OpenClaw
+        tool and skill attributes identify tool identity when captureContent is enabled.
+      limitations:
+        - 'Cursor logs the configuration change, never the invocation, and its OpenAPI names differ.'
+        - 'Agent 365 surfaces server address and port, but not gen_ai.tool.server.name, in CloudAppEvents.'
+        - 'OpenAI Codex documents no MCP server or tool fields on the fetched pages.'
+    - source: 'Network egress telemetry (DNS resolver and proxy, endpoint network events)'
+      purpose: 'Recover the destination host the native connection event omits, and place the agent process reaching it.'
+      event_vocabulary: 'dns-resolver-record'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'Route 53 Resolver (query_name, query_type, srcaddr, rcode, rdata) / Cloud DNS (queryName, sourceIP, responseCode)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-ROUTE53'
+          load_bearing: true
+          note: 'Carries the destination host that decides inventory membership; DeviceNetworkEvents RemoteUrl/RemoteIP complements it on the endpoint.'
+      details: >-
+        Route 53 Resolver or Cloud DNS query logs and DeviceNetworkEvents or Sysmon event 3 record the
+        agent process reaching a destination host; Sysmon event 1 records child processes for stdio MCP
+        servers.
+      limitations:
+        - 'DNS or proxy shows the host, not that the connection was the agent''s MCP transport.'
+        - 'Requires egress logging deployed on the agent''s network path.'
+    - source: 'Approved-endpoint inventory (customer-maintained source of truth)'
+      purpose: 'Provide the set of approved MCP endpoints the connection is judged against.'
+      event_vocabulary: 'none'
+      tier: 'not-applicable'
+      operational_viability: 'first-party-build'
+      details: >-
+        The MCP server configuration in the agent configuration file and per-scope settings, plus
+        skill-supplied provenance and lock files, seed a maintained inventory of approved endpoints. No
+        product ships this inventory; the estate assembles and curates it.
+      limitations:
+        - 'Not shipped by any product: the estate must build and keep it current.'
+        - 'A stale inventory both misses new approvals and fails to flag newly unapproved endpoints.'
+
+detection:
+  scope: >-
+    Detection spans the agent's MCP connection, the destination endpoint, and comparison to the approved
+    inventory. Two materially distinct strategies divide the path: one recovers the destination from
+    network egress and compares it to the inventory, and one uses the native MCP connection event with
+    the tool-details flag to name the server directly.
+  outcome_guardrails: >-
+    A connection establishes that the agent reached an endpoint, not that credentials or tool data
+    crossed. A destination host establishes where the connection went, not that it is an MCP connection.
+    Comparison to the inventory establishes that the endpoint is unapproved. These must stay distinct;
+    "agent connected to a new endpoint" and "agent leaked tokens to an attacker MCP server" are
+    different alerts.
+  shared_normalization_context: >-
+    Normalize destinations to a comparable host form and normalize the approved inventory to the same
+    form, so that a connection is compared by endpoint identity rather than by a configured server name
+    that a redirection may leave intact.
+  shared_enrichment_context: >-
+    Join the native MCP connection event, the DNS or proxy destination, and the endpoint process on host
+    and time, and compare the resulting endpoint to the current approved inventory with first-seen and
+    unusual-port context.
+  strategies:
+    - id: 'STRAT-EGRESS-INVENTORY-COMPARISON'
+      name: 'egress destination versus approved inventory'
+      objective: >-
+        Detect an agent process connecting to a destination endpoint absent from the approved MCP
+        inventory, with first-seen and unusual-port context.
+      incident_relevance: >-
+        Detects the connection the incident makes, using the destination the native event omits. It does
+        not establish that the connection carried MCP tool traffic or credentials; those need further
+        evidence.
+      detection_logic: >-
+        Recover the destination host from DNS or proxy egress for the agent process, normalize it, and
+        raise when it is absent from the current approved MCP inventory, weighting first-seen
+        destinations and unusual ports. Confirm the initiating process is the agent where endpoint
+        network telemetry carries it. Do not exclude by configured server name, which a redirection can
+        preserve while changing the host.
+      minimum_evidence: >-
+        An agent-process egress connection to a destination absent from the approved inventory. Without
+        confirmation that it was an MCP connection, report an agent connection to an unapproved
+        destination, not a confirmed unapproved MCP endpoint.
+      correlation_context: >-
+        Join DNS or proxy destinations to the agent process on host and a short window, and compare to
+        the inventory as of the connection time. Account for shared egress IPs that blur which host
+        initiated the connection.
+      detectors:
+        - detector_class: 'network-egress-and-inventory-analytics'
+          technologies:
+            - 'Route 53 Resolver query logs'
+            - 'Google Cloud DNS logging'
+            - 'Microsoft Defender for Endpoint (DeviceNetworkEvents)'
+            - 'Egress proxy logs'
+          contribution: 'Recovers the destination endpoint and compares it to a maintained inventory.'
+          limitations: 'Shows the host, not the MCP transport; depends on egress logging and a current inventory.'
+      benign_explanations:
+        - explanation: >-
+            The agent legitimately connects to a newly approved MCP server that the inventory has not yet
+            recorded.
+          distinguishing_context: >-
+            A destination that is both first-seen and unrecorded in a current, well-maintained inventory
+            separates the suspicious case; a lag in a stale inventory does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Auto-adding every new agent destination to the inventory would enrol an attacker endpoint as
+            approved and permanently suppress the signal.
+      blind_spots:
+        - description: 'Missing telemetry: no egress logging on the agent''s network path.'
+          routes_to: null
+        - description: 'Environment gap: a stale or absent approved inventory leaves nothing to compare against.'
+          routes_to: null
+        - description: 'Evasion: a transport man-in-the-middle behind an approved hostname that resolves normally.'
+          routes_to: null
+      analyst_response: >-
+        Recover the destination host and port for the agent process, compare to the current approved
+        inventory, determine whether it is a newly approved server or genuinely unapproved, and pivot to
+        native MCP telemetry to confirm the connection was an MCP transport and to any tool or credential
+        traffic.
+      safe_conclusion: >-
+        An agent process connected to a destination outside the approved inventory; whether it was an MCP
+        connection and whether credentials crossed is not established without further evidence.
+    - id: 'STRAT-NATIVE-MCP-CONNECTION-NAMING'
+      name: 'native MCP connection endpoint naming'
+      objective: >-
+        Detect an MCP server connection the agent records natively and identify the server, where the
+        tool-details flag is set.
+      incident_relevance: >-
+        Detects the MCP connection directly and confirms it is an MCP transport, which the egress path
+        cannot. It depends on enablement flags that redact the server by default.
+      detection_logic: >-
+        Where Claude Code MCP telemetry is enabled with the tool-details flag, or where Agent 365
+        ExecuteToolByMCPServer carries the server address, raise when a recorded MCP server connection
+        names a server or address absent from the approved inventory, weighting is_plugin and
+        third-party provenance. Treat a redacted server name as insufficient to name the endpoint and
+        route to the egress strategy instead.
+      minimum_evidence: >-
+        A native MCP connection event naming a server or address absent from the approved inventory.
+        A connection event with a redacted server name and no address may be reported only as an MCP
+        connection of unknown endpoint.
+      correlation_context: >-
+        Join the native connection event to the egress destination on host and time to recover the
+        address the Anthropic event omits, and to the inventory as of the connection time. Cursor's
+        configuration-change event corroborates a changed server set but is not the connection.
+      detectors:
+        - detector_class: 'agent-native-mcp-telemetry'
+          technologies:
+            - 'Anthropic Claude Code OTel (OTEL_LOG_TOOL_DETAILS=1)'
+            - 'Microsoft Agent 365 (ExecuteToolByMCPServer)'
+            - 'Anthropic Claude Cowork OTel'
+          contribution: 'Confirms the connection was an MCP transport and, under flags, names the server.'
+          limitations: 'Server name redacted by default; Anthropic event carries no host; Codex carries no MCP fields.'
+      benign_explanations:
+        - explanation: >-
+            A user or admin legitimately adds and connects a new MCP server not yet in the inventory.
+          distinguishing_context: >-
+            A server that is third-party, unexpectedly plugin-supplied, or absent from a current
+            inventory separates the suspicious case; a sanctioned new server does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Trusting the configured server name over the resolved endpoint would accept a man-in-the-middle
+            that preserves the name while changing the host.
+      blind_spots:
+        - description: 'Missing telemetry: server name redacted because the tool-details flag is unset.'
+          routes_to: null
+        - description: 'Missing telemetry: the Anthropic connection event carries no endpoint host.'
+          routes_to: null
+        - description: 'Evasion: an OpenAI Codex agent whose OTel documents no MCP server or tool fields.'
+          routes_to: null
+      analyst_response: >-
+        Read the recorded MCP server name, scope, and plugin provenance, join to the egress destination
+        to recover the host, compare to the approved inventory, and determine whether tool or credential
+        traffic followed the connection.
+      safe_conclusion: >-
+        The agent opened an MCP connection to a server absent from the approved inventory, where native
+        telemetry named or its egress host identified the endpoint.
+
+detector_requirements:
+  required: >-
+    A maintained inventory of approved MCP endpoints normalized to a comparable host form; recovery of
+    the destination endpoint the native connection event omits, from DNS, proxy, or the flag-gated server
+    name; confirmation that the connection is the agent's MCP transport rather than any egress; process
+    attribution to the agent; and outcome-aware alert text that distinguishes an unapproved connection
+    from confirmed credential transmission.
+  optional: >-
+    The Claude Code tool-details flag and Agent 365 server-address field name the endpoint natively, and
+    Cursor's configuration-change event corroborates a changed server set; none gates the egress-based
+    comparison.
+  correlation:
+    capability: >-
+      Aligned clocks across native agent, DNS or proxy, and endpoint streams; stable agent-process
+      identity across them; the ability to join a native MCP connection to its egress host; and an
+      inventory current as of the connection time.
+    window: 'Short join window (this pack''s convention up to five minutes) from native MCP connection to its egress destination.'
+  baselines:
+    - name: 'Approved MCP endpoint inventory'
+      window: 'Continuously maintained, reviewed at least every 30 days'
+      seeded_from: >-
+        Sanctioned MCP server configurations, per-scope settings, and reviewed skill provenance; never
+        seeded by auto-adding observed agent destinations, which would enrol an attacker endpoint as
+        approved.
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on deployed
+    sensors, enabled logging, retained fields, and architecture. For this object, verification
+    specifically means confirming that egress logging captures agent destinations, that native MCP
+    telemetry is enabled with the tool-details flag where relied on, and that a current approved-endpoint
+    inventory exists, since the native connection event carries no host and the inventory ships with no
+    product.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of the behavior; the sources are undated in the catalog and only a coarse year is defensible.'
+    - 'The exact redirection or interception path in the demonstrated MCP hijacking.'
+    - 'Whether, in the demonstrated case, tokens actually crossed to the unapproved endpoint or only could have.'
+    - 'The full event-type enumeration of the Cursor audit endpoint, which the OpenAPI description does not list.'
+  assumptions:
+    - id: 'ASSUMPTION-CONNECTION-IS-DECIDING-EVENT'
+      verdict_changing: false
+      statement: >-
+        The deciding event for this procedure is the connection to an endpoint outside the approved
+        inventory, with credential transmission held as separate scenario context. The sources
+        demonstrate MCP hijacking and an unusual-domain rule but publish no connection call path; this
+        pack framed the connection as the boundary from the catalog. If wrong only in scope, the
+        strategies still target the connection but may mis-set what counts as the endpoint under
+        interception. Resolve it by reproducing the hijacking in a lab and recording the connection the
+        agent opens and the endpoint it resolves to.
+  standing_negatives:
+    - statement: >-
+        The Anthropic MCP connection event includes no URL or host field and redacts the server name by
+        default: the Claude Code OTel reference read for the audit documents the connection attributes
+        with server_name gated behind OTEL_LOG_TOOL_DETAILS=1 and no endpoint host field.
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the Claude Code OTel reference for a newly documented endpoint host or URL field on the
+        mcp_server_connection event, or a change to the default server-name redaction.
+
+missing_states:
+  - id: 'MISSING_ENDPOINT_HOST_IN_CONNECTION_EVENT'
+    meaning: 'Missing telemetry: the native MCP connection event carries no endpoint URL or host.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Recover the endpoint from DNS, proxy, or the tool-details server name before judging approval; do
+      not call an endpoint unapproved from the native event alone.
+  - id: 'MISSING_APPROVED_INVENTORY'
+    meaning: 'Environment gap: no maintained inventory of approved MCP endpoints exists to compare against.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Do not claim an endpoint is unapproved; report only a first-seen or unusual agent destination until
+      an inventory is built.
+  - id: 'SERVER_NAME_REDACTED'
+    meaning: 'Missing telemetry: the MCP server name is redacted because the tool-details flag is unset.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Route to the egress comparison strategy to recover the host; mark the native endpoint identity as
+      unavailable.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'actor_or_explicit_missing_state'
+    - 'agent_process_context'
+    - 'destination_endpoint_or_redacted_state'
+    - 'mcp_transport_confirmation_when_available'
+    - 'inventory_comparison_result'
+    - 'first_seen_or_unusual_port_context'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'observed_tool_or_credential_traffic'
+      condition: 'when tool or authentication traffic to the unapproved endpoint is observed'
+  recommended_title: 'Agent connected to an MCP endpoint outside the approved inventory'
+  unsupported_title: 'Agent leaked SaaS tokens to an attacker-controlled MCP server'
+
+evidence:
+  confirmed_incident_behavior: >-
+    Mitiga reports demonstrating Claude Code MCP hijacking to steal SaaS tokens via a man-in-the-middle,
+    and Elastic ships a prebuilt rule flagging a generative AI process connecting to an unusual domain.
+    That the deciding event for this procedure is the connection to an endpoint outside the approved
+    inventory, with credential transmission held as separate scenario context, is this pack's framing,
+    registered in missing_context.assumptions, not a connection mechanism either source states.
+  supported_conclusion: >-
+    The evidence supports that an agent's MCP traffic can be directed to an endpoint outside the approved
+    set and that connections to unusual destinations are a shipped detection concern. A detector can
+    report an agent connection to a destination absent from the approved inventory, and can confirm it as
+    an MCP connection where native telemetry or a server address is available.
+  unsupported_conclusions: >-
+    The evidence does not establish, for the connection procedure itself, that credentials or tokens were
+    transmitted, a victim count, or the specific redirection path. Those require tool or credential
+    traffic evidence or incident telemetry the sources do not carry.
+  procedure_boundary: >-
+    This procedure is the connection to an MCP endpoint outside the approved inventory. Any transmission
+    of credentials, tokens, or tool data to that endpoint, and any downstream SaaS token theft, are
+    separate behaviors and are not evidenced by the connection alone.
+  references:
+    - id: 'REF-THREAT-MCPNET'
+      type: 'incident-procedure-primary-source'
+      title: 'Claude Code MCP hijacking: stealing SaaS tokens via MITM'
+      publisher: 'Mitiga'
+      url: 'https://www.mitiga.io/videos/claude-code-mcp-hijacking-stealing-saas-tokens-via-mitm'
+      trust_tier: 'researcher'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary procedure-level source for redirecting Claude Code MCP traffic to an unapproved endpoint.
+        It does not publish the connection call path or confirm token transmission for the connection
+        procedure in isolation.
+    - id: 'REF-THREAT-ELASTIC-NET'
+      type: 'detection-modeling-reference'
+      title: 'Unusual domain connection by a generative AI process (prebuilt rule)'
+      publisher: 'Elastic'
+      url: 'https://www.elastic.co/docs/reference/security/prebuilt-rules/rules/cross-platform/command_and_control_genai_process_unusual_domain'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Detection precedent for a generative AI process connecting to an unusual domain; supports the
+        egress-comparison strategy, not an incident fact.
+    - id: 'REF-CC-OTEL'
+      type: 'telemetry-documentation'
+      title: 'Claude Code OpenTelemetry reference'
+      publisher: 'Anthropic'
+      url: 'https://code.claude.com/docs/en/monitoring-usage'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the mcp_server_connection attributes, the tool-details flag gating server_name, and the
+        absence of an endpoint host field; supports the native-telemetry source and its limitations.
+    - id: 'REF-AGENT365'
+      type: 'telemetry-documentation'
+      title: 'Microsoft Agent 365 observability attribute reference'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability-attribute-reference'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents ExecuteToolByMCPServer with server address and port and that gen_ai.tool.server.name is
+        not surfaced in CloudAppEvents; supports the other-agent-telemetry source.
+    - id: 'REF-ROUTE53'
+      type: 'telemetry-documentation'
+      title: 'Route 53 Resolver query log format'
+      publisher: 'Amazon Web Services'
+      url: 'https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resolver-query-logs-format.html'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the DNS resolver fields used to recover the destination host for inventory comparison.'

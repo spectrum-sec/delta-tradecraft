@@ -1,0 +1,539 @@
+identity:
+  uuid: 'e082276d-3c98-4083-be3d-473f682a6a15'
+  id: 'DT-AAG1-AI-032'
+  aliases:
+    - 'P67'
+  name: 'A browser sends a command-bearing request to an unauthenticated localhost agent-tooling endpoint'
+  incident: >-
+    Tenable Research responsibly disclosed a critical remote code execution reached by a browser
+    issuing a command-bearing request to an unauthenticated localhost agent-tooling listener exposed
+    by Anthropic tooling.
+  first_observed: '2026'
+  last_reviewed: '2026-08-24'
+
+classification:
+  primary_attack_surface: 'ai-agent-harness'
+  secondary_attack_surfaces:
+    - 'host-os'
+  behavior_classes:
+    - 'containment-boundary-crossing'
+    - 'other'
+  behavior_classes_note: >-
+    unauthenticated-command-delivery-to-localhost-agent-tooling: a web origin loaded in a browser
+    issues a command-bearing request to a loopback agent-tooling listener that authenticates no
+    caller, crossing from remote web content into the local trust zone the listener implicitly grants
+    any loopback caller.
+  tags:
+    - 'ai'
+    - 'agent'
+    - 'localhost'
+    - 'rce'
+    - 'browser'
+    - 'cross-origin'
+
+behavior:
+  definition: >-
+    A browser sends a command-bearing request to an unauthenticated localhost agent-tooling endpoint.
+    Any child-process spawn is corroboration, not the primary event.
+  detailed_definition: >-
+    An untrusted web origin rendered in a browser issues a request carrying an executable command to a
+    loopback listener that a local agent-tooling process exposes without authenticating the caller.
+    The boundary crossed is from remote web content into the local trust zone the listener extends to
+    any loopback caller. The attempt ends at delivery of the command-bearing request to the listener;
+    success begins when the listener acts on the command, which may spawn a child process. It is
+    independent of browser, listener transport (loopback HTTP or named pipe), and endpoint sensor.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers delivery of a command-bearing request from a browser to an unauthenticated loopback
+      agent-tooling listener and the listener acting on it; does not cover any specific follow-on
+      objective beyond the initial execution.
+    summary: >-
+      This can occur when a local agent-tooling process exposes a loopback listener that applies no
+      authentication, a browser is permitted to issue a request to that loopback destination, and the
+      listener honours a command carried in the request. Execution of a child process additionally
+      requires the listener to dispatch the command to a process-spawning path.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      The loopback connection from the browser process to the listener is observable where endpoint
+      network telemetry is deployed; the command-bearing HTTP semantics (method, path, body,
+      Origin/Referer, and authentication outcome) are in no fetched native schema and are obtainable
+      only by instrumenting the listener.
+    blocking_conditions:
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          The loopback connection and any child-process spawn are recorded only where endpoint
+          network and process telemetry are deployed on the host running the browser and listener.
+      - condition: 'deciding-property-not-in-any-schema'
+        note: >-
+          Structurally lost: no fetched AI/agent or browser product logs the inbound request, and
+          endpoint network telemetry carries no URL path, header, body, or authentication field, so
+          the command-bearing and cross-origin properties are recoverable only by instrumenting the
+          listener itself.
+    summary: >-
+      The connection is observable when endpoint telemetry records a browser process connecting to the
+      loopback listener and, separately, any child process the listener spawns. A loopback connection
+      establishes only that the browser reached the listener; it does not establish that the request
+      carried a command, came cross-origin, or bypassed authentication. Those deciding properties are
+      too weak to read from endpoint network telemetry alone and require listener-side instrumentation.
+  detectable:
+    answer: 'no'
+    answer_scope: >-
+      Separable from benign local traffic only where the listener is instrumented to record request
+      method, path, body, Origin, and authentication outcome; from native endpoint network telemetry
+      alone a malicious command-bearing cross-origin request cannot be told from a browser legitimately
+      contacting a local development or tooling service.
+    blocking_conditions:
+      - condition: 'deciding-property-not-in-any-schema'
+        note: >-
+          The command-bearing and cross-origin discriminators live in no native schema; without
+          listener instrumentation there is no field on which to separate the malicious request.
+      - condition: 'indistinguishable-from-legitimate'
+        note: >-
+          A browser connecting to a loopback listener is ordinary behaviour for developer tools and
+          local applications, so the connection alone matches benign activity.
+    summary: >-
+      Separation rests on request semantics the native streams do not carry: the request method and
+      path, a body that constitutes a command, an Origin that is cross-site, and an authentication
+      result of none. Absent listener instrumentation that records those, a loopback connection from a
+      browser is indistinguishable from routine local tooling traffic, and a spawned child process
+      cannot be attributed to a specific request. Instrumenting the listener is what would move this to
+      detectable.
+
+attack_surface_context:
+  surface: >-
+    A loopback (localhost) HTTP or named-pipe listener that a local AI agent-tooling process exposes
+    for its hook, IPC, or MCP transport, reachable by any process on the host including a browser
+    rendering untrusted web content.
+  how_the_surface_works: >-
+    Agent tooling opens a local listener to receive tool, hook, or IPC traffic, and browsers permit a
+    loaded page to issue requests to loopback destinations. A listener that authenticates no caller
+    treats any loopback request as trusted, so a request whose body constitutes a command can drive
+    tool actions, up to spawning a child process, without the caller proving who it is.
+  incident_processing_path: >-
+    Tenable Research reports (source-attested) that it discovered a critical remote code execution
+    reachable through a browser against unauthenticated localhost agent-tooling exposed by Anthropic
+    tooling. That the deciding event is delivery of a command-bearing, cross-origin request to the
+    listener and that a child-process spawn is corroboration rather than the primary event is this
+    pack's framing carried from the catalog, not a request-level call path the blog publishes.
+  processing_stages:
+    - 'untrusted-page-load'
+    - 'browser-issues-loopback-request'
+    - 'listener-receives-request'
+    - 'authentication-check-absent'
+    - 'command-dispatch'
+    - 'child-process-spawn'
+    - 'outbound-or-local-effect'
+  stage_evidence: >-
+    The stage an event sits at fixes what it can prove: an endpoint network event proves a loopback
+    connection, not the request's method or body; only listener instrumentation proves the request was
+    command-bearing, cross-origin, and unauthenticated; a child process proves an effect occurred, not
+    which request caused it.
+  trust_boundaries: >-
+    Web origin into the loopback trust zone (reached: the browser request is delivered to the
+    listener); loopback listener into host process execution (reached where the listener spawns a
+    child). The authentication boundary is absent by construction, so no crossing of it is recorded.
+  security_control_context: >-
+    Browser private-network-access and loopback controls, page-origin checks, and any listener token
+    or origin allowlist decide before the listener acts, and where present they block a cross-origin
+    loopback request or require a caller token. They surface little: a blocked request may appear only
+    as a browser-side event, and a listener that authenticates nothing writes no denial. Bypass
+    representations include a listener that requires no token, a browser context permitted to reach
+    loopback, and a named-pipe transport not covered by network telemetry.
+  practitioner_implication: >-
+    An implementer must discover which local agent tooling exposes a loopback listener, its transport
+    (HTTP or named pipe), whether it authenticates callers, whether endpoint network and process
+    telemetry cover the host, and whether the listener can be instrumented to record request method,
+    path, body, Origin, and authentication outcome, since no native stream carries those.
+
+threat_research:
+  why_it_matters: >-
+    A local agent-tooling listener that trusts any loopback caller turns a page a user merely visits
+    into a path to code execution on the user's own host, under the user's identity and with the
+    agent's local reach, without the user taking any action beyond loading the page.
+  threat_actor: >-
+    None named. The behavior was demonstrated by Tenable Research as a responsibly disclosed
+    vulnerability, not attributed to an in-the-wild adversary.
+  campaign: 'Tenable Research responsible disclosure of a localhost agent-tooling remote code execution.'
+  victim: >-
+    Users of the affected Anthropic localhost agent-tooling as characterised by the researcher; the
+    source claims no in-the-wild victims.
+  capability: >-
+    Tenable Research demonstrated that a browser-issued request to an unauthenticated localhost
+    agent-tooling endpoint achieved remote code execution on the host.
+  target: >-
+    The unauthenticated loopback agent-tooling listener and, through it, code execution on the host
+    running it. The source frames the outcome as a demonstrated vulnerability rather than an exploited
+    incident.
+  victimology:
+    - 'Developer and analyst workstations running local AI agent tooling that exposes a loopback listener.'
+    - 'Any host where a browser and a local unauthenticated agent-tooling listener coexist.'
+
+visibility:
+  telemetry_sources:
+    - source: 'Local AI/agent-tooling telemetry (Claude Code hooks and OTel; OpenClaw gateway)'
+      purpose: >-
+        Establish that agent tooling exposed a local listener and, at most, that an inbound message
+        was received and dispatched; no fetched product records the request itself.
+      event_vocabulary: 'application-record'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'openclaw.webhook.received / openclaw.webhook.error / openclaw.webhook.duration_ms'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-OPENCLAW-OTEL'
+          load_bearing: false
+          note: >-
+            Inbound-request counters only, with channel and webhook attributes; they give counts, not
+            request method, path, body, Origin, or authentication outcome, and require the OpenClaw
+            diagnostics-otel plugin plus diagnostics.otel.enabled=true.
+      details: >-
+        Claude Code documents the hook transport that can expose such an endpoint (hook type values
+        such as command, http, mcp_tool, prompt, and agent, with url, headers, and allowedEnvVars for
+        HTTP hooks) and an mcp_server_connection transport_type of stdio, sse, or http, but no
+        request-level record. Any resulting agent action appears as a tool_result or session turn,
+        not as the request that triggered it.
+      limitations:
+        - 'No fetched AI/agent product logs an inbound HTTP request to a local agent-tooling listener.'
+        - 'OpenClaw exposes only webhook counters; the command-bearing payload is not carried.'
+        - 'Requires diagnostics-otel enabled; content capture needs a further captureContent switch.'
+    - source: 'Endpoint network telemetry on the host (DeviceNetworkEvents, Sysmon 3/1, Sysmon 17/18)'
+      purpose: >-
+        Record that the browser process connected to the loopback listener, and the listener process
+        itself, so the connection can be placed even without request semantics.
+      event_vocabulary: 'host-process-event'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'LocalIP / LocalPort / RemoteIP / RemotePort / Protocol / InitiatingProcessFileName / InitiatingProcessCommandLine'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-DEFENDER-NET'
+          load_bearing: true
+          note: >-
+            Records the loopback connection and the initiating browser process; carries no URL path,
+            header, body, or authentication field, so command-bearing cannot be proven from it.
+      details: >-
+        DeviceNetworkEvents and Sysmon event 3 record the browser connecting to the loopback listener;
+        Sysmon event 1 records the listener process; Sysmon events 17 and 18 record the named pipe
+        where the local transport is a pipe rather than a socket.
+      limitations:
+        - 'Records the connection, not HTTP semantics: no method, path, header, or body field is documented.'
+        - 'Requires an endpoint sensor on the host; a named-pipe transport needs pipe auditing enabled.'
+    - source: 'Endpoint process telemetry on the host (DeviceProcessEvents, Sysmon 1)'
+      purpose: 'Corroborate that the listener spawned a child process after receiving the request.'
+      event_vocabulary: 'host-process-event'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'ProcessCommandLine / InitiatingProcessCommandLine / InitiatingProcessParentFileName / ProcessIntegrityLevel'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-DEFENDER-PROC'
+          load_bearing: false
+          note: 'Corroboration of an effect; does not tie the child process to a specific inbound request.'
+      details: >-
+        DeviceProcessEvents and Sysmon event 1 record a child process whose parent is the listener,
+        with command line and integrity level, establishing an effect but not its cause.
+      limitations:
+        - 'A child-process spawn is corroboration, not the primary event.'
+        - 'No field ties a spawned child to the request that caused it.'
+    - source: 'Browser enterprise reporting (Chrome Enterprise Suspicious Url and Unsafe site visit)'
+      purpose: 'Identify the page that issued the request, where enterprise browser reporting is enabled.'
+      event_vocabulary: 'application-record'
+      operational_viability: 'opt-in'
+      details: >-
+        Chrome Enterprise reporting can surface a suspicious URL or unsafe site visit for the page that
+        issued the request, giving initiating-page context that endpoint telemetry lacks.
+      limitations:
+        - 'No per-event field schema is published on the fetched pages.'
+        - 'Records a page visit, not a loopback request or its command content.'
+
+detection:
+  scope: >-
+    Detection spans the browser connecting to the loopback listener, the request it carries, and any
+    child process the listener spawns. Two materially distinct strategies divide the path: one detects
+    the loopback connection and correlated child spawn from endpoint telemetry, and one requires
+    listener-side instrumentation to prove the request was command-bearing, cross-origin, and
+    unauthenticated.
+  outcome_guardrails: >-
+    A loopback connection establishes that the browser reached the listener, not that its request
+    carried a command. A spawned child process establishes an effect on the host, not which request
+    caused it. Only listener-recorded request method, path, body, Origin, and authentication outcome
+    establish the command-bearing, cross-origin, unauthenticated behaviour. These must stay distinct;
+    "browser contacted a local service" and "unauthenticated command delivered" are different alerts.
+  shared_normalization_context: >-
+    Canonicalize loopback destinations (127.0.0.0/8, ::1, and named pipes) and classify which local
+    listeners belong to agent tooling, so that a browser-to-agent-tooling connection is separable from
+    ordinary local traffic without matching a specific port literal.
+  shared_enrichment_context: >-
+    Join the browser process, the loopback connection, the listener process, and any child process on
+    host and time. Where listener instrumentation exists, join its request record to the connection on
+    the same loopback five-tuple and timestamp.
+  strategies:
+    - id: 'STRAT-LOOPBACK-CONNECTION-CORRELATION'
+      name: 'loopback connection and child-spawn correlation'
+      objective: >-
+        Detect a browser process connecting to a local agent-tooling loopback listener and any child
+        process the listener spawns shortly after.
+      incident_relevance: >-
+        Detects the connection the incident's request rode over and the effect it could produce. It
+        does not by itself establish that the request was command-bearing or unauthenticated; that is
+        recoverable only from the listener.
+      detection_logic: >-
+        Select endpoint network-connect events whose initiating process is a browser and whose
+        destination is a classified agent-tooling loopback listener, and raise when the listener
+        process then spawns a shell or interpreter child within a short window. Prefer the listener
+        classification and the browser-initiator pairing over any single port literal. Exclude only
+        explicitly approved local tooling callers, by initiating image and destination listener, not by
+        loopback address alone.
+      minimum_evidence: >-
+        An endpoint network event pairing a browser initiator with an agent-tooling loopback listener.
+        Without listener request semantics, report a browser contacting a local agent-tooling service,
+        not a confirmed unauthenticated command.
+      correlation_context: >-
+        Correlate within a bounded window (this pack's convention up to five minutes) on host, browser
+        process, and listener process. Concurrent unrelated loopback traffic on the host weakens
+        attribution of a child spawn to the browser request.
+      detectors:
+        - detector_class: 'endpoint-network-and-process-analytics'
+          technologies:
+            - 'Microsoft Defender for Endpoint advanced hunting'
+            - 'Sysmon (events 1, 3, 17, 18)'
+            - 'Endpoint or workload platforms with process-network telemetry'
+          contribution: 'Places a browser-to-listener loopback connection and any correlated child process.'
+          limitations: 'Carries no HTTP semantics; cannot prove command-bearing, cross-origin, or unauthenticated.'
+      benign_explanations:
+        - explanation: >-
+            Browsers routinely connect to local development servers, debugging endpoints, and local
+            tooling over loopback.
+          distinguishing_context: >-
+            A child shell or interpreter spawned by an agent-tooling listener right after a browser
+            connection separates the suspicious case; a browser reaching a known local dev server that
+            spawns nothing does not.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding all browser-to-loopback connections to cut noise would also suppress the
+            malicious request, which rides the same connection shape.
+      blind_spots:
+        - description: 'Missing telemetry: no HTTP semantics, so the command-bearing property is unprovable from this path.'
+          routes_to: null
+        - description: 'Missing telemetry: a named-pipe transport where pipe auditing is not enabled.'
+          routes_to: null
+        - description: 'Missing telemetry: no endpoint sensor on the host.'
+          routes_to: null
+      analyst_response: >-
+        Identify the browser process and the page it was rendering, the listener process and its
+        owning agent tooling, and any child process spawned after the connection, then determine
+        whether the listener authenticates callers and whether it can be instrumented to recover the
+        request.
+      safe_conclusion: >-
+        A browser process connected to a local agent-tooling loopback listener; whether the request
+        was a command and whether it was authenticated is not established without listener evidence.
+    - id: 'STRAT-LISTENER-REQUEST-INSTRUMENTATION'
+      name: 'listener-side request instrumentation'
+      objective: >-
+        Detect a command-bearing, cross-origin request that an agent-tooling listener accepted without
+        authenticating the caller.
+      incident_relevance: >-
+        Detects the deciding behaviour directly, from records the native streams do not carry. It
+        depends on the listener being instrumented, which no fetched product does by default.
+      detection_logic: >-
+        Where the listener is instrumented to record request method, path, body, Origin/Referer, and
+        authentication result, raise when a request whose body constitutes a command arrives from a
+        cross-site Origin and is accepted with no authentication. Classify the body as command-bearing
+        by its dispatch to a tool or process path rather than by literal payload bytes. Treat a
+        same-origin or authenticated request to the same endpoint as expected.
+      minimum_evidence: >-
+        A listener-recorded request carrying a command, with a cross-site Origin and an authentication
+        outcome of none. A recorded request lacking the Origin or authentication field may be reported
+        as an accepted command without the cross-origin or unauthenticated qualifier.
+      correlation_context: >-
+        Join the listener request record to the endpoint loopback connection on the five-tuple and
+        timestamp, and to any child process on the listener process identity, to bind the request to
+        its effect.
+      detectors:
+        - detector_class: 'application-listener-instrumentation'
+          technologies:
+            - 'First-party listener request logging'
+            - 'Local reverse proxy or WAF fronting the loopback listener'
+            - 'Agent-tooling audit hooks that record request metadata'
+          contribution: 'Recovers the request semantics that prove command-bearing, cross-origin, and unauthenticated.'
+          limitations: 'Not shipped by default; must be built and enabled per listener before the strategy can fire.'
+      benign_explanations:
+        - explanation: >-
+            A same-origin or authorized page legitimately drives the agent-tooling listener through the
+            same endpoint.
+          distinguishing_context: >-
+            A cross-site Origin with no authentication separates the malicious request; an authorized
+            page's request with an expected Origin or a caller token does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Allowlisting the endpoint wholesale, rather than by Origin and authentication outcome,
+            would accept the malicious cross-origin request through the same path.
+      blind_spots:
+        - description: 'Missing telemetry: no listener instrumentation exists, so the deciding record is never produced.'
+          routes_to: null
+        - description: 'Evasion: an Origin/Referer header omitted or spoofed by the issuing page.'
+          routes_to: null
+      analyst_response: >-
+        Read the recorded request method, path, body, Origin, and authentication result, confirm the
+        body dispatched to a command path, correlate to the loopback connection and any child process,
+        and determine which page and origin issued it.
+      safe_conclusion: >-
+        An agent-tooling listener accepted a command-bearing cross-origin request without
+        authenticating the caller, where listener instrumentation recorded the request.
+
+detector_requirements:
+  required: >-
+    Canonicalization of loopback destinations and classification of which local listeners belong to
+    agent tooling; endpoint network and process telemetry on the host; listener-side instrumentation to
+    recover request method, path, body, Origin, and authentication outcome, since no native stream
+    carries them; a join from browser process to loopback connection to listener process to child
+    process; and outcome-aware alert text that distinguishes a loopback connection from a confirmed
+    unauthenticated command.
+  optional: >-
+    Browser enterprise reporting adds initiating-page context, and a local reverse proxy or WAF in
+    front of the listener can supply request semantics without modifying the tooling; neither gates the
+    connection-level strategy.
+  correlation:
+    capability: >-
+      Aligned clocks across endpoint, listener-instrumentation, and browser-reporting streams; a stable
+      pairing of browser process, loopback five-tuple, and listener process; and listener request
+      records keyed to the same connection to bind a command to its effect.
+    window: 'Up to five minutes from the loopback connection to a correlated child-process spawn.'
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology; actual support depends on deployed
+    sensors, enabled logging, retained fields, and architecture. For this object, verification
+    specifically means confirming that endpoint network and process telemetry exist on the host and
+    that the agent-tooling listener can be instrumented to record request semantics, since no fetched
+    AI/agent or browser product logs the inbound loopback request and its command-bearing property is
+    not in any native schema.
+
+missing_context:
+  unverified:
+    - 'The precise first-observed date of the behavior; the source is undated in the catalog and only a coarse year is defensible.'
+    - 'The listener transport, port, and request path in the disclosed vulnerability.'
+    - 'Whether the affected listener authenticated any caller, or none, in the tested configuration.'
+    - 'The schema, field names, and retention of any listener-side request record if one is later added.'
+  assumptions:
+    - id: 'ASSUMPTION-COMMAND-BEARING-CROSS-ORIGIN'
+      verdict_changing: true
+      statement: >-
+        The deciding event is delivery of a command-bearing, cross-origin request to an unauthenticated
+        listener, with any child-process spawn as corroboration. The source reports a browser-reachable
+        remote code execution but publishes no request-level call path; this pack framed the behavior as
+        command delivery from the catalog rather than from the blog. If wrong, the observable and
+        detectable scopes shift to a different entry mechanism and the listener-instrumentation strategy
+        targets the wrong record. Resolve it by reading the disclosed request and listener path, or by
+        reproducing the vulnerability in a lab and recording the request that reaches the listener.
+  standing_negatives:
+    - statement: >-
+        No fetched AI/agent or browser product documents an event for an inbound HTTP request to a
+        local agent-tooling loopback listener: the pages read for the telemetry audit describe hook and
+        webhook transports and counters only, with no request-level event schema.
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read the Claude Code hooks and OTel references and the OpenClaw OTel reference for a newly
+        documented inbound-request event carrying method, path, body, Origin, or authentication fields.
+
+missing_states:
+  - id: 'MISSING_HTTP_REQUEST_SEMANTICS'
+    meaning: 'Missing telemetry: no native stream carries request method, path, body, Origin, or authentication outcome for the loopback request.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report a browser contacting a local agent-tooling listener; do not claim command-bearing,
+      cross-origin, or unauthenticated without listener instrumentation.
+  - id: 'MISSING_ENDPOINT_NETWORK_TELEMETRY'
+    meaning: 'Missing telemetry: no endpoint network or process sensor on the host.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Do not claim the connection or any child spawn; the behavior is unobservable on that host with
+      today''s streams.
+  - id: 'LISTENER_NOT_INSTRUMENTED'
+    meaning: 'Detector-capability gap: the agent-tooling listener records no request metadata.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Limit the conclusion to the connection-level strategy and mark the command-bearing and
+      authentication properties as unestablished.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'actor_or_explicit_missing_state'
+    - 'loopback_destination_and_listener_process'
+    - 'browser_process_and_initiating_page_when_available'
+    - 'observed_request_semantics_when_listener_instrumented'
+    - 'authentication_outcome_when_available'
+    - 'child_process_when_present'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'request_origin_and_command_body'
+      condition: 'when listener instrumentation records the request semantics'
+  recommended_title: 'Browser process connected to a local agent-tooling loopback listener'
+  unsupported_title: 'Attacker achieved remote code execution on the host through the browser'
+
+evidence:
+  confirmed_incident_behavior: >-
+    Tenable Research reports that it discovered a critical remote code execution reachable through a
+    browser against unauthenticated localhost agent-tooling exposed by Anthropic tooling. That the
+    deciding event is a command-bearing, cross-origin request to the listener and that a child-process
+    spawn is corroboration rather than the primary event is this pack's framing, registered in
+    missing_context.assumptions, not a request-level mechanism the source states.
+  supported_conclusion: >-
+    The evidence supports that a browser can reach an unauthenticated localhost agent-tooling listener
+    and, through it, achieve code execution, as demonstrated by the researcher. A detector can report a
+    browser-to-listener loopback connection from endpoint telemetry, and can report an unauthenticated
+    command only where the listener is instrumented to record the request.
+  unsupported_conclusions: >-
+    The evidence does not establish an in-the-wild adversary, a victim count, the specific request path
+    or listener port, persistence, or any objective beyond the demonstrated execution. Those require
+    listener-side records or incident telemetry the source does not carry.
+  procedure_boundary: >-
+    This procedure is delivery of a command-bearing request to an unauthenticated loopback
+    agent-tooling listener and the listener acting on it. Any follow-on command-and-control,
+    persistence, or lateral movement from a spawned child process is a separate behavior and is not
+    evidenced by a loopback connection alone.
+  references:
+    - id: 'REF-THREAT-LOCALHOST'
+      type: 'incident-procedure-primary-source'
+      title: 'How Tenable Research discovered a critical remote code execution vulnerability on Anthropic'
+      publisher: 'Tenable'
+      url: 'https://www.tenable.com/blog/how-tenable-research-discovered-a-critical-remote-code-execution-vulnerability-on-anthropic'
+      trust_tier: 'researcher'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Primary procedure-level source for the browser-reachable remote code execution against
+        unauthenticated localhost agent-tooling. It does not publish the request-level call path, the
+        listener port, or an in-the-wild victim set.
+    - id: 'REF-OPENCLAW-OTEL'
+      type: 'telemetry-documentation'
+      title: 'OpenClaw gateway OpenTelemetry'
+      publisher: 'OpenClaw'
+      url: 'https://docs.openclaw.ai/gateway/opentelemetry'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: >-
+        Documents the openclaw.webhook.received/error/duration_ms counters and their enablement
+        requirement; supports the native-telemetry source and its limitation that only counts, not
+        request bodies, are carried.
+    - id: 'REF-DEFENDER-NET'
+      type: 'telemetry-documentation'
+      title: 'DeviceNetworkEvents table (advanced hunting)'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-devicenetworkevents-table'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the loopback-connection fields used by the endpoint network telemetry source.'
+    - id: 'REF-DEFENDER-PROC'
+      type: 'telemetry-documentation'
+      title: 'DeviceProcessEvents table (advanced hunting)'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-deviceprocessevents-table'
+      trust_tier: 'vendor'
+      verification: 'not-resolved-out-of-scope'
+      evidence_use: 'Documents the child-process fields used to corroborate an effect after the request.'
