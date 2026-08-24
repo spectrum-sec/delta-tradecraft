@@ -4,7 +4,7 @@ Tradecraft is an open format for storing the context needed to create detections
 
 A Tradecraft object is a YAML file about an adversary behavior as it relates to a particular company's environments: how the behavior manifests in the attacked technology, where evidence of it can exist, what that evidence can prove, and which detection strategies are viable.
 
-While LLMs can generate Sigma & SPL rules easily, they often stumble or hallucinate when faced with the mountains of context that detecting modern threats requires. A structured format for that context helps improve agentic performance in the field of detection.
+While LLMs can generate Sigma rules and SPL searches easily, they often stumble or hallucinate when faced with the mountains of context that detecting modern threats requires. A structured format for that context helps improve agentic performance in the field of detection.
 
 ## Who it is for
 
