@@ -1,0 +1,786 @@
+identity:
+  uuid: '5a3ba07c-bb27-4722-a8e9-3e30f386dc7d'
+  id: 'DT-P2S-APP-004'
+  name: 'A PHP worker or its children connect out to a new destination'
+  incident: >-
+    PHP2Shell (CVE-2026-109618 and CVE-2026-109619), two unauthenticated PHP engine remote code
+    execution flaws disclosed and patched on 2026-10-21. This is generic callback and payload-fetch
+    egress shared with every PHP RCE. No published source shows PHP2Shell post-exploitation, so this
+    is expected-behavior coverage only.
+  first_observed: '2026-10'
+  last_reviewed: '2026-10-21'
+
+classification:
+  primary_attack_surface: 'application-runtime'
+  secondary_attack_surfaces:
+    - 'egress-control'
+    - 'name-resolution-path'
+  behavior_classes:
+    - 'other'
+  behavior_classes_note: >-
+    web-tier-egress-to-first-seen-destination: a web worker, or a process it created, opens an
+    outbound connection to a destination the host has not used before. No existing member names
+    egress from a server-side worker to a new destination.
+  tags:
+    - 'php'
+    - 'php2shell'
+    - 'web-tier'
+    - 'egress'
+    - 'callback'
+    - 'post-exploitation'
+    - 'process-lineage'
+    - 'inferred'
+
+behavior:
+  definition: >-
+    After gaining code execution in a PHP web worker, an attacker causes the worker, or a process
+    it started, to open an outbound connection to a host the web tier has not contacted before, to
+    call back, fetch a payload or give interactive access.
+  detailed_definition: >-
+    A web server normally connects outbound only to a few stable dependencies such as databases,
+    caches, APIs and update services. An attacker needs a channel to fetch code, report in or hand
+    over a shell: an outbound connection from the worker or a child. The destination rotates freely.
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers a PHP worker or its descendants making an outbound connection to a new destination;
+      does not cover inbound-only or local-only post-exploitation, and does not establish that any
+      PHP2Shell intrusion has made one.
+    summary: >-
+      This can occur whenever attacker code runs in a PHP worker and the host may connect outbound;
+      PHP opens sockets and fetches URLs itself, and children use downloaders and shells.
+      Default-deny egress, an allow-list or a socket-forbidding sandbox blocks it. Huntress
+      recommends reviewing these, not observed.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Observable where a sensor records outbound connections with process lineage, or where DNS logs
+      show first-seen names from the host; flow logs alone cannot attribute them to the worker.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          Process-attributed connection events need an EDR network policy or eBPF sensor; DNS query
+          logging needs resolver logging enabled. Neither is on by default on a typical web server.
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          Whether the web tier has process-attributed telemetry, resolver logs or only perimeter
+          flow logs varies by estate and host group.
+    summary: >-
+      Observable when a network-connect record names the process and its ancestors, the destination
+      and port, and the time. DNS logs show first-seen names without process. Flow logs show
+      destination and volume without lineage. A perimeter-blocked connection is visible only as a
+      denied flow.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Separable from legitimate web-tier egress when the connection comes from the worker lineage
+      and the destination is first-seen against a per-host baseline. Update services, payment hooks
+      and APIs make the baseline noisy.
+    blocking_conditions:
+      - condition: 'environment-inventory-required'
+        note: >-
+          Applications legitimately call external APIs, payment and webhook endpoints, and update and
+          licence servers. Inventory the normal destination set per host group first.
+      - condition: 'below-alerting-signal-strength'
+        note: >-
+          Without worker lineage, a first-seen destination alone is a weak risk signal on busy web
+          tiers. With lineage it alerts; a shell or downloader child, a rare port, or a follow-on
+          file or account change raises severity.
+    summary: >-
+      Separation rests on lineage, a destination absent from a per-host baseline of at least thirty
+      days, and context such as a shell or downloader in the lineage, a non-web port, or a bare
+      address. Destinations rotate, so the signal is new egress. A known integration is benign.
+      Without lineage it is a risk indicator.
+attack_surface_context:
+  surface: >-
+    Outbound network paths of PHP web tiers: sockets opened by the PHP worker, connections made by
+    child processes, name resolution from the host, and the egress controls around them.
+  how_the_surface_works: >-
+    A PHP application server mostly receives connections; outbound goes to databases, caches,
+    queues, internal services and some external APIs. PHP and its children can open sockets and
+    fetch URLs. Resolvers and egress controls may log or deny. Only an endpoint sensor ties a
+    connection to its process lineage.
+  incident_processing_path: >-
+    The advisories describe unauthenticated code execution as the web worker account. Huntress
+    recommends reviewing download and networking tools and reverse-shell patterns, with no in-the-wild
+    exploitation on partners. Imperva recommends reviewing unusual outbound connections. watchTowr (14:19 UTC)
+    reports attempts only.
+  processing_stages:
+    - 'worker-code-execution-achieved'
+    - 'channel-need-arises'
+    - 'destination-chosen'
+    - 'name-resolution'
+    - 'outbound-connection-opened'
+    - 'payload-fetched-or-session-established'
+  stage_evidence: >-
+    A DNS query proves a host asked for a name, not which process. A flow record proves a
+    connection to an address, not its content or process. A process-attributed connection proves
+    the lineage, not that the destination is malicious.
+  trust_boundaries: >-
+    Web tier to arbitrary external hosts is crossed only if egress is permitted and a connection is
+    made, which no source shows. A reverse shell would cross worker account to remote control; that
+    is unevidenced. Web-tier-to-internal segmentation is not covered.
+  security_control_context: >-
+    Default-deny egress, an allow-list proxy, DNS filtering, socket-denying sandboxes and EDR
+    network prevention decide the outcome. Blocked connections may appear only as denied flows.
+    Bypasses include an allowed destination as a relay, DNS tunnelling, and a baseline-matching
+    port or name.
+  practitioner_implication: >-
+    Before enabling a first-seen alert, find which web hosts have process-attributed network
+    telemetry, whether egress is already default-deny, what each host group legitimately calls, and
+    the baseline length needed. Flow-log-only hosts need a different strategy.
+
+threat_research:
+  why_it_matters: >-
+    A callback or payload fetch turns one-shot code execution into a controlled intrusion. Web
+    tiers rarely need new egress, so a new destination from the worker lineage is a useful,
+    exploit-independent signal.
+  threat_actor: >-
+    Unknown. No source attributes PHP2Shell activity to a named actor.
+  campaign: >-
+    PHP2Shell (CVE-2026-109618 and CVE-2026-109619), status as of 2026-10-21. Wiz and CrowdStrike have
+    demonstrated unauthenticated remote code execution in lab conditions, CrowdStrike end to end on
+    Apache mod_php, and the PHP advisory for CVE-2026-109619 validates its session path against both
+    mod_php and PHP-FPM. Exploitation attempts are reported by Cloudflare, watchTowr, Patchstack (a
+    07:34 UTC entry relays active exploitation incidents from hosting partners; a 13:57 UTC entry
+    describes only probing), Kaspersky (attempts before the patch), Hadrian (exploitation at scale,
+    with no counts) and VulnCheck (canary scans and at least one session-path webshell attempt on 21 October,
+    17:22-17:24 UTC, whose ten follow-up reads all returned 404). No source documents a confirmed compromise: CISA has not observed exploitation, ReliaQuest has not seen successful exploitation in customer environments, and Tanium reported on 21 October that neither CVE was in the CISA KEV catalog. Red Hat
+    rates CVE-2026-109619 CVSS 3.1 8.1 for high attack complexity, while Red Hat's page lists NVD's score as 9.8. VulnCheck reports that none of the public proofs of concept it reviewed independently bypasses ASLR on x86-64, and that
+    exploitation works on ARM64 and on x86 without ASLR.
+  victim: >-
+    No victim is documented. Exposed class: PHP web tiers with unrestricted egress.
+  capability: >-
+    Not demonstrated for post-exploitation. See evidence.confirmed_incident_behavior for what
+    Huntress, Imperva and watchTowr say.
+  target: >-
+    Outbound network paths from PHP workers and their descendants.
+  victimology:
+    - 'Internet-facing PHP web servers with unrestricted outbound access.'
+    - 'Container and shared-hosting deployments where egress is shared and weakly attributed.'
+  framework_mappings:
+    - framework: 'MITRE ATT&CK'
+      id: 'T1071'
+      name: 'Application Layer Protocol'
+      evidence: >-
+        A callback over HTTP, DNS or another application protocol. Mapped by general technique.
+    - framework: 'MITRE ATT&CK'
+      id: 'T1105'
+      name: 'Ingress Tool Transfer'
+      evidence: >-
+        A payload fetch from an external host. Applies only where a fetch is established.
+    - framework: 'MITRE ATT&CK'
+      id: 'T1059'
+      name: 'Command and Scripting Interpreter'
+      evidence: >-
+        A shell child opening a connection (a reverse shell). Applies only to the child-process
+        variant.
+
+visibility:
+  telemetry_sources:
+    - source: 'Endpoint detection and response network-connect events with process lineage'
+      purpose: >-
+        Record an outbound connection with its process and ancestors, to separate worker lineage
+        from other host traffic.
+      event_vocabulary: 'host-process-event'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'initiating process and parent chain'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+          note: 'Believed emitted by endpoint sensors with network telemetry; spelling is product-specific.'
+        - name: 'remote address, port and protocol'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+          note: 'Used only for first-seen comparison; never as a block-list key.'
+        - name: 'direction and connection time'
+          attestation: 'unattested-inferred'
+          load_bearing: false
+      details: >-
+        Network-connect events from a sensor carry the remote endpoint and the process that opened
+        the connection with its parent chain. They are the only source that ties the connection to
+        the worker lineage in one event.
+      limitations:
+        - 'Many Linux web servers run no endpoint sensor.'
+        - 'Network telemetry is often sampled or filtered for volume on busy web tiers.'
+        - 'Connections from inside a long-lived worker may be attributed to the supervisor.'
+    - source: 'eBPF or runtime security network events for containers'
+      purpose: >-
+        Cover PHP workers in containers, with a destination baseline per image or pod.
+      event_vocabulary: 'host-process-event'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      details: >-
+        A runtime sensor reports connections with container, pod and process identity, which
+        supports a per-workload destination baseline.
+      limitations:
+        - 'Only where a runtime sensor is deployed; the orchestrator audit log does not carry connections.'
+        - 'Short-lived pods can exit before investigation.'
+        - 'Service mesh sidecars change the apparent source and destination.'
+    - source: 'Resolver query logs and DNS telemetry'
+      purpose: >-
+        Show first-seen names requested by the web host, as a fallback without process attribution.
+      event_vocabulary: 'dns-resolver-record'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      details: >-
+        Resolver logs record the querying host and name, which supports a first-seen name baseline
+        per host group but not the originating process.
+      limitations:
+        - 'No process attribution, so it cannot separate application lookups from attack lookups.'
+        - 'Direct-to-address connections and DNS over other channels produce no name.'
+        - 'Resolver logging is off by default and volume is high.'
+    - source: 'Flow records and egress proxy logs'
+      purpose: >-
+        Show destinations and volume when no sensor exists, as a weak fallback.
+      event_vocabulary: 'flow-record'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      details: >-
+        Flow logs record source, destination, port, bytes and the allow or deny decision, and a
+        proxy adds the requested host name for HTTP and TLS.
+      limitations:
+        - 'No process attribution; application egress and attack egress are indistinguishable.'
+        - 'Sampling and aggregation can hide a short callback.'
+        - 'Encrypted traffic carries no content.'
+    - source: 'Per-host baseline of destinations'
+      purpose: >-
+        Define each web host group's normal destination set so first-seen can be judged.
+      event_vocabulary: 'none'
+      tier: 'not-applicable'
+      operational_viability: 'first-party-build'
+      details: 'Destinations, ports and names per host group over a clean window, with first-seen and last-seen times.'
+      limitations:
+        - 'Must be seeded from a clean window or it enrols the attack as normal.'
+        - 'Changes with application releases and third-party endpoints, so staleness causes noise.'
+
+detection:
+  scope: >-
+    Outbound connections from a PHP worker or its descendants to a first-seen destination. Two
+    strategies divide coverage by telemetry: lineage (process-attributed connections) and DNS
+    (resolver data only). Inbound traffic, the entry request and in-process activity without a
+    connection are outside.
+  outcome_guardrails: >-
+    A process-attributed connection proves the lineage and destination, not that the destination is
+    hostile or what was transferred. A later file write or child process proves a consequence only
+    through shared lineage. A rule that fires proves new egress from the web tier, not PHP2Shell
+    exploitation.
+  shared_normalization_context: >-
+    Normalise destinations to the full host name where a name exists and to the address
+    otherwise, keep it as the novelty key with registered domain and provider class as enrichment,
+    and normalise the
+    initiating process to a worker class with its ancestors. The destination is a baseline key,
+    never a block-list indicator.
+  shared_enrichment_context: >-
+    Join declared external dependencies, deployment records, and file and process records of the
+    same lineage. A thirty-day per-host-group baseline helps; a first-seen destination from a shell
+    or downloader child is meaningful without a long baseline.
+  strategies:
+    - id: 'STRAT-WORKER-LINEAGE-FIRST-SEEN-EGRESS'
+      name: 'Worker lineage connects to a first-seen destination'
+      objective: >-
+        Detect an outbound connection from a PHP worker or its descendants to a destination absent
+        from the host baseline.
+      incident_relevance: >-
+        Detects a possible consequence of PHP2Shell and of any PHP RCE, not the exploit request. It
+        is generic post-exploitation coverage.
+      detection_logic: >-
+        Alert when a process-attributed connection event shows a PHP worker or a descendant opening
+        an outbound connection to a destination (name where known, otherwise address) absent from
+        the thirty-day baseline of that host group. Raise severity when the initiating process is a
+        shell, interpreter or downloader child of the worker, when the port is not a web or known
+        application port, when the destination is an address with no resolved name, or when a file
+        write or account change follows from the same lineage. A verified application dependency may
+        suppress only a documented benign lineage-plus-destination context; never suppress by
+        destination domain, provider, address or country alone.
+      minimum_evidence: >-
+        One connection record naming the process lineage including a PHP worker, the destination,
+        port and time, with the destination absent from the baseline. Without lineage, use the DNS
+        strategy and report new egress from the host, not from the worker.
+      correlation_context: >-
+        Key on host, process lineage and destination. A ten-minute join links the connection to a
+        preceding child process and a following file write from the same lineage. Baseline refresh
+        must not lag release windows.
+      detectors:
+        - detector_class: 'endpoint-network-lineage-rule'
+          technologies:
+            - 'EDR with network telemetry'
+            - 'Microsoft Defender for Endpoint advanced hunting'
+            - 'CrowdStrike Falcon'
+            - 'Elastic Defend'
+            - 'Huntress managed EDR'
+            - 'Datadog Workload Protection'
+          contribution: >-
+            Evaluates lineage and destination on the sensor or in the SIEM; can block by policy.
+          limitations: >-
+            Needs an installed sensor and unsampled network events; baseline noise on busy web tiers.
+        - detector_class: 'runtime-network-event-rule'
+          technologies:
+            - 'Falco'
+            - 'Tetragon'
+            - 'Sysmon for Linux'
+            - 'osquery'
+          contribution: >-
+            Per-container connection events with workload identity for a per-image baseline.
+          limitations: >-
+            Only where the runtime sensor is deployed; sidecars alter attribution.
+      benign_explanations:
+        - explanation: >-
+            Applications call new external APIs, payment gateways, webhooks and licence servers
+            after a release or plugin update.
+          distinguishing_context: >-
+            The destination is a declared dependency and a release or plugin update precedes it; a
+            bare address from a shell child is not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding whole cloud or CDN provider ranges hides an attacker who hosts the callback
+            on the same provider.
+        - explanation: >-
+            Update and monitoring agents contact vendor services from child processes of the worker.
+          distinguishing_context: >-
+            The lineage is the agent's known process, not a shell or downloader started by the worker.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding the worker as an initiator removes the lineage the rule needs.
+        - explanation: >-
+            Application features fetch URLs that outsiders supply, such as pingbacks (WordPress
+            visits the linking post to confirm it), oEmbed or link previews, feed imports and
+            user-configured webhooks.
+          distinguishing_context: >-
+            A worker-only HTTP(S) fetch on 80 or 443, with no child, tied to a pingback, oEmbed, feed
+            or webhook request or code path.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding worker-only HTTP egress removes in-process callbacks.
+      forbidden_exclusions:
+        - field: 'destination address, domain or country as an allow-list'
+          reason: >-
+            Adversary-settable and rotating; an allow-list by name or range admits a relay on an
+            allowed provider. A verified application dependency may suppress only a documented
+            benign lineage-plus-destination context; a blanket destination domain, provider, address
+            or country allow-list remains forbidden.
+        - field: 'cloud provider or CDN range as a blanket exclusion'
+          reason: >-
+            Attackers host callbacks on the same ranges.
+        - field: 'the web worker as an initiating process'
+          reason: >-
+            The attacker connects from the worker lineage.
+        - field: 'port or protocol as an allow-list'
+          reason: >-
+            Adversary-settable; callbacks use common web ports to blend in.
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: >-
+          No source states a rate and nothing has been measured. Volume depends on new egress after
+          releases and varies by estate.
+      blind_spots:
+        - description: >-
+            Missing telemetry: hosts with no process-attributed network telemetry produce no lineage
+            record.
+          routes_to: null
+        - description: >-
+            Evasion: a destination already in the baseline, or a relay on an allowed service,
+            produces no first-seen signal.
+          routes_to: null
+        - description: >-
+            Evasion: in-process egress with no child process carries no child-lineage severity boost;
+            only the first-seen destination signal applies.
+          routes_to: null
+        - description: >-
+            Evasion: tunnelling over an allowed channel, such as DNS, may not be a connection to a
+            new destination.
+          routes_to: null
+      analyst_response: >-
+        Identify the host, lineage, destination and time. Check whether the destination is a
+        declared dependency, what the worker or child did around the connection (file writes,
+        further connections, command lines), preceding access-log requests, and whether egress was
+        blocked. Preserve records; check PHP build and restart.
+      safe_conclusion: >-
+        A PHP worker lineage connected to a destination new to its host; whether it is attacker
+        infrastructure needs process, content and surrounding evidence.
+    - id: 'STRAT-WEB-HOST-FIRST-SEEN-DNS-NAME'
+      name: 'Web host resolves a first-seen name'
+      objective: >-
+        Detect new external names requested by a web host where no process attribution exists.
+      incident_relevance: >-
+        A weak signal of a possible consequence, for hosts without a sensor. It cannot attribute the
+        lookup to the worker and misses connections made by address.
+      detection_logic: >-
+        Alert, as a low-confidence risk signal, when a web-tier host queries a name that is absent
+        from the thirty-day name baseline of its host group and that is newly registered, rarely
+        seen across the estate, or accompanied by a successful connection from the same host within
+        a minute. A name verified as a declared dependency may suppress only that documented
+        host-group and name context; a blanket domain, name-pattern or registrar allow-list stays
+        forbidden.
+      minimum_evidence: >-
+        Resolver records for a first-seen name queried by a web-tier host, with the time, group
+        baseline result, and a new registration, estate rarity or a connection within a minute.
+        Report new name lookups from the host, not worker activity.
+      correlation_context: >-
+        Key on host group and full host name over thirty days. A one-minute join to flow records
+        shows whether a connection followed. Resolver caching hides repeated lookups.
+      detectors:
+        - detector_class: 'dns-first-seen-rule'
+          technologies:
+            - 'Route 53 Resolver query logging'
+            - 'Cloud DNS logging'
+            - 'Splunk'
+            - 'Elastic'
+            - 'Microsoft Sentinel'
+          contribution: >-
+            Computes first-seen names per host group and joins them to flows.
+          limitations: >-
+            No process attribution; high base rate from legitimate new dependencies.
+      benign_explanations:
+        - explanation: >-
+            Release-related new API and third-party service names appear on the web tier.
+          distinguishing_context: >-
+            The name matches a declared dependency or release record; a randomised or newly
+            registered name does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding all first-seen names in popular top-level domains removes the signal.
+      forbidden_exclusions:
+        - field: 'domain, name pattern or registrar as an allow-list'
+          reason: >-
+            Adversary-settable and rotating.
+        - field: 'the host group as a whole'
+          reason: >-
+            Removes the only hosts the signal exists for.
+      blind_spots:
+        - description: >-
+            Evasion: a connection made directly to an address involves no lookup.
+          routes_to: null
+        - description: >-
+            Attribution limit: a local administrator or agent looks identical.
+          routes_to: null
+        - description: >-
+            Missing telemetry: hosts resolving through an unlogged path or local cache.
+          routes_to: null
+      analyst_response: >-
+        Check the name against declared dependencies and registration data, review flows and sensor
+        data from the host for the same minute, and look for worker, file and account activity.
+      safe_conclusion: >-
+        A web host requested a name new to its group; the process and intent are not established.
+
+detector_requirements:
+  required: >-
+    Lineage rule: process-attributed network-connect telemetry and worker-lineage classification.
+    DNS rule: resolver logs. Both: a normalised destination key; a per-host-group baseline from a
+    clean window; alert text stating new egress (from the worker only with lineage), not
+    PHP2Shell.
+  optional: >-
+    Declared-dependency lists and release records to retire benign first-seen destinations, and
+    joins to process and file records of the same lineage. Neither gates the lineage rule.
+  correlation:
+    capability: >-
+      Stable host, process and connection identifiers across process, file and network records;
+      synchronised clocks; and name-to-address resolution to join a DNS first-seen to a connection.
+    window: >-
+      Ten minutes around the connection for lineage joins; one minute between a lookup and a
+      connection for the DNS fallback.
+  baselines:
+    - name: 'Destinations and names per web host group'
+      window: '30-day rolling'
+      seeded_from: >-
+        Connection and resolver records from a clean window covering releases and batch jobs; never
+        from a window with a suspected intrusion or from alerts, which would enrol attacker
+        destinations as normal.
+  product_support_caveat: >-
+    Every named product is a candidate; support depends on deployed sensors, logging and architecture.
+    Product network-event support is unverified. Elastic's uncommon destination port rule was deprecated
+    2026-07-02 as flawed.
+missing_context:
+  unverified:
+    - >-
+      first_observed '2026-10' is the month of the public disclosure (GHSA published
+      2026-10-21T13:34Z), not an observation of this behavior. Evidence class: inferred.
+    - 'Whether any PHP2Shell intrusion has made an outbound connection; no source reports post-exploitation.'
+    - 'The exact network-connect field names and parent-chain depth of each endpoint product.'
+    - 'Which web hosts already deny egress by default.'
+    - 'The size and stability of each web tier destination set in a given estate.'
+  assumptions:
+    - id: 'ASSUMPTION-EGRESS-EXPECTED'
+      verdict_changing: true
+      statement: >-
+        That PHP2Shell post-exploitation includes an outbound connection from the worker lineage.
+        Huntress lists networking tools and reverse-shell patterns, Imperva unusual outbound
+        connections; neither reports a callback, so this is inferred. If wrong, the rule still
+        covers any PHP RCE callback.
+    - id: 'ASSUMPTION-BASELINE-QUIET-ENOUGH'
+      verdict_changing: false
+      statement: >-
+        That a web tier destination baseline is quiet enough for first-seen to be actionable. No
+        source measures web tier egress. If wrong, the strategy is noisy and must require lineage
+        and a shell or downloader child; the verdict does not change. Resolve by counting first-seen
+        destinations per host per week.
+  standing_negatives:
+    - statement: >-
+        No source reviewed on 2026-10-21 reports an outbound callback, payload fetch or reverse
+        shell from a PHP2Shell-compromised worker. Bounded by the Patchstack 07:34 UTC entry (active
+        exploitation incidents), unreconciled with its 13:57 UTC probing-only entry. Checked: PHP
+        advisories, Huntress, Imperva, watchTowr.
+      ref: 'REF-WATCHTOWR'
+      valid_until: '2026-10-28'
+      recheck: >-
+        Re-check the CISA KEV catalog for either CVE, the watchTowr PHP2Shell page and the
+        Patchstack live timeline (including any reconciliation of its 07:34 and 13:57 UTC entries)
+        for a post-exploitation report that names network activity.
+
+missing_states:
+  - id: 'MISSING_PROCESS_ATTRIBUTED_NETWORK_TELEMETRY'
+    meaning: >-
+      Missing telemetry: the web tier has no process-attributed connection events, only flow or DNS
+      data.
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Use the DNS strategy, with flow records only as its join, as a low-confidence risk signal;
+      state that egress cannot be attributed to the worker.
+  - id: 'MISSING_DESTINATION_BASELINE'
+    meaning: >-
+      Missing context: no clean baseline of web tier destinations exists.
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Alert on shell or downloader lineage to any destination, with a bare address or non-web port
+      raising severity, and build the baseline from a clean window before widening.
+  - id: 'MISSING_EGRESS_CONTROL_RECORD'
+    meaning: >-
+      Missing telemetry: blocked connections are not logged, so a denied attempt leaves no record.
+    coverage_claim: 'no-coverage'
+    response: >-
+      State that denied egress is not observed and absence of a connection does not show no attempt.
+  - id: 'MISSING_IN_PROCESS_NO_NETWORK_RECORD'
+    meaning: >-
+      Analyst trap: a clean egress record is read as proof of no compromise, though a worker that
+      never connects out emits nothing.
+    coverage_claim: 'coverage-limited'
+    response: >-
+      State that quiet egress proves nothing about in-process or local activity; check the
+      file-write and child-process signals first.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'actor_or_explicit_missing_state'
+    - 'host_and_worker_pool_identity'
+    - 'initiating_process_lineage_and_attribution_source'
+    - 'destination_port_and_protocol'
+    - 'baseline_comparison_result'
+    - 'egress_control_decision'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'preceding_child_process_and_command_line'
+      condition: 'when the connection was opened by a descendant of the worker'
+    - field: 'following_file_write_or_account_change'
+      condition: 'when the same lineage produced a file or identity change after the connection'
+  recommended_title: 'PHP worker lineage connected to a destination new to its host'
+  unsupported_title: 'PHP2Shell callback to attacker command server confirmed'
+
+evidence:
+  confirmed_incident_behavior: >-
+    The PHP advisories confirm unauthenticated code execution with web worker privileges. No
+    source documents an outbound connection from a compromised worker. Huntress
+    lists networking tools and reverse-shell patterns, Imperva unusual outbound connections; watchTowr (14:19 UTC) reports attempts only.
+  supported_conclusion: >-
+    Code in a PHP worker can open outbound connections where egress is allowed; new egress from a
+    worker lineage is visible where process-attributed network telemetry exists; and a first-seen
+    destination rule against a per-host baseline can emit it. This supports reporting new egress,
+    not an exploited vulnerability.
+  unsupported_conclusions: >-
+    The evidence does not establish successful PHP2Shell exploitation, that any intrusion made a
+    connection, any actor, infrastructure or payload, or that quiet egress means a host is safe. It
+    does not cover denied connections. This is generic PHP RCE coverage and must not be reported as
+    PHP2Shell coverage.
+  procedure_boundary: >-
+    This procedure is an outbound connection by the worker lineage to a first-seen destination.
+    Child-process behavior (DT-P2S-APP-001), script write (DT-P2S-HOST-002) and configuration
+    override (DT-P2S-HOST-003) are sibling steps. The exploit request and later channel actions are
+    outside.
+  references:
+    - id: 'REF-HUNTRESS'
+      type: 'incident-campaign-secondary-source'
+      title: 'Rapid Response: php2shell, Leaked Critical PHP Vulnerabilities (CVE-2026-109618 & CVE-2026-109619)'
+      publisher: 'Huntress'
+      url: 'https://huntress.com/blog/php2shell-leaked-critical-php-vulnerabilities'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Recommends reviewing download or networking tools (curl, wget, nc) and reverse-shell strings
+        after PHP RCE; no in-the-wild exploitation on partners (10am and 4:30pm ET). Not
+        observation.
+    - id: 'REF-IMPERVA'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: When PHP Runs Out of Memory at the Wrong Moment'
+      publisher: 'Imperva'
+      url: 'https://www.imperva.com/blog/php2shell-vulnerability-updates/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Recommends reviewing: "Review unexpected child processes, application-file changes,
+        persistence mechanisms, unusual outbound connections, and potential credential exposure". No
+        observed callback.
+    - id: 'REF-WATCHTOWR'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: PHP Remote Code Execution Exploited'
+      publisher: 'watchTowr'
+      url: 'https://watchtowr.com/intelligence/php-remote-code-execution-php2shell/'
+      trust_tier: 'researcher'
+      verification: 'confirmed'
+      evidence_use: >-
+        watchTowr reported, in a post published 14:19 UTC on 2026-10-21, active exploitation
+        attempts against both flaws and no post-exploitation; anchors the standing negative.
+    - id: 'REF-GHSA-109619'
+      type: 'attack-surface-documentation'
+      title: 'RCE via stale global state'
+      publisher: 'PHP project (php-src security advisories)'
+      url: 'https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports code execution with the web worker's privileges; the triggering warning need not be
+        displayed or logged. No network behavior after exploitation.
+    - id: 'REF-CROWDSTRIKE'
+      type: 'incident-campaign-secondary-source'
+      title: 'CrowdStrike Protects Customers from Threats Delivered via PHP2Shell'
+      publisher: 'CrowdStrike'
+      url: 'https://www.crowdstrike.com/en-us/blog/crowdstrike-protects-customers-from-php-rce-zero-days/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports the CrowdStrike demonstration of a shell on mod_php and its generic web-shell statement.
+        No outbound connection by the worker or its children.
+    - id: 'REF-PATCHSTACK-PHP'
+      type: 'incident-campaign-secondary-source'
+      title: 'Major security alert: PHP vulnerable to critical RCE, attacks ongoing'
+      publisher: 'Patchstack'
+      url: 'https://patchstack.com/articles/php-major-vulnerability-alert-10-2026/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Two unreconciled entries bound the standing negative: 07:34 UTC relays active exploitation
+        incidents reported by hosting partners; 13:57 UTC describes only probing, no hard evidence
+        of breaches.
+    - id: 'REF-WIZ'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: AI uncovers critical RCE vulnerabilities affecting 70% of the Internet'
+      publisher: 'Wiz Research'
+      url: 'https://www.wiz.io/blog/php2shell-php-rce'
+      trust_tier: 'researcher'
+      verification: 'confirmed'
+      evidence_use: >-
+        Cited for exploitation status in the status statement: unauthenticated code execution
+        demonstrated in test environments. No in-the-wild compromise or post-exploitation.
+    - id: 'REF-TANIUM'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Responding to CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'Tanium Guardian Research Team'
+      url: 'https://www.tanium.com/blog/php2shell-responding-to-cve-2026-109618-and-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Cited for the status statement: neither CVE is in the CISA KEV catalog. Relays watchTowr
+        honeypot exploitation; VulnCheck's canary post lists observed sources.
+    - id: 'REF-CLOUDFLARE'
+      type: 'incident-campaign-secondary-source'
+      title: 'Cloudflare deploys protections against php2shell vulnerability'
+      publisher: 'Cloudflare'
+      url: 'https://blog.cloudflare.com/php-vulnerabilities-waf-protection/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Cited for the status statement: attack traffic observed against its customers. Attempts against an
+        edge, not compromise of a host.
+    - id: 'REF-KASPERSKY'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: How to Protect Your Server'
+      publisher: 'Kaspersky'
+      url: 'https://www.kaspersky.com/blog/cve-2026-109618-109619-php-vulnerabilities/56583/'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Cited for the status statement: first attempts to exploit were observed before the patches
+        were published, without description; no confirmed compromise.
+    - id: 'REF-RELIAQUEST'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Responding to Critical PHP Vulnerabilities | Threat Spotlight'
+      publisher: 'ReliaQuest'
+      url: 'https://reliaquest.com/blog/threat-spotlight-php2shell-responding-to-critical-php-vulnerabilities/'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Cited for the status statement: no successful exploitation observed in customer
+        environments; in-the-wild reports are early and inconsistent, some showing only probing.
+    - id: 'REF-HADRIAN'
+      type: 'incident-campaign-secondary-source'
+      title: 'php2shell: Leaked critical PHP RCEs (CVE-2026-109618, -109619)'
+      publisher: 'Hadrian'
+      url: 'https://hadrian.io/vulnerability-alerts/php2shell-leaked-critical-php-rce-cve-2026-109618-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      citation_caveat: 'contradicted-elsewhere'
+      citation_caveat_note: >-
+        CISA and ReliaQuest report no (successful) exploitation observed; Hadrian reports it at
+        scale without counts. Vendor claim only. The campaign survives without Hadrian: Cloudflare,
+        watchTowr, Patchstack report attempts.
+      evidence_use: >-
+        Cited for the status statement: 11:35 UTC update, "We are now seeing php2shell exploited
+        in the wild at scale", mostly via session upload-progress; 14:35 UTC says it continues.
+        No counts or indicators; vendor claim.
+    - id: 'REF-CISA'
+      type: 'incident-campaign-secondary-source'
+      title: 'Critical Vulnerabilities in PHP Require Immediate Patching'
+      publisher: 'CISA'
+      url: 'https://www.cisa.gov/news-events/alerts/2026/10/21/critical-vulnerabilities-php-require-immediate-patching'
+      trust_tier: 'government'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Cited for the status statement: CISA "has not observed exploitation of these
+        vulnerabilities as of the time of publication" (2026-10-21). Alert does not address KEV; the
+        KEV claim rests on Tanium.
+    - id: 'REF-VULNCHECK'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell Vulnerabilities: CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'VulnCheck'
+      url: 'https://www.vulncheck.com/blog/php2shell-vulnerabilities'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Cited for the status statement: canary telemetry on 2026-10-21: one session-path
+        webshell attempt (17:22-17:24 UTC), ten follow-up reads returned 404; no public PoC independently
+        bypasses ASLR on x86-64.
+    - id: 'REF-REDHAT'
+      type: 'incident-campaign-secondary-source'
+      title: 'CVE-2026-109619'
+      publisher: 'Red Hat'
+      url: 'https://access.redhat.com/security/cve/cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Cited for the status statement: Red Hat CVSS v3.1 score 8.1 for CVE-2026-109619 (high attack
+        complexity); NVD lists 9.8. No exploitation or post-exploitation.
+    - id: 'REF-ELASTIC-DEPRECATED-PORT'
+      type: 'detection-modeling-reference'
+      title: 'Deprecated - Uncommon Destination Port Connection by Web Server'
+      publisher: 'Elastic (elastic/detection-rules)'
+      url: 'https://github.com/elastic/detection-rules/blob/main/rules/_deprecated/persistence_web_server_sus_destination_port.toml'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports the deprecation date 2026-07-02 and the stated reason that the rule logic is flawed.
+    - id: 'REF-WORDPRESS-PINGBACKS'
+      type: 'attack-surface-documentation'
+      title: 'Trackbacks and Pingbacks'
+      publisher: 'WordPress.org documentation'
+      url: 'https://wordpress.org/documentation/article/trackbacks-and-pingbacks/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        A blog receiving a pingback automatically goes to the linking post to confirm it. Supports
+        the pingback example of an outsider-triggered outbound fetch by the worker.

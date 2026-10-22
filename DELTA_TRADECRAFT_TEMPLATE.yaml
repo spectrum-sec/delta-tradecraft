@@ -477,7 +477,7 @@ evidence:
       publisher: '<publisher>'                         # [R]
       url: '<canonical URL>'                           # [R]
       local_path: '<repository-relative local source path, when available>'   # [O]
-      # [R] enum, no "other": vendor | primary | news | researcher | registry | aggregator.
+      # [R] enum, no "other": vendor | primary | government | news | researcher | registry | aggregator.
       # Who published it, never how much the claim is believed. See SCHEMA.md § trust_tier.
       trust_tier: '<trust-tier member>'
       # [R] enum, no "other": confirmed | confirmed-with-scope-caveat |

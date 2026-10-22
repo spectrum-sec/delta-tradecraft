@@ -1,0 +1,783 @@
+identity:
+  uuid: '94d93e1d-7da8-457e-9d91-79f4e5c30274'
+  id: 'DT-P2S-HOST-003'
+  name: 'The web user writes a PHP configuration override in the served tree'
+  incident: >-
+    PHP2Shell (CVE-2026-109618 and CVE-2026-109619), two unauthenticated PHP engine RCE flaws
+    disclosed and patched on 2026-10-21. This is generic web-user override persistence shared with
+    every PHP RCE and webshell. No source shows an override written in an intrusion; inferred,
+    capability-grade.
+  first_observed: '2026-10'
+  last_reviewed: '2026-10-21'
+
+classification:
+  primary_attack_surface: 'host-filesystem'
+  secondary_attack_surfaces:
+    - 'application-runtime'
+  behavior_classes:
+    - 'persistence'
+    - 'defense-impairment'
+  tags:
+    - 'php'
+    - 'php2shell'
+    - 'web-tier'
+    - 'htaccess'
+    - 'user-ini'
+    - 'config-override'
+    - 'file-write'
+    - 'inferred'
+    - 'capability'
+
+behavior:
+  definition: >-
+    An attacker with the ability to write files as the web user creates or modifies a per-directory
+    PHP configuration override, such as an .htaccess file with php_value or php_flag directives or a
+    .user.ini file, so that the engine applies attacker-chosen settings to later requests.
+  detailed_definition: >-
+    PHP and its web server read per-directory configuration files from the served tree, changing
+    engine behavior under that directory. The adversary writes or edits one as the web user to
+    persist altered behavior without a new script. The behavior ends when the file exists; engine
+    consumption is separate.
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers the web user writing a per-directory override that the server or engine reads. Does
+      not cover server-level or pool-level configuration, which the web user cannot normally write.
+    summary: >-
+      Possible where the web user can write into a directory whose overrides are honored: Apache
+      with AllowOverride, or CGI/FastCGI PHP with .user.ini scanning. Blocked where the server
+      ignores per-directory files, the worker cannot write, or settings are not changeable per
+      directory. The write is the defender-visible step.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Observable where file events with the writing process, or integrity monitoring with content
+      diffs, cover the served tree. A setting's later effect inside the engine is not logged by
+      default.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          File events with the acting process need an EDR file policy or audit watches; content
+          diffs need integrity monitoring that stores prior content. Neither is on by default.
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          File telemetry coverage of web trees varies; shared-hosting accounts and containers are
+          often unmonitored.
+    summary: >-
+      Observable when a file event names the writer and the override path, and when integrity
+      monitoring shows the directive added. A bare file-changed event does not show whether a
+      dangerous directive was added; the content change does. The engine consuming a setting is not
+      logged and is not visible in request logs.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Two separate gates: a writer-attributed override write by the web worker account or a
+      PHP-hosting process outside deployment, or a content diff adding an engine directive. Each
+      supports its own narrower claim; a writer-plus-directive claim needs both. CMS and hosting
+      panels also edit override files legitimately.
+    blocking_conditions:
+      - condition: 'environment-inventory-required'
+        note: >-
+          CMS permalink rewriting, security and caching plugins and hosting panels edit .htaccess as
+          the web user. Inventory their normal directives and write paths per application.
+      - condition: 'cross-source-join-required'
+        note: >-
+          Only the combined claim that the worker added a given directive needs the file event
+          joined to an integrity content diff. Each strategy runs alone on its own stream.
+    summary: >-
+      Separation rests on writer, timing relative to deployments, and content. php_value, php_flag
+      or prepend or append directives are far rarer than rewrite rules. Writer and path alone
+      support only an unexpected-write alert; a new engine directive written by the worker outside
+      an update is the strongest case.
+
+attack_surface_context:
+  surface: >-
+    Per-directory PHP and web server overrides in the document root: .htaccess under Apache and
+    .user.ini under CGI or FastCGI PHP, plus equivalents on other servers.
+  how_the_surface_works: >-
+    Apache reads .htaccess per directory when overrides are allowed; under mod_php, php_value and
+    php_flag there change engine settings before request startup. PHP-FPM applies .user.ini
+    after normal initialization (CVE-2026-109619 advisory). Apps write .htaccess.
+  incident_processing_path: >-
+    The CVE-2026-109619 advisory describes an estate exposure, not an attacker write: .htaccess
+    php_value or php_flag on mod_php, or FPM PHP_VALUE values, that produce an INI diagnostic
+    before request start (DT-P2S-ESTATE-011). No source publishes an override
+    written in an intrusion; that one is this pack's inference.
+  processing_stages:
+    - 'worker-code-execution-or-write-primitive-achieved'
+    - 'override-file-selected'
+    - 'override-file-written'
+    - 'override-file-read-by-server-or-engine'
+    - 'altered-setting-applied'
+    - 'later-request-affected'
+  stage_evidence: >-
+    A file event proves a named process wrote the override, not that the server read it or a
+    setting applied. A content diff proves which directive was added, not its effect. Effects on
+    later requests show only through side effects, which this object does not claim.
+  trust_boundaries: >-
+    From write access in the served tree to altered engine behavior under the directory. Reached
+    only if an override is written and honored, which no source shows. Server-level and pool-level
+    configuration is a boundary not crossed here.
+  security_control_context: >-
+    Controls: AllowOverride off, .user.ini scanning off, a read-only served tree, restricting
+    per-directory settings, and file integrity monitoring on override files. Bypasses: adding only
+    a small directive to an existing override, using a directory read before the monitored root,
+    and writing between integrity polls.
+  practitioner_implication: >-
+    Before building the rule, find which servers honor overrides, which directories the web user
+    can write, which plugins and panels edit those files, and whether integrity monitoring stores
+    prior content.
+
+threat_research:
+  why_it_matters: >-
+    An override changes engine behavior without a new script, so it can persist where
+    script-focused monitoring ignores it.
+  threat_actor: >-
+    Unknown. No source attributes PHP2Shell activity to a named actor or reports an override
+    being written.
+  campaign: >-
+    PHP2Shell (CVE-2026-109618 and CVE-2026-109619), status as of 2026-10-21. Wiz and CrowdStrike
+    have demonstrated unauthenticated remote code execution in lab conditions, CrowdStrike end to
+    end on Apache mod_php, and the PHP advisory for CVE-2026-109619 validates its session path
+    against both mod_php and PHP-FPM. Exploitation attempts are reported by Cloudflare, watchTowr,
+    Patchstack (a 07:34 UTC entry relays active exploitation incidents from hosting partners; a
+    13:57 UTC entry describes only probing), Kaspersky (attempts before the patch), Hadrian
+    (exploitation at scale, with no counts) and VulnCheck (canary scans and at least one session-path webshell attempt on 21 October, 17:22-17:24 UTC, whose ten follow-up reads all returned 404).
+    No source documents a confirmed compromise: CISA has not observed exploitation,
+    ReliaQuest has not seen successful exploitation in customer environments, and Tanium reported on 21 October that neither CVE was in the CISA KEV catalog. Red Hat rates CVE-2026-109619 CVSS 3.1 8.1 for high attack
+    complexity, while Red Hat's page lists NVD's score as 9.8. VulnCheck reports that none of the public proofs of concept it reviewed independently bypasses ASLR on x86-64, and that exploitation works on ARM64 and on x86 without
+    ASLR.
+  victim: >-
+    No victim is documented. Exposed class: Apache or FastCGI PHP hosts that honor per-directory
+    overrides and let the web user write them.
+  capability: >-
+    Not demonstrated. The capability is inferred from general PHP persistence tradecraft, not from
+    the advisory.
+  target: >-
+    Per-directory override files in the served tree and the engine settings they change.
+  victimology:
+    - 'Shared-hosting and CMS sites on Apache with overrides allowed and a web-writable root.'
+    - 'FastCGI PHP hosts that scan .user.ini files in writable site directories.'
+  framework_mappings:
+    - framework: 'MITRE ATT&CK'
+      id: 'T1505.003'
+      name: 'Server Software Component: Web Shell'
+      evidence: >-
+        By analogy: a server-side file written to alter code execution for later requests resembles
+        web shell placement. Weaker than for a script write.
+    - framework: 'MITRE ATT&CK'
+      id: 'T1574'
+      name: 'Hijack Execution Flow'
+      evidence: >-
+        By analogy: an override that changes what the engine loads or how it runs redirects
+        execution flow.
+
+visibility:
+  telemetry_sources:
+    - source: 'Endpoint detection and response file-create and modify events'
+      purpose: >-
+        Record that the web user or a PHP-hosting process created or changed an override file in
+        the served tree.
+      event_vocabulary: 'host-process-event'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'file path and name'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+          note: >-
+            Believed emitted by endpoint sensors with file telemetry; spelling is product-specific.
+        - name: 'writing process image and account'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+        - name: 'file size or hash after write'
+          attestation: 'unattested-inferred'
+          load_bearing: false
+          note: 'Metadata only; content is not carried by most sensors.'
+      details: >-
+        Events carry the target path, acting process and account, and sometimes size or hash. They
+        show an override was written and by whom, not what it contains.
+      limitations:
+        - 'Content is not recorded, so a benign rewrite cannot be told from a php directive.'
+        - 'Many Linux web servers run no endpoint sensor, and web roots may be excluded for volume.'
+        - 'The writing process may be a supervisor rather than the worker.'
+    - source: 'Linux kernel audit file-watch records'
+      purpose: >-
+        Provide file-write evidence for override files on hosts with no endpoint sensor.
+      event_vocabulary: 'kernel-audit'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      details: >-
+        Watch rules on document roots report creates and modifies with account and executable, but
+        need rules per directory tree.
+      limitations:
+        - 'Rules must name each tree and recursive coverage is heavy.'
+        - 'No file content, and records can be split across lines.'
+    - source: 'File integrity monitoring with prior-content storage'
+      purpose: >-
+        Show the content change of an override file, that a php directive was added, and when.
+      event_vocabulary: 'application-record'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'file content diff or current content'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+          note: >-
+            Only on products that store prior content; most store a hash only.
+      details: >-
+        Agents compare an override with a stored baseline and, where configured, report changed
+        lines. This is the only source showing a php_value or php_flag directive was added.
+      limitations:
+        - 'Polling misses a write reverted between scans.'
+        - 'Many products store hashes only and cannot show the changed directive.'
+        - 'Usually reports a change without the acting process.'
+    - source: 'Web server configuration inventory'
+      purpose: >-
+        Establish which directories honor overrides and which settings may be changed, to judge the
+        risk of a given write.
+      event_vocabulary: 'none'
+      tier: 'not-applicable'
+      operational_viability: 'first-party-build'
+      details: >-
+        A computed inventory of override policy per site and directory (override permission,
+        .user.ini scanning interval, allowed settings).
+      limitations:
+        - 'Drifts as sites are added and configuration changes.'
+        - 'Hosting panels may generate configuration that is hard to parse consistently.'
+
+detection:
+  scope: >-
+    Writes of per-directory override files in the served tree. Two strategies: a file-event
+    strategy naming the writer and file, and a content-diff strategy showing an engine directive
+    added regardless of attribution. Server-level configuration and in-engine consumption of a
+    setting are outside this object.
+  outcome_guardrails: >-
+    A file event proves a write by a named process, not that a dangerous directive was added. A
+    content diff proves a directive was added, not that the server read it or it had effect. A
+    firing rule proves an unusual web-user override write, not PHP2Shell exploitation.
+  shared_normalization_context: >-
+    Normalise file names to the override class (.htaccess, .user.ini, server equivalents) and paths
+    to the app tree. Parse directives, case-insensitively, into engine directives (php_value,
+    php_flag, prepend, append, and handler or type maps: AddHandler, AddType, SetHandler, ForceType)
+    and rewrite, cache and header rules.
+  shared_enrichment_context: >-
+    Join the application and plugin inventory of normal override content, deployment windows, and
+    server override policy. A 30-day per-application baseline helps, but a new engine directive in a
+    directory that never had one is meaningful without it.
+  strategies:
+    - id: 'STRAT-WEB-USER-OVERRIDE-WRITE-EVENT'
+      name: 'Web user writes a per-directory PHP override outside deployment'
+      objective: >-
+        Detect the web worker account or a PHP-hosting process creating or modifying an override
+        file in the served tree outside deployment and known plugin activity.
+      incident_relevance: >-
+        Detects a possible persistence or behavior-change step after any PHP RCE. It does not
+        detect the exploit request.
+      detection_logic: >-
+        Alert when file telemetry shows a create or modify of an override file in a served path by
+        the web worker account or a PHP-hosting process, outside deployment and update windows and
+        not from a known plugin or panel process acting in an authenticated session or known
+        change. Raise severity when the file is created in a
+        directory that had none, when an integrity diff shows an engine directive, or when the same
+        lineage also wrote a script file. Normalise file name and path before matching.
+      minimum_evidence: >-
+        One file event naming the web account or a PHP-hosting process as writer, and the override
+        path. Without content, report an unexpected override write, not a dangerous directive.
+      correlation_context: >-
+        Key on host, path and writer. Join the integrity content diff by path within five minutes.
+        A deployment exclusion must use the real job window and process, not an all-day allowance.
+      detectors:
+        - detector_class: 'endpoint-file-event-rule'
+          technologies:
+            - 'EDR with file telemetry'
+            - 'Microsoft Defender for Endpoint advanced hunting'
+            - 'Elastic Defend'
+            - 'CrowdStrike Falcon'
+          contribution: >-
+            Evaluates writer and path directly and can prevent the write by policy.
+          limitations: >-
+            No content in most sensors; file telemetry on Linux varies by sensor and licence;
+            edits of existing files may not be recorded; benign plugin writes overlap heavily.
+        - detector_class: 'kernel-audit-correlation'
+          technologies:
+            - 'auditd with a SIEM forwarder'
+            - 'Splunk'
+            - 'Elastic'
+          contribution: >-
+            Provides write evidence with the acting account on hosts with no sensor.
+          limitations: >-
+            Needs watch rules on each tree and has no content.
+      benign_explanations:
+        - explanation: >-
+            CMS permalink changes, caching and security plugins rewrite .htaccess as the web user.
+          distinguishing_context: >-
+            Content is rewrite, cache or header rules from the application's known template, and the
+            write follows an authenticated administrator action; a php directive is not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding all .htaccess writes by the web user hides an intruder using the same file.
+        - explanation: >-
+            Hosting panels write override and .user.ini files when an administrator changes PHP
+            settings for a site.
+          distinguishing_context: >-
+            The write comes from the panel process within an authenticated panel session and a known
+            change.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding the panel process removes a path an attacker with panel access would also use.
+      forbidden_exclusions:
+        - field: 'a specific directive value or setting name as an allow-list'
+          reason: >-
+            Adversary-settable: the attacker picks directives and values, and a value allow-list
+            admits an equivalent setting.
+        - field: 'web account as a blanket writer exclusion for override files'
+          reason: >-
+            The intruder writes as the web account; excluding it suppresses the incident record.
+        - field: 'the vulnerability name'
+          reason: >-
+            Free to change and absent from the file record.
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: >-
+          No source states a rate and nothing was measured. Volume depends on how often CMS and
+          panels rewrite override files.
+      blind_spots:
+        - description: >-
+            Missing telemetry: hosts with no file telemetry, and web roots excluded for volume,
+            record nothing.
+          routes_to: null
+        - description: >-
+            Evasion: editing a legitimate override so only one directive changes, or writing between
+            integrity polls, leaves little for a writer-only rule.
+          routes_to: null
+        - description: >-
+            Attribution limit: server-level or pool-level configuration and FPM frontend values are
+            set outside the served tree and are not visible here.
+          routes_to: null
+        - description: >-
+            Evasion: a script written instead of an override is a separate behavior.
+          routes_to: 'DT-P2S-HOST-002'
+      analyst_response: >-
+        Retrieve the override and its previous version; identify the writer and deployment or panel
+        activity; check whether the server honors overrides there. Look for script writes, child
+        processes and outbound connections from the same lineage; check PHP build and restart.
+      safe_conclusion: >-
+        The web worker account or a PHP-hosting process wrote a per-directory override outside
+        deployment; whether a dangerous directive was added and applied needs content and effect.
+    - id: 'STRAT-OVERRIDE-CONTENT-DIFF-ENGINE-DIRECTIVE'
+      name: 'Engine directive added to a per-directory override file'
+      objective: >-
+        Detect a php_value, php_flag, prepend or append, or handler or type mapping directive
+        appearing in an override file where it was not before, regardless of who wrote it.
+      incident_relevance: >-
+        Detects a possible persistence or behavior-change step by content, independent of
+        attribution and file telemetry, including writes by processes the sensor does not label as
+        the web user.
+      detection_logic: >-
+        On each integrity scan or change event, compare the override file with its stored content
+        and alert when an engine directive, by name and value, is added that was not in the
+        previous version. No prior such directive in the directory or application raises severity;
+        it is not a gate. Classify the directive as an engine directive separate from rewrite, cache
+        and header rules, and require the change to fall
+        outside a deployment or update window. A change traced to an expected plugin or panel
+        update is benign context, not a trigger; an unattributed change still alerts.
+      minimum_evidence: >-
+        A content diff showing an added engine directive in an override file under a served path,
+        with a change time outside a deployment or update window. Without the actor, report a changed override with an engine
+        directive, not a web-user write.
+      correlation_context: >-
+        Key on host, path and scan time. A five-minute join to file events adds the writer when a
+        sensor exists. The scan interval bounds timing precision.
+      detectors:
+        - detector_class: 'file-integrity-monitor-with-content-diff'
+          technologies:
+            - 'Wazuh'
+          contribution: >-
+            Reports the added directive text and the file, independent of the writer.
+          limitations: >-
+            Needs prior-content storage and enrolled paths; polling misses reverted changes and
+            gives no actor.
+      benign_explanations:
+        - explanation: >-
+            An administrator sets php_value limits or error settings for a site in .htaccess.
+          distinguishing_context: >-
+            A change ticket or authenticated administrator session exists and the directive matches
+            the intended setting.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding all php_value additions removes the signal this strategy exists for.
+      forbidden_exclusions:
+        - field: 'a directive name or value as an allow-list'
+          reason: >-
+            Adversary-settable; the attacker picks the directive and value.
+        - field: 'the writing account'
+          reason: >-
+            The content diff is attribution-independent by design; an account exclusion suppresses
+            the incident record.
+      blind_spots:
+        - description: >-
+            Missing telemetry: integrity products that store hashes only cannot show the added
+            directive.
+          routes_to: null
+        - description: >-
+            Evasion: a write reverted before the next scan, or settings set outside the served tree,
+            is not seen.
+          routes_to: null
+        - description: >-
+            Attribution limit: the diff does not say who wrote the change.
+          routes_to: null
+      analyst_response: >-
+        Retrieve the current and previous file, confirm the directive and directory policy, identify
+        who or what changed it from sensor, audit or panel logs, and search for related script
+        writes, child processes and outbound connections.
+      safe_conclusion: >-
+        An engine directive was added to a per-directory override file; the writer and the effect
+        are not established by the diff.
+
+detector_requirements:
+  required: >-
+    Either file-create and modify telemetry or audit watches on served trees with the writer
+    (file-event rule), or integrity monitoring storing prior content (diff rule); normalised
+    override names and directive classes; an inventory of override-editing plugins and panels;
+    alert text stating an override write.
+  optional: >-
+    The server override policy inventory, a per-application baseline of override content, and the
+    join of both streams for the combined claim. None gates either rule.
+  correlation:
+    capability: >-
+      Consistent host and path identifiers across file events and integrity scans, and synchronised
+      clocks, so the content diff joins to the writer.
+    window: 'Five minutes between a file event and the integrity diff for the same path.'
+  baselines:
+    - name: 'Normal override content and writers per application'
+      window: '30-day rolling'
+      seeded_from: >-
+        Known plugin and panel templates and deployment records; never seeded from observed
+        web-account writes, which would enrol an intruder override as normal.
+  product_support_caveat: >-
+    A named product is only a candidate; support depends on deployed sensors, logging and fields.
+    Verify file telemetry or audit covers the served trees, integrity monitoring stores prior
+    content, and plugin and panel editors are inventoried. No Elastic, Splunk or Sigma rule or
+    vendor statement was found.
+
+missing_context:
+  unverified:
+    - >-
+      first_observed '2026-10' is the month of public disclosure (GHSA published 2026-10-21T13:34Z),
+      not an observation of this behavior. Evidence class: inferred.
+    - 'Whether any intrusion has written a per-directory override; no source reports one.'
+    - >-
+      Which settings are changeable per directory on a given estate, and which servers honor
+      overrides.
+    - >-
+      Whether the advisory configuration exposure applies to a given estate; it is handled in
+      DT-P2S-ESTATE-011.
+    - 'How integrity products on web hosts store prior content for override files.'
+    - >-
+      Whether LiteSpeed's LSAPI honours early configuration from .htaccess; the CVE-2026-109619
+      advisory names only environment INI values and calls LSAPI a conditional candidate.
+  assumptions:
+    - id: 'ASSUMPTION-OVERRIDE-WRITE-IS-A-STEP'
+      verdict_changing: true
+      statement: >-
+        That an intruder who can write files would use an override for persistence or behavior
+        change; no incident is published. If wrong, the object has no observed counterpart and falls
+        to nice-to-have in coverage planning. Resolve by reading any published PHP2Shell intrusion
+        report for file activity.
+    - id: 'ASSUMPTION-DIFF-FEASIBLE'
+      verdict_changing: false
+      statement: >-
+        That integrity monitoring on typical web hosts can show the added directive; no source
+        surveys such products. If wrong, only the writer-based strategy remains, at lower precision.
+        Resolve by checking the deployed integrity product stores prior content for override files.
+  standing_negatives:
+    - statement: >-
+        No source reviewed on 2026-10-21 reports an override written in an intrusion. Bounded by the
+        Patchstack 07:34 UTC entry (active exploitation incidents reported by hosting partners),
+        unreconciled with its 13:57 UTC probing-only entry. Checked: the CVE-2026-109619 advisory
+        and the listed vendor writeups.
+      ref: 'REF-GHSA-109619'
+      valid_until: '2026-10-28'
+      recheck: >-
+        Re-check the CISA KEV catalog for either CVE, the watchTowr PHP2Shell page and the
+        Patchstack live timeline (including any reconciliation of its 07:34 and 13:57 UTC entries)
+        for a post-exploitation report that names an override file.
+
+missing_states:
+  - id: 'MISSING_OVERRIDE_FILE_TELEMETRY'
+    meaning: >-
+      Missing telemetry: no file events, audit watches or integrity monitoring cover the served
+      trees.
+    coverage_claim: 'no-coverage'
+    response: >-
+      Report no coverage for override writes; do not state that no override was written.
+  - id: 'MISSING_OVERRIDE_CONTENT'
+    meaning: >-
+      Missing telemetry: only a file event or hash change exists; directive content is unavailable.
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report an override write of unknown content and retrieve the file from the host; do not claim
+      a dangerous directive.
+  - id: 'MISSING_EFFECT_OF_SETTING'
+    meaning: >-
+      Analyst trap: a recorded override write is read as proof that the engine applied an attacker
+      setting or that the host was exploited.
+    coverage_claim: 'coverage-limited'
+    response: >-
+      State that the write is a precursor; whether the server honored it and what changed needs the
+      server override policy and later-request evidence.
+  - id: 'MISSING_PLUGIN_WRITER_INVENTORY'
+    meaning: >-
+      Missing context: plugins and panels that legitimately edit override files are not inventoried.
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Limit alerts to new engine directives and to override files created in directories that had
+      none, until the inventory exists.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'actor_or_explicit_missing_state'
+    - 'host_and_site_identity'
+    - 'override_file_path_and_name'
+    - 'directive_content_change_or_missing_content_state'
+    - 'deployment_or_plugin_window_check_result'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'writing_process_and_account'
+      condition: 'when a file event or audit record names the writer; otherwise state the missing actor'
+    - field: 'server_override_policy_for_directory'
+      condition: 'when the server override policy inventory exists'
+    - field: 'related_script_write_or_child_process'
+      condition: >-
+        when the same lineage produced a script write or child process around the override
+  recommended_title: >-
+    Web user wrote a PHP configuration override in a served path outside deployment
+  unsupported_title: 'PHP2Shell exploitation confirmed from a configuration override write'
+
+
+evidence:
+  confirmed_incident_behavior: >-
+    The CVE-2026-109619 advisory confirms several paths, including a configuration exposure
+    (.htaccess php_value or php_flag, or FPM frontend PHP_VALUE values, producing an INI
+    diagnostic early). It publishes no override written in any intrusion; that one would be
+    written is this pack's inference.
+  supported_conclusion: >-
+    The evidence supports that per-directory overrides change engine behavior under the directory,
+    that a web-user write outside deployment is visible where file telemetry exists, and that a
+    content diff can show an added engine directive. It supports reporting an unexpected override
+    write, not an exploited vulnerability.
+  unsupported_conclusions: >-
+    The evidence does not establish that PHP2Shell has been exploited successfully, that any
+    intrusion wrote an override, that a given server honors overrides, or that clean integrity
+    monitoring means a host is safe. It excludes server-level, pool-level and FPM frontend
+    configuration. Coverage is capability-grade.
+  procedure_boundary: >-
+    This procedure is the web user writing a per-directory override file. Siblings: script write
+    (DT-P2S-HOST-002), child-process behavior (DT-P2S-APP-001), outbound connections
+    (DT-P2S-APP-004). Setting consumption and the entry exploit request are outside this object.
+  references:
+    - id: 'REF-GHSA-109619'
+      type: 'attack-surface-documentation'
+      title: 'RCE via stale global state'
+      publisher: 'PHP project (php-src security advisories)'
+      url: 'https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports the configuration exposure (.htaccess php_value on mod_php, FPM PHP_VALUE),
+        .user.ini applied after normal initialization, and that disabling upload-progress leaves
+        other paths. No override write.
+    - id: 'REF-GHSA-109618'
+      type: 'attack-surface-documentation'
+      title: 'RCE via OOM corruption'
+      publisher: 'PHP project (php-src security advisories)'
+      url: 'https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports the separate out-of-memory flaw and the absence of a complete interim measure. It
+        does not describe an override file being written.
+    - id: 'REF-PHP-FOUNDATION'
+      type: 'attack-surface-documentation'
+      title: 'Today''s PHP Security Release, and How We''re Strengthening PHP Security'
+      publisher: 'The PHP Foundation'
+      url: 'https://thephp.foundation/blog/2026/10/21/todays-php-security-release-and-how-were-strengthening-php-security/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports that the FPM exploitation path depends on how the application operates and that no
+        functional exploit had been identified at release. Does not support any override write.
+    - id: 'REF-HUNTRESS'
+      type: 'incident-campaign-secondary-source'
+      title: 'Rapid Response: php2shell, Leaked Critical PHP Vulnerabilities (CVE-2026-109618 & CVE-2026-109619)'
+      publisher: 'Huntress'
+      url: 'https://huntress.com/blog/php2shell-leaked-critical-php-vulnerabilities'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Huntress knew of no public exploit code when written and saw no in-the-wild exploitation
+        on partners as of 21 October 4:30pm ET; advises hunting webshells, web-root files,
+        cron jobs, accounts. No override files.
+    - id: 'REF-WIZ'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: AI uncovers critical RCE vulnerabilities affecting 70% of the Internet'
+      publisher: 'Wiz Research'
+      url: 'https://www.wiz.io/blog/php2shell-php-rce'
+      trust_tier: 'researcher'
+      verification: 'confirmed-with-scope-caveat'
+      citation_caveat: 'contradicted-elsewhere'
+      citation_caveat_note: >-
+        Wiz labels the upload-progress flaw as CVE-2026-109618, while the PHP advisories place the
+        session upload-progress path under CVE-2026-109619. This pack follows the advisories.
+      evidence_use: >-
+        Supports the researcher demonstration of unauthenticated code execution; no override write.
+        Its CVE-to-flaw table differs from the PHP advisories, which this pack follows.
+    - id: 'REF-PATCHSTACK-PHP'
+      type: 'incident-campaign-secondary-source'
+      title: 'Major security alert: PHP vulnerable to critical RCE, attacks ongoing'
+      publisher: 'Patchstack'
+      url: 'https://patchstack.com/articles/php-major-vulnerability-alert-10-2026/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Bounds the standing negative: the 07:34 UTC entry relays active exploitation incidents from
+        hosting partners; the 13:57 UTC entry describes only probing. Unreconciled; no
+        post-exploitation shown.
+    - id: 'REF-CROWDSTRIKE'
+      type: 'incident-campaign-secondary-source'
+      title: 'CrowdStrike Protects Customers from Threats Delivered via PHP2Shell'
+      publisher: 'CrowdStrike'
+      url: 'https://www.crowdstrike.com/en-us/blog/crowdstrike-protects-customers-from-php-rce-zero-days/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Cited for the campaign status: end-to-end lab demonstration on Apache mod_php, not an
+        intrusion. Notes post_max_size can be set per directory in .htaccess (configuration
+        exposure, not an intrusion write).
+    - id: 'REF-TANIUM'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Responding to CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'Tanium Guardian Research Team'
+      url: 'https://www.tanium.com/blog/php2shell-responding-to-cve-2026-109618-and-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Cited for campaign status: relays VulnCheck (no public proof of concept independently
+        bypasses ASLR on x86-64), Red Hat (hard on default FPM), watchTowr honeypot; no KEV entry.
+        Relayed, not read at source.
+    - id: 'REF-CLOUDFLARE'
+      type: 'incident-campaign-secondary-source'
+      title: 'Cloudflare deploys protections against php2shell vulnerability'
+      publisher: 'Cloudflare'
+      url: 'https://blog.cloudflare.com/php-vulnerabilities-waf-protection/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Cited for the exploitation status in the campaign status: attack traffic against
+        Cloudflare customers' sites, seen at the edge. Not a compromise of a host.
+    - id: 'REF-WATCHTOWR'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: PHP Remote Code Execution Exploited'
+      publisher: 'watchTowr'
+      url: 'https://watchtowr.com/intelligence/php-remote-code-execution-php2shell/'
+      trust_tier: 'researcher'
+      verification: 'confirmed'
+      evidence_use: >-
+        Cited for campaign status: "watchTowr is observing active exploitation attempts of both
+        CVE-2026-109618 and CVE-2026-109619", in a post published 14:19 UTC. Attempts, not
+        compromise.
+    - id: 'REF-KASPERSKY'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: How to Protect Your Server'
+      publisher: 'Kaspersky'
+      url: 'https://www.kaspersky.com/blog/cve-2026-109618-109619-php-vulnerabilities/56583/'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Cited for the exploitation status in the campaign status: says the first attempts were
+        observed before the patches were published, without describing them. Reports no compromise.
+    - id: 'REF-RELIAQUEST'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Responding to Critical PHP Vulnerabilities | Threat Spotlight'
+      publisher: 'ReliaQuest'
+      url: 'https://reliaquest.com/blog/threat-spotlight-php2shell-responding-to-critical-php-vulnerabilities/'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Cited for campaign status: no successful exploitation observed in customer environments;
+        in-the-wild reports early and inconsistent, some only probing.
+    - id: 'REF-HADRIAN'
+      type: 'incident-campaign-secondary-source'
+      title: 'php2shell: Leaked critical PHP RCEs (CVE-2026-109618, -109619)'
+      publisher: 'Hadrian'
+      url: 'https://hadrian.io/vulnerability-alerts/php2shell-leaked-critical-php-rce-cve-2026-109618-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      citation_caveat: 'contradicted-elsewhere'
+      citation_caveat_note: >-
+        Not corroborated by CISA or ReliaQuest (no observed exploitation); no counts. Without
+        Hadrian, attempts remain via Cloudflare, watchTowr, Patchstack; at-scale does not.
+      evidence_use: >-
+        Cited for campaign status: 11:35 UTC "We are now seeing php2shell exploited in the wild at
+        scale", mostly via session upload-progress; 14:35 UTC repeats it. No counts; vendor claim,
+        no compromise.
+    - id: 'REF-CISA'
+      type: 'incident-campaign-secondary-source'
+      title: 'Critical Vulnerabilities in PHP Require Immediate Patching'
+      publisher: 'CISA'
+      url: 'https://www.cisa.gov/news-events/alerts/2026/10/21/critical-vulnerabilities-php-require-immediate-patching'
+      trust_tier: 'government'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Cited for campaign status: CISA "has not observed exploitation of these vulnerabilities as
+        of the time of publication" (2026-10-21). Advises offline for unpatched or PHP
+        8.1-or-earlier systems. KEV rests on Tanium.
+    - id: 'REF-VULNCHECK'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell Vulnerabilities: CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'VulnCheck'
+      url: 'https://www.vulncheck.com/blog/php2shell-vulnerabilities'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Cited for campaign status: 2026-10-21 canary telemetry (scanner probes, multipart POSTs, one
+        unsuccessful session-path webshell attempt 17:22-17:24 UTC); no public proof of concept
+        independently bypasses ASLR on x86-64.
+    - id: 'REF-REDHAT'
+      type: 'incident-campaign-secondary-source'
+      title: 'CVE-2026-109619'
+      publisher: 'Red Hat'
+      url: 'https://access.redhat.com/security/cve/cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Supports the Red Hat CVSS v3.1 score of 8.1 for CVE-2026-109619 (NVD lists 9.8), cited in
+        the status statement.
+    - id: 'REF-APACHE-MOD-MIME'
+      type: 'attack-surface-documentation'
+      title: 'Apache Module mod_mime'
+      publisher: 'The Apache Software Foundation (Apache HTTP Server 2.4 documentation)'
+      url: 'https://httpd.apache.org/docs/2.4/mod/mod_mime.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        AddHandler and AddType are valid in .htaccess under the FileInfo override and map file
+        extensions to a handler or media type. Supports their place in the engine-directive class.
+    - id: 'REF-APACHE-CORE'
+      type: 'attack-surface-documentation'
+      title: 'Apache Core Features'
+      publisher: 'The Apache Software Foundation (Apache HTTP Server 2.4 documentation)'
+      url: 'https://httpd.apache.org/docs/2.4/mod/core.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        SetHandler forces matching files to a handler and ForceType to a media type; both are valid
+        in .htaccess under the FileInfo override. Supports their place in the engine-directive class.

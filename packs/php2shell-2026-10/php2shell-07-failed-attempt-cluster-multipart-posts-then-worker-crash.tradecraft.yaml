@@ -1,0 +1,1056 @@
+identity:
+  uuid: '3b5bc728-1b77-4403-968f-acebc61c0885'
+  id: 'DT-P2S-APP-007'
+  name: >-
+    One client repeats multipart POSTs to PHP endpoints, each followed by a worker crash, memory
+    exhaustion, server error or early warning
+  incident: >-
+    PHP2Shell: two unauthenticated PHP RCE flaws, patched 2026-10-21. CVE-2026-109618 is also
+    reachable by URL-encoded POST when memory_limit is under about 4x post_max_size (CrowdStrike),
+    not at stock defaults. This object counts the multipart shape. Evidence is vendor-listed
+    expectations, not an observed intrusion.
+  first_observed: '2026-10'
+  last_reviewed: '2026-10-21'
+
+classification:
+  primary_attack_surface: 'application-runtime'
+  secondary_attack_surfaces:
+    - 'parser-worker'
+  behavior_classes:
+    - 'other'
+  behavior_classes_note: >-
+    repeated-exploit-attempt-with-engine-fault-side-effects: an unauthenticated client repeatedly
+    submits requests that fault the PHP worker, leaving a crash, restart, out-of-memory or
+    server-error trace correlated to one client.
+  tags:
+    - 'php'
+    - 'php2shell'
+    - 'multipart'
+    - 'worker-crash'
+    - 'out-of-memory'
+    - 'failed-attempt'
+    - 'capability'
+
+behavior:
+  definition: >-
+    An unauthenticated client repeatedly sends multipart forms to PHP endpoints to exploit an engine
+    flaw, leaving a worker crash, memory-exhaustion, server-error or early-warning trace tied to it.
+    CrowdStrike names a startup memory fatal the only artifact of success on its URL-encoded
+    CVE-2026-109618 path (not counted).
+  detailed_definition: >-
+    The adversary repeats unauthenticated multipart bodies to PHP URLs. A failed attempt may leave a worker exit and respawn,
+    a memory fatal (may not be logged), a 5xx or dropped connection, or early startup warnings
+    (this pack's inference).
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers a client repeating multipart requests that fault the worker on an unpatched or
+      unmitigated engine. Excludes a quiet stream or non-multipart request, which rule out neither
+      CVE, and patched hosts: the fixed releases add a hard memory limit that ends the process, so a
+      fault there does not show a vulnerable build.
+    summary: >-
+      Possible on an internet-facing host running an affected PHP build with an unauthenticated PHP
+      endpoint. Whether an attempt faults the worker depends on SAPI, engine version and path tried.
+      Clean logs do not prove a host safe (advisory).
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      The per-client join is observable where the access and error or crash logs from one host both
+      reach the SIEM with joinable timestamps. The host-fault strategy needs only the forwarded
+      error or crash stream and supports only an abnormal-fault finding. Crash evidence kept local
+      is not observable.
+    blocking_conditions:
+      - condition: 'cross-source-join-required'
+        note: >-
+          Strategy one only: an access-log multipart POST joined by time and host to an abnormal
+          worker exit, memory fatal or early warning. Neither stream alone carries the per-client
+          claim. Strategy two reads the fault stream alone.
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          This pack's inference: mod_php crashes appear in the web server's error log, PHP-FPM
+          crashes in the FPM log, restarts in the orchestrator or journal. The web tier must forward
+          whichever applies, and many do not.
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          Strategy one: Content-Type and request size need an access-log format that records them.
+          Both: the memory-exhaustion line may not be written, so crash evidence must lead.
+    summary: >-
+      A multipart POST to a PHP URI then, within seconds, a worker exit on a signal, a memory fatal
+      or an early warning; routine recycling is not a fault. An access record alone is the
+      header-level case of DT-P2S-APP-008. A lone memory fatal also comes from heavy uploads; a 5xx
+      spike shows errors, not intent.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Strategy one separates a per-client repetition of multipart faults, once the two streams are
+      joined and a threshold tuned. Strategy two separates only an abnormal host fault rate against a
+      valid history, with no client attribution or attack conclusion. A single fault, or
+      routine worker recycling, is not separable.
+    blocking_conditions:
+      - condition: 'below-alerting-signal-strength'
+        note: >-
+          A single memory-exhaustion line, 5xx or multipart POST is dominated by benign causes.
+          Strategy one clears the noise only by repetition per client; strategy two only by a host
+          rate above its own pre-attack history.
+      - condition: 'cross-source-join-required'
+        note: >-
+          Strategy one only: the crash or warning evidence must be joined to the client by host and
+          time. Strategy two needs no join and names no client.
+    summary: >-
+      Strategy one counts per-client multipart POSTs to PHP URIs each followed by a fault, above a
+      tuned threshold, with the client resolved and authenticated uploads separated. Strategy two
+      flags a host fault rate above its history as abnormal faults, not an attack. A quiet stream
+      or low-rate adversary stays invisible.
+attack_surface_context:
+  surface: >-
+    The PHP request-handling worker (PHP-FPM pool, mod_php inside the web server, CGI, FrankenPHP,
+    lsphp) and the multipart parsing and upload handling that precedes application code.
+  how_the_surface_works: >-
+    A PHP worker parses multipart parts and updates per-request and per-worker state before the
+    script runs. Workers are reused, so one request's state can reach a later one (the second flaw).
+    A faulting worker is respawned and logged by its supervisor; proxies and CDNs return a gateway
+    error when the upstream drops.
+  incident_processing_path: >-
+    CVE-2026-109618 (GHSA-w8hw-w9fx-j79w) is an out-of-memory failure leaving request memory
+    partly initialised; CVE-2026-109619 (GHSA-6wmf-4rv5-p3rp) is stale worker state reused
+    by a later request. CrowdStrike names the startup fatal 'in Unknown on line 0' the
+    sole artifact of success on its URL-encoded 109618 path.
+  processing_stages:
+    - 'multipart-request-received'
+    - 'engine-form-and-upload-parsing'
+    - 'worker-fault-or-resource-exhaustion'
+    - 'supervisor-respawn-and-fault-logging'
+    - 'gateway-error-or-dropped-connection'
+    - 'attacker-retry'
+  stage_evidence: >-
+    The access record proves the request and status, not that the worker died. The supervisor or
+    error log proves the fault. Only a join by time and host ties a fault to a client. The memory-exhaustion line is least reliable: the CVE-2026-109619 advisory says a
+    failure can occur before PHP writes the message.
+  trust_boundaries: >-
+    Unauthenticated network client into the PHP engine's request-parsing code. The worker fault is a
+    side effect observed at the boundary; it does not show the outcome.
+  security_control_context: >-
+    Controls: patch level, SAPI, WAF and CDN rules (Cloudflare reports payload mutation against its
+    rules; Patchstack attributes the word stopgap to Cloudflare), size and memory limits, isolation.
+    A WAF block removes the observed fault; a one-path rule leaves others faulting. Bypasses:
+    low-rate spacing, rotating sources.
+  special_context:
+    topic: 'proxy-and-supervisor-attribution'
+    context: >-
+      Behind a reverse proxy the access log often shows the proxy's address and a 502 or 504; the
+      real client appears only in a forwarded header, whose trust depends on the proxy chain. Worker
+      error logs often carry no client address (this pack's inference), so the join runs on time and host and
+      weakens under concurrency.
+  practitioner_implication: >-
+    Before choosing a threshold, find out each web tier's SAPI, where it logs worker faults, whether
+    those logs are forwarded with joinable timestamps, how the real client address is carried, which
+    endpoints legitimately accept anonymous multipart uploads, and the per-client rate of benign
+    faults.
+
+threat_research:
+  why_it_matters: >-
+    A failed attempt cannot be made fully silent: the adversary must repeat attempts. A repeated
+    fault from one client against anonymous endpoints is the earliest host-visible sign of an attack
+    on an unpatched engine. It is also the one signal that differs from the generic webshell objects
+    in this pack.
+  threat_actor: >-
+    Unknown. Exploitation attempts are reported by several parties (see campaign); none is
+    attributed to a named group.
+  actor_class: 'opportunistic-internet-scanning'
+  campaign: >-
+    PHP2Shell (CVE-2026-109618 and CVE-2026-109619), status as of 2026-10-21. Wiz and CrowdStrike have
+    demonstrated unauthenticated remote code execution in lab conditions, CrowdStrike end to end on
+    Apache mod_php, and the PHP advisory for CVE-2026-109619 validates its session path against both
+    mod_php and PHP-FPM. Exploitation attempts are reported by Cloudflare, watchTowr, Patchstack (a
+    07:34 UTC entry relays active exploitation incidents from hosting partners; a 13:57 UTC entry
+    describes only probing), Kaspersky (attempts before the patch), Hadrian (exploitation at scale,
+    with no counts) and VulnCheck (canary scans and at least one session-path webshell attempt on 21 October,
+    17:22-17:24 UTC, whose ten follow-up reads all returned 404). No source documents a confirmed compromise: CISA has not observed exploitation, ReliaQuest has not seen successful exploitation in customer environments, and Tanium reported on 21 October that neither CVE was in the CISA KEV catalog. Red Hat
+    rates CVE-2026-109619 CVSS 3.1 8.1 for high attack complexity, while Red Hat's page lists NVD's score as 9.8. VulnCheck reports that none of the public proofs of concept it reviewed independently bypasses ASLR on x86-64, and that
+    exploitation works on ARM64 and on x86 without ASLR.
+  victim: 'None documented. Honeypots and WAF fleets report attempts.'
+  capability: >-
+    watchTowr reports active attempts (seen in its honeypots, per Tanium). Cloudflare reports payload
+    mutation against its WAF rules. CrowdStrike showed in its lab that a single anonymous POST can
+    cause an Apache mod_php worker to launch a shell process.
+  target: >-
+    Internet-facing PHP endpoints served by an affected engine build. Whether any attempt against a
+    production host reached code execution is not documented.
+  victimology:
+    - >-
+        Internet-facing hosts running PHP under any SAPI, with the engine unpatched or the workers
+        not restarted.
+    - 'Hosts on engine versions with no available fix, which stay exposed.'
+    - 'WordPress, Drupal and Joomla estates, named by Wiz as reachable to code execution.'
+  framework_mappings:
+    - framework: 'MITRE ATT&CK'
+      technique_mapping_status: 'mapped'
+      id: 'T1190'
+      name: 'Exploit Public-Facing Application'
+      evidence: >-
+        Repeated unauthenticated requests against a public-facing PHP application to exploit an
+        engine flaw.
+    - framework: 'MITRE ATT&CK'
+      technique_mapping_status: 'mapped'
+      id: 'T1499.004'
+      name: 'Endpoint Denial of Service: Application or System Exploitation'
+      evidence: >-
+        Worker faults are a side effect, not the adversary's goal. Mapped as a side effect only; the
+        sources describe no denial-of-service intent.
+
+visibility:
+  telemetry_sources:
+    - source: 'Web server, reverse proxy or CDN access log'
+      purpose: >-
+        Show the multipart POST, its target URI, size, response status and, as enrichment,
+        authentication state, per client.
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'on-by-default'
+      fields:
+        - name: 'client address and forwarded client address'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+          note: 'The forwarded address is only trustworthy behind a controlled proxy chain.'
+        - name: 'method, URI and Content-Type'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+          note: 'Many default log formats omit Content-Type; it must be added to the format.'
+        - name: 'request size and Content-Length'
+          attestation: 'unattested-inferred'
+          load_bearing: false
+          note: >-
+            Opt-in: nginx $request_length or Apache %I (mod_logio). The default bytes field
+            ($body_bytes_sent, %b) counts the response, not the upload.
+        - name: 'status code'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+        - name: 'authentication cookie presence'
+          attestation: 'estate-supplied'
+          load_bearing: false
+          note: >-
+            Enrichment only, never a condition for firing. Not a native log field; the estate must
+            log or derive it. A session id the host never issued is stronger than a missing cookie,
+            because a client can supply its own.
+      details: >-
+        The only place the client, request shape and response meet; the front half of the
+        correlation.
+      limitations:
+        - 'Does not show whether the worker crashed; a 502 may be a slow upstream.'
+        - 'Default formats often omit the Content-Type and the cookie state.'
+        - >-
+            Client address is the proxy behind a reverse proxy unless forwarded headers are logged
+            and trusted.
+    - source: 'Web server and PHP-FPM error or crash log'
+      purpose: >-
+        Show a worker exiting on a signal and its respawn, a memory-exhaustion fatal or an early
+        startup warning, as the back half of the correlation.
+      event_vocabulary: 'application-record'
+      tier: 'no-tier-model'
+      operational_viability: 'on-by-default'
+      fields:
+        - name: 'child exit on signal and respawn message'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+          note: >-
+            Message wording differs per web server and FPM version; not checked here. A respawn after
+            pm.max_requests or an ondemand idle kill is routine, not a fault (PHP manual).
+        - name: 'memory exhaustion fatal text'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CROWDSTRIKE'
+          load_bearing: false
+          note: >-
+            Listed by CrowdStrike and Wiz. The CVE-2026-109619 advisory says a failure can occur
+            before PHP writes the message. CrowdStrike names the startup form ('in Unknown on line
+            0') the only artifact of a successful attempt. Absent where the log is not
+            forwarded or memory_limit=-1 was applied as a mitigation.
+        - name: 'Apache child segfault line (AH00052) and slow-response duration'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-FASTLY'
+          load_bearing: false
+          note: >-
+            Fastly's own framing of a segfault cluster followed by a slow 200 as the address-recovery
+            phase; not measured here. Whether Apache writes the line depends on its version and log
+            level, not checked here. Pair with access-log duration (%D or %T) for the slow 200.
+        - name: 'early startup warning (execution time exceeded, parse error on a route)'
+          attestation: 'unattested-inferred'
+          load_bearing: false
+          note: >-
+            Rests on the early-warning assumption stated in this entry.
+      details: >-
+        This pack's inference: mod_php logs a crash in the web server error log; FPM logs a child
+        exit in its own log. Lines carry a timestamp and process id but often no client address.
+      limitations:
+        - 'No client address in most records; correlation is by time and host.'
+        - 'The memory-exhaustion line may not be written; crash evidence must lead.'
+        - >-
+            The memory-exhaustion line reaches a collected log only if PHP error logging is on and
+            routed there (log_errors, error_log; for PHP-FPM, catch_workers_output or a pool error_log).
+            Defaults vary by distribution and container image; not checked here. The FPM child-exit line
+            is written by the FPM master itself.
+        - 'Local-only on many hosts; the web tier must forward it.'
+    - source: 'Container and service-manager restart events'
+      purpose: >-
+        Show worker or container restarts when the supervisor is an orchestrator or a service
+        manager.
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'on-by-default'
+      details: >-
+        Records a restart, out-of-memory kill or crash-loop state with a reason and time,
+        corroborating a worker fault where the application log is not forwarded.
+      limitations:
+        - 'No client or request context at all.'
+        - 'A restart may follow a deploy or a resource limit unrelated to the attack.'
+    - source: 'WAF or CDN security event log'
+      purpose: >-
+        Show multipart requests the edge blocked or challenged, as context on attempts that never
+        reached the worker.
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      details: >-
+        Managed WAF rules, where deployed, record blocked requests by client. A blocked request
+        produces no worker fault, so this source shows attempts the host never sees.
+      limitations:
+        - >-
+            A block removes the host-side fault, so absence of faults behind a WAF is not absence of
+            attempts.
+        - 'Reported payload mutation means rules lag the traffic.'
+        - 'Google Cloud Armor decisions appear in application load balancer logs only where request logging is enabled on each backend service.'
+
+detection:
+  scope: >-
+    Strategies: a per-client join of access records and worker faults, and a host-side fault
+    rate as fleet warning; neither claims code execution. A quiet stream, patched host, WAF block or
+    non-multipart request is outside the join; a URL-encoded success reaches only the
+    host-side one. Access-log-only: DT-P2S-APP-008.
+  outcome_guardrails: >-
+    A multipart POST shows a request shape, not an attack; a 5xx shows an error, not a worker crash;
+    a worker exit shows a fault, not that this client caused it. A repeated per-client pattern shows
+    probable attempts or a possible success, not which, nor that PHP2Shell was used. None evidences
+    post-exploitation.
+  shared_normalization_context: >-
+    Normalise Content-Type, resolve the client via trusted proxies, mark anonymous
+    URIs, align clocks, group faults (abnormal exit, memory fatal, early warning, container
+    restart). Drop recycling after pm.max_requests and idle kills (PHP manual); a respawn counts
+    only with its abnormal exit (this pack's inference).
+  shared_enrichment_context: >-
+    Join deploy and restart activity, the list of endpoints that legitimately accept anonymous
+    multipart uploads, and a per-endpoint 5xx baseline (for thresholds, not required). Proxy or WAF
+    limit rejections and body-parse failures can annotate a client but are not worker faults and do
+    not count toward the threshold.
+  strategies:
+    - id: 'STRAT-CLIENT-MULTIPART-FAULT-JOIN'
+      name: 'per-client multipart POSTs followed by worker faults'
+      objective: >-
+        Detect one client repeatedly sending multipart requests (POST ranked higher) each followed
+        within seconds by a worker fault on the same host.
+      incident_relevance: >-
+        Detects reported attempt side effects, not the outcome. Tanium (review web server and PHP-FPM logs for worker crashes and malformed multipart uploads) and Imperva (correlate suspicious requests with memory-exhaustion errors and worker crashes) support this join as guidance, not a rule.
+      detection_logic: |-
+        For each host and client, count multipart POSTs to PHP URIs followed within seconds by an abnormal worker exit (not recycling), a memory fatal or an early startup warning in the host stream. Alert when the count crosses an estate-tuned threshold in a window.
+        - Abnormal worker exit leads; the memory fatal is optional; an early warning is supporting (this pack's inference).
+        - Session-cookie state is a risk modifier, not a condition; a session id the host never issued raises severity.
+        - A further request from the same client shortly after a fault is supporting.
+        - Do not hard-filter to POST: PHP 8.4 apps can parse multipart on other methods; no exploit path is confirmed. Rank POST higher.
+      minimum_evidence: >-
+        At least the threshold count of multipart requests (POST ranked higher) from one resolved client, each with a
+        matching host-side fault other than routine recycling. Without the fault stream this strategy does not apply; route the
+        access-log-only case to DT-P2S-APP-008.
+      correlation_context: >-
+        Entity keys are host, client and URI. The join is by time within a few seconds on one host
+        and degrades under concurrency. A worker's pid links fault records to each other but not to a
+        request. A window of minutes sets the repetition count.
+      detectors:
+        - detector_class: 'siem-multi-source-correlation'
+          technologies:
+            - 'Splunk'
+            - 'Elastic'
+            - 'Microsoft Sentinel'
+            - 'Google SecOps'
+            - 'Datadog Cloud SIEM'
+            - 'Abstract Security'
+          contribution: >-
+            Joins access records to error or crash records by host and time and counts per client.
+          limitations: >-
+            Needs both streams ingested with aligned clocks; the client is unknown in the error
+            stream.
+        - detector_class: 'web-tier-log-analytics'
+          technologies:
+            - 'WAF or CDN analytics'
+            - 'Reverse proxy log analysis'
+            - 'Fastly Next-Gen WAF'
+            - 'Google Cloud Armor managed rules (File Upload and RFI categories)'
+            - 'Google Cloud Armor customer-written rule blocking uninspected or oversized content'
+          contribution: 'Supplies the resolved client and request half of the join at the edge.'
+          limitations: 'Cannot see worker faults behind the edge; a 502 is ambiguous.'
+        - detector_class: 'network-sensor-sequence-notice'
+          technologies:
+            - 'Corelight Zeek PHP crash-sequence notice'
+          contribution: >-
+            A network-only notice for related suspicious HTTP transactions within one session, a proxy for the crash and not a worker fault.
+          limitations: >-
+            Needs HTTP visibility, so TLS must be decrypted at the sensor. Request inspection is
+            limited to POST entities, it sees no worker fault, and its README says matches can be benign.
+        - detector_class: 'vendor-rule-candidate-content'
+          technologies:
+            - 'Abstract Security "Web - Burst of Oversized POST Requests from Single Source"'
+            - 'CybaVerse Sigma "PHP2Shell - POST Requests Returning HTTP 500 to PHP Endpoints"'
+            - 'CybaVerse Sigma "PHP2Shell - PHP Memory Exhaustion or FPM Worker Killed by Signal"'
+          contribution: >-
+            Vendor-named content for the oversized-POST burst and the error and worker-kill halves of
+            the pattern, as candidates to compare against this strategy.
+          limitations: >-
+            Each is single-stream, with no multipart-then-fault join. The first CybaVerse rule
+            matches only status 500 on POST to a .php URI, missing other 5xx and dropped
+            connections; the second matches syslog keywords. Abstract calls its oversized-POST logic a hunt.
+      benign_explanations:
+        - explanation: >-
+            Anonymous file-upload forms (support, careers, contact) receiving oversized files that
+            exhaust memory or exceed limits.
+          distinguishing_context: >-
+            Benign errors are infrequent per client; the adversary pattern is one client repeating
+            faulting requests on an endpoint at a high rate (this pack's inference).
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding the known upload endpoints wholesale removes endpoints an adversary also
+            probes; exclude by per-client repetition rate, not by endpoint alone.
+        - explanation: >-
+            A faulty plugin or a deploy that crashes workers while ordinary users post forms.
+          distinguishing_context: >-
+            Faults affect many clients and authenticated sessions alike; the adversary pattern is
+            one client or a few, anonymous, repeating.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Suppressing alerts during deploy windows hides an attack timed to a release; annotate
+            with the deploy record, do not suppress.
+        - explanation: 'Vulnerability scanners and uptime checks that send multipart requests.'
+          distinguishing_context: >-
+            Sources match the estate's scanner inventory; unknown sources do not.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            An allow list by user agent is adversary-settable; allow by source address inventory.
+      forbidden_exclusions:
+        - field: 'multipart boundary string, user agent or any request-body string'
+          reason: >-
+            Adversary-settable (inference); Precursor reports multipart boundary values referencing the
+            CVE identifiers without naming the original observer, and Cloudflare reports payload
+            mutation against its rules.
+        - field: 'excluding a single request paired with a host fault from counting'
+          reason: >-
+            It removes the leading crash evidence; count it, and rely on the threshold to absorb
+            noise. A 5xx without a matching host fault never counts here.
+        - field: 'excluding known upload endpoints entirely'
+          reason: 'It would suppress the incident if the attacked endpoint is one of them.'
+        - field: 'CVE identifier or exploit name in any field'
+          reason: 'Requests carry none reliably, and matching on them reads only a decoy.'
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: >-
+          No source gives a rate. Set the threshold from the estate's own per-client fault history,
+          which was not available to this pack.
+      blind_spots:
+        - description: >-
+            Evasion: a request that does not fault the worker leaves no record, a non-multipart
+            request is not counted, and a low-rate adversary stays under the threshold.
+            CrowdStrike's only artifact of success, a generic fatal on its URL-encoded path, is never
+            counted here; only the host-side strategy sees it.
+          routes_to: null
+        - description: >-
+            Missing telemetry: mod_php crashes are logged in the web server error log (this pack's
+            inference), and hosts that do not forward it give this strategy no back half.
+          routes_to: null
+        - description: >-
+            Missing telemetry: with no host fault stream only the access-log half remains, a
+            multipart POST with a 5xx per client, which is the repetition branch of the
+            header-level strategy of DT-P2S-APP-008.
+          routes_to: DT-P2S-APP-008
+        - description: >-
+            Attribution limit: the error stream carries no client, so concurrent traffic makes the
+            join ambiguous and can attribute a fault to the wrong client.
+          routes_to: null
+        - description: >-
+            Evasion: a WAF block upstream removes the fault, so a protected host shows no faults for
+            attempts the edge stopped.
+          routes_to: DT-P2S-APP-008
+      analyst_response: >-
+        Identify the client, endpoints and count; read the host error or crash log for paired
+        faults. Treat the startup memory fatal as a reason to check the host for compromise
+        (DT-P2S-APP-001, HOST-002, HOST-003, APP-004, HOST-005, HOST-006), not only to block the
+        client. Confirm patch level and worker restart.
+      safe_conclusion: >-
+        A client repeatedly sent multipart requests that coincided with worker faults; these are
+        attempts or a possible success, and the outcome is not established.
+    - id: 'STRAT-HOST-FAULT-FLEET-WARNING'
+      name: 'host-side worker fault rate with no client attribution'
+      objective: >-
+        Detect an abnormal rate of worker exits, restarts or early-warning lines on a web host when
+        the faults cannot be joined to a client.
+      incident_relevance: >-
+        Detects a possible side effect of failed attempts at the host level. It cannot attribute the
+        faults to an attack and is weaker than the first strategy.
+      detection_logic: >-
+        Alert on an abnormal worker exit count (each respawn deduplicated with its exit; routine
+        recycling dropped), a memory-fatal count or an early startup warning count on one host that
+        exceeds the host's own recent rate, when no deploy or restart event explains it. Early warnings of the kinds the advisory lists for an exposure audit are
+        supporting evidence (this pack's inference). Clustering across hosts is a stronger finding
+        than one host.
+      minimum_evidence: >-
+        An error or crash stream showing an abnormal fault rate, routine recycling excluded, above
+        the host's own history with no planned restart in the window. Report abnormal worker faults, not an attack, when no request
+        evidence is available.
+      correlation_context: >-
+        Entity keys are host and fault class over a rolling window, compared to a 30-day host
+        history; across-host clustering uses the same window.
+      detectors:
+        - detector_class: 'log-rate-anomaly-detection'
+          technologies:
+            - 'Splunk'
+            - 'Elastic'
+            - 'Microsoft Sentinel'
+            - 'Google SecOps'
+          contribution: 'Flags a rate above the host history for fault classes.'
+          limitations: 'No client attribution; noisy where faults are common.'
+      benign_explanations:
+        - explanation: 'Resource limits, bad plugins or code releases that crash workers.'
+          distinguishing_context: >-
+            Deploy, plugin and resource-limit changes explain the faults; unexplained faults across
+            several hosts at once are rarer.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Setting the threshold from a period that already contained the attack enrols it as
+            normal.
+        - explanation: 'Planned restarts and autoscaling events.'
+          distinguishing_context: 'The deploy or scaling record names the restarts.'
+          overlaps_incident_instance: false
+        - explanation: >-
+            Routine worker recycling after pm.max_requests or ondemand idle kills, which rises with
+            traffic (PHP manual).
+          distinguishing_context: >-
+            The exit is not on a signal and no other fault class accompanies it (this pack's
+            inference).
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Dropping every exit line also drops exits on a signal; filter by exit reason, not message
+            family.
+      forbidden_exclusions:
+        - field: 'excluding memory-fatal lines because they are common'
+          reason: >-
+            It removes one of the reported indicators; absorb the noise with a rate baseline.
+        - field: 'excluding hosts with a WAF in front'
+          reason: 'The WAF reportedly mitigates only some paths and lags mutated payloads.'
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: 'Depends on each host baseline; no source or model.'
+      blind_spots:
+        - description: >-
+            Attribution limit: no client or request evidence, so the finding cannot separate an
+            attack from a faulty release.
+          routes_to: DT-P2S-APP-008
+        - description: >-
+            Evasion: a request that leaves no fault is invisible here, and a fault on a patched host
+            can come from the hard memory limit the fixed releases add, so check
+            the engine version before reading a fault as a sign of exposure.
+          routes_to: null
+      analyst_response: >-
+        Pull the access log for the fault window, identify clients with multipart POSTs preceding
+        each fault, and run the first strategy's analysis with its host compromise check
+        (DT-P2S-APP-001, HOST-002, HOST-003, APP-004, HOST-005, HOST-006). Check deploy and plugin
+        changes, the engine patch level and worker restarts.
+      safe_conclusion: >-
+        A host showed an abnormal worker fault rate without a planned cause; the cause is not
+        established.
+  supporting_technologies_considered: >-
+    WAF managed rules and CDN response-side detection reduce exposure and add attempt records, but a
+    block removes the host-side fault this object observes, so they corroborate and are not primary
+    evidence. Vulnerability scanners reveal exposure and patch level, not attempts.
+
+detector_requirements:
+  required: >-
+    Both strategies: forwarded error and restart logs, and alert text that says attempts and faults,
+    not exploitation. Strategy one adds access logs with client, Content-Type and status, clocks
+    aligned across streams, an anonymous-route list and trusted client resolution. Strategy two adds
+    the host's fault history.
+  optional: >-
+    A WAF or CDN event feed adds attempts the host never sees; an authentication-state indicator
+    enriches severity; a per-endpoint fault baseline sets thresholds faster; a deploy feed annotates
+    restarts.
+  correlation:
+    capability: >-
+      Clocks aligned across access and error streams to within a second, a stable host key, a
+      resolved client address, and a fault-class grouping; concurrency limits the join precision.
+    window: 'A few seconds between request and fault; minutes for the repetition count.'
+  baselines:
+    - name: 'Per-host and per-endpoint worker fault and 5xx rate'
+      window: '30-day rolling'
+      seeded_from: >-
+        Error and access logs from before any suspected attack window; never from the window under
+        investigation, which would enrol the attack's faults as normal.
+  product_support_caveat: >-
+    A named product is only a candidate; verify log forwarding, Content-Type logging and clock
+    alignment. As of 2026-10-21 the CrowdStrike and Abstract PHP2Shell rules key on the lone
+    'Unknown on line 0' line (bodies unread); SigmaHQ rule 1da8ce0b is Apache-only; no vendor
+    AH00052, Elastic, Splunk or ET Open rule found.
+missing_context:
+  unverified:
+    - >-
+      first_observed '2026-10': attempts reported in the wild 2026-10-21 (Patchstack partner reports
+      07:34 UTC, Cloudflare WAF, watchTowr honeypots 14:19 UTC), demonstrated by researchers in
+      August 2026 (Calif). No compromise confirmed.
+    - 'Whether any observed attempt produced a worker fault in a real estate; the faults are vendor-listed expectations.'
+    - 'The exact error and exit message wording each web server and FPM version writes for a worker fault.'
+    - >-
+        Whether the AH00052 segfault cluster followed by a slow 200 occurs in real attempts; it is
+        Fastly's own framing, and the CrowdStrike lab description gives no rate.
+    - >-
+        Whether a patched host logs a fault for the same requests. The fixed releases add a hard
+        memory limit that ends the process and skips shutdown handlers and the
+        fix commit replaces the out-of-memory bailout with an unwind exit, so a
+        fault is possible; rate and logging unknown.
+    - >-
+        Qualys says a patched runtime can end a worker immediately at its hard memory threshold, skipping normal shutdown handlers, so patched hosts may still log faults.
+    - >-
+        Whether non-POST requests reach either flaw. PHP 8.4's request_parse_body() lets an
+        application parse multipart on other methods (PHP manual); no advisory or writeup confirms
+        an exploit path.
+    - 'The rate at which benign anonymous multipart requests fault workers in a given estate.'
+  assumptions:
+    - id: 'ASSUMPTION-ATTEMPTS-REPEAT'
+      verdict_changing: true
+      statement: >-
+        An adversary repeats multipart attempts enough to cross a per-client threshold; no source
+        publishes per-client rates. If wrong, only the fleet warning remains. Resolve from honeypot
+        per-client counts.
+    - id: 'ASSUMPTION-FAULT-IS-SIDE-EFFECT'
+      verdict_changing: true
+      statement: >-
+        Attempts fault the worker as vendors list (server errors, dropped connections, restarts,
+        memory fatals); none shows this from a measured production attempt. If wrong,
+        `manifestation.observable` collapses to access-log status alone. Resolve by lab replay of a
+        vetted trigger on an unpatched build.
+    - id: 'ASSUMPTION-TIME-JOIN-SUFFICES'
+      verdict_changing: false
+      statement: >-
+        A time-and-host join attributes a fault to a client well enough; inferred from typical
+        request rates. If wrong, attribution is noisy under concurrency but the detectable answer
+        does not flip. Resolve by measuring request concurrency on the busiest host during a window.
+    - id: 'ASSUMPTION-EARLY-WARNING-IS-ATTEMPT-EVIDENCE'
+      verdict_changing: false
+      statement: >-
+        Early error-log warnings and execution-time messages can serve as attempt evidence. The
+        advisory frames them as an exposure-audit item that need not be logged. If wrong, the
+        early-warning field drops out and exit and memory fatal carry the join. Resolve by lab
+        replay of a vetted trigger.
+  standing_negatives:
+    - statement: >-
+        As of 2026-10-21 no source documents the cited traces from a confirmed production
+        compromise; they are vendor-listed expectations and CrowdStrike's lab description. Bounded
+        by Patchstack's 07:34 UTC entry relaying partner reports of active exploitation incidents,
+        not reconciled with its 13:57 UTC probing-only entry.
+      ref: 'REF-PATCHSTACK-PHP'
+      valid_until: '2026-10-28'
+      recheck: >-
+        Re-check the CISA KEV catalog, the watchTowr PHP2Shell page and the Patchstack live timeline
+        for a published incident that shows worker faults from a confirmed attack, and for any
+        published honeypot request log.
+    - statement: >-
+        Talos has not seen these flaws exploited in the wild as of 2026-10-21 14:00 UTC; this sits beside the attempt reports and does not contradict them.
+      ref: 'REF-TALOS'
+      valid_until: '2026-10-28'
+      recheck: >-
+        Re-read the Talos advisory for an updated exploitation status.
+    - statement: >-
+        Imperva observed no traffic matching its monitored exploit patterns during its pre-disclosure monitoring period.
+      ref: 'REF-IMPERVA'
+      valid_until: '2026-10-28'
+      recheck: >-
+        Re-read the Imperva post for post-disclosure observations.
+
+missing_states:
+  - id: 'MISSING_CRASH_LOG_FORWARDING'
+    meaning: 'Missing telemetry: the web server or FPM error and crash log is not forwarded.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Route the access-log-only case to the repetition branch of the header-level strategy of DT-P2S-APP-008, state that
+      worker faults could not be checked, and do not claim crashes.
+  - id: 'MISSING_CONTENT_TYPE_IN_ACCESS_LOG'
+    meaning: 'Missing telemetry: the access log format omits Content-Type or authentication state.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      State that multipart requests cannot be isolated and fall back to POST plus status, plus
+      request length only where $request_length or %I is logged; the claim narrows to repeated POST
+      faults.
+  - id: 'MISSING_CLIENT_IN_ERROR_STREAM'
+    meaning: 'Attribution limit: the error stream carries no client address.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Attribute by time and host only and state the concurrency; do not name a client as the cause
+      of a fault.
+  - id: 'MISSING_CLEAN_EXPLOIT_TRACE'
+    meaning: 'Analyst trap: a quiet stream rules out neither CVE, so no alert is not a clean host.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Never report a host as unaffected from the absence of this object's signals; confirm the patch
+      level and that workers were restarted.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'host_and_web_tier_sapi'
+    - 'paired_fault_class_and_count'
+    - 'engine_version_and_worker_restart_state'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'resolved_client_and_resolution_method'
+      condition: 'for the per-client join strategy'
+    - field: 'anonymous_multipart_post_count_and_window'
+      condition: 'for the per-client join strategy'
+    - field: 'target_uris_and_authentication_state'
+      condition: 'for the per-client join strategy'
+    - field: 'response_status_distribution'
+      condition: 'for the per-client join strategy'
+    - field: 'host_fault_rate_and_history_baseline'
+      condition: 'for the host-fault strategy'
+    - field: 'edge_block_context'
+      condition: 'when a WAF or CDN also blocked requests from the same client in the window'
+    - field: 'fleet_clustering_hosts'
+      condition: 'when the fault pattern appears on more than one host in the window'
+  recommended_title: >-
+    PHP worker faults: a client's repeated multipart requests, or an abnormal host fault rate
+    (strategy stated)
+  unsupported_title: 'PHP2Shell exploit succeeded against web server'
+
+evidence:
+  confirmed_incident_behavior: >-
+    The advisory says clean logs do not prove a host safe. CrowdStrike names the startup memory
+    fatal the only artifact of success on its URL-encoded 109618 path. Wiz lists memory errors, HTTP 500s and worker churn; Upwind:
+    5xx (often 502) behind a proxy, dropped connection on mod_php without one, 200 on success.
+  supported_conclusion: >-
+    Failed attempts are expected to leave worker faults or server errors; a successful one may leave
+    only the startup memory-exhaustion line; repetition by one client is the plausible
+    discriminator, and a per-client join of multipart POSTs and faults the strongest signal. Report
+    probable attempts or a possible success.
+  unsupported_conclusions: >-
+    The evidence does not establish that any attempt succeeded or failed, that any host was
+    compromised, that a given fault was caused by an attack, that a patched host shows the same
+    trace, or that absence of these traces means safety. It sets no rate for benign or attack faults.
+  procedure_boundary: >-
+    The repeated failed-attempt trace of multipart requests and worker faults. Upload-progress
+    probing (a body-level field) is a sibling. Post-exploitation behaviors (child processes, written
+    scripts, configuration overrides, new outbound destinations, scheduler and account changes) and
+    memory-disclosure are separate.
+  references:
+    - id: 'REF-GHSA-109618'
+      type: 'attack-surface-documentation'
+      title: 'RCE via OOM corruption'
+      publisher: 'PHP project (php-src security advisories)'
+      url: 'https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        CVE-2026-109618 out-of-memory handling path, trigger classes and SAPI susceptibility, FPM
+        child exit when request startup fails, and no complete interim measure.
+    - id: 'REF-GHSA-109619'
+      type: 'attack-surface-documentation'
+      title: 'RCE via stale global state'
+      publisher: 'PHP project (php-src security advisories)'
+      url: 'https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Several paths (some with no predictable log entry), early error-log warnings and
+        execution-time messages as an exposure-audit item that need not be logged, and that clean
+        logs do not prove a host safe. No rate.
+    - id: 'REF-PATCHSTACK-PHP'
+      type: 'incident-campaign-secondary-source'
+      title: 'Major security alert: PHP vulnerable to critical RCE, attacks ongoing'
+      publisher: 'Patchstack'
+      url: 'https://patchstack.com/articles/php-major-vulnerability-alert-10-2026/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Relays Wiz's indicators: multipart request, then memory errors, 5xx, worker restarts.
+        07:34 UTC relays partner reports of active exploitation; 13:57 UTC says only probing;
+        unreconciled. No confirmed compromise.
+    - id: 'REF-UPWIND'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Two Critical Unpatched PHP RCEs (CVE-2026-109618 & CVE-2026-109619) - Update'
+      publisher: 'Upwind'
+      url: 'https://www.upwind.io/feed/initial-assessment-php2shell-two-critical-unpatched-php-rces-cve-2026-109618-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Failed attempt behind a proxy: 5xx, commonly 502; mod_php without one often drops the connection; a 200 on the same pattern is the success case. Single vendor; no rate.
+    - id: 'REF-WATCHTOWR'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: PHP Remote Code Execution Exploited'
+      publisher: 'watchTowr'
+      url: 'https://watchtowr.com/intelligence/php-remote-code-execution-php2shell/'
+      trust_tier: 'researcher'
+      verification: 'confirmed'
+      evidence_use: >-
+        Active exploitation attempts against both CVEs, in a post published 14:19 UTC on 2026-10-21;
+        no post-exploitation described. No per-client request counts.
+    - id: 'REF-CROWDSTRIKE'
+      type: 'incident-campaign-secondary-source'
+      title: 'CrowdStrike Protects Customers from Threats Delivered via PHP2Shell'
+      publisher: 'CrowdStrike'
+      url: 'https://www.crowdstrike.com/en-us/blog/crowdstrike-protects-customers-from-php-rce-zero-days/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        'in Unknown on line 0' as the only server-side artifact of success on its URL-encoded path. Rule 'Generic - Web - PHP Memory Exhaustion During Request Startup
+        (CVE-2026-109618 & CVE-2026-109619)'.
+    - id: 'REF-WIZ'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: AI uncovers critical RCE vulnerabilities affecting 70% of the Internet'
+      publisher: 'Wiz Research'
+      url: 'https://www.wiz.io/blog/php2shell-php-rce'
+      trust_tier: 'researcher'
+      verification: 'confirmed'
+      evidence_use: 'Supports the multipart-then-fault indicators and researcher demonstrations. Primary analysis.'
+    - id: 'REF-FASTLY'
+      type: 'incident-campaign-secondary-source'
+      title: 'Fastly’s Proactive Protection for PHP2Shell, Critical React RCE CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'Fastly'
+      url: 'https://www.fastly.com/blog/fastlys-proactive-protection-critical-php-rce-cve-2026-109618'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports Fastly's own statement that dozens of AH00052 segfault entries within minutes,
+        followed by a single slow 200, match the address-recovery brute-force phase of the exploit.
+        No rate or measurements.
+    - id: 'REF-TANIUM'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Responding to CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'Tanium'
+      url: 'https://www.tanium.com/blog/php2shell-responding-to-cve-2026-109618-and-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports, as vendor hunt guidance and not a rule, reviewing recent web server and PHP-FPM
+        logs for worker crashes and malformed multipart uploads. No detection or rate.
+    - id: 'REF-GOOGLE'
+      type: 'incident-campaign-secondary-source'
+      title: 'Responding to core PHP vulnerabilities CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'Google Cloud'
+      url: 'https://cloud.google.com/blog/products/identity-security/responding-to-core-php-vulnerabilities-cve-2026-109618-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Managed rules plus a customer-written oversize-content rule; updated 3:30 p.m. PDT 2026-10-21. No crash-cluster detection described.
+    - id: 'REF-CLOUDFLARE'
+      type: 'incident-campaign-secondary-source'
+      title: 'Cloudflare deploys protections against php2shell vulnerability'
+      publisher: 'Cloudflare'
+      url: 'https://blog.cloudflare.com/php-vulnerabilities-waf-protection/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Cited for the exploitation status in the status statement: early attacks seen at the
+        Cloudflare WAF. Attempts against an edge, not compromise of a host.
+    - id: 'REF-KASPERSKY'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: How to Protect Your Server'
+      publisher: 'Kaspersky'
+      url: 'https://www.kaspersky.com/blog/cve-2026-109618-109619-php-vulnerabilities/56583/'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Campaign status: first attempts observed before the patches were published, not described.
+        Reports no compromise.
+    - id: 'REF-RELIAQUEST'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Responding to Critical PHP Vulnerabilities | Threat Spotlight'
+      publisher: 'ReliaQuest'
+      url: 'https://reliaquest.com/blog/threat-spotlight-php2shell-responding-to-critical-php-vulnerabilities/'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Campaign status: has not observed successful exploitation in customer environments; calls
+        in-the-wild reports early and inconsistent, some only probing.
+    - id: 'REF-CALIF'
+      type: 'incident-campaign-secondary-source'
+      title: 'php2shell by Calif Research'
+      publisher: 'Calif'
+      url: 'https://calif.io/php2shell/'
+      trust_tier: 'researcher'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Supports the original researchers' mechanism write-up and disclosure timeline. No logging,
+        monitoring or detection guidance; no compromise or rate.
+    - id: 'REF-PHP2SHELL-SITE'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell — AI uncovers critical vulnerabilities in the backbone of the web'
+      publisher: 'php2shell.com (research disclosure site)'
+      url: 'https://www.php2shell.com/'
+      trust_tier: 'researcher'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        The fixed releases add a hard memory limit that ends the process and prevents shutdown
+        handlers. Does not say attempts against patched hosts fault workers; that is this pack's
+        reading, carried as unverified.
+    - id: 'REF-CORELIGHT-REPO'
+      type: 'detection-modeling-reference'
+      title: 'corelight/php2shell-detect: Zeek and Suricata Detections for "php2shell" CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'Corelight'
+      url: 'https://github.com/corelight/php2shell-detect'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        At commit 4d5131c: nine Zeek PHP2SHELL:: notices (crash sequence, multipart header flood,
+        large form key, serialized-data anomalies, PHP version), Suricata rules 3000650-3000652.
+        Zeek inspects POST bodies only.
+    - id: 'REF-HADRIAN'
+      type: 'incident-campaign-secondary-source'
+      title: 'php2shell: Leaked critical PHP RCEs (CVE-2026-109618, -109619)'
+      publisher: 'Hadrian'
+      url: 'https://hadrian.io/vulnerability-alerts/php2shell-leaked-critical-php-rce-cve-2026-109618-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      citation_caveat: 'contradicted-elsewhere'
+      citation_caveat_note: >-
+        CISA has seen no exploitation, ReliaQuest no successful exploitation; Hadrian reports it at
+        scale, no counts. Vendor claim only; campaign survives without it (Cloudflare, watchTowr,
+        Patchstack report attempts).
+      evidence_use: >-
+        Campaign status: 11:35 UTC update 'We are now seeing php2shell exploited in the wild at
+        scale', mostly via session upload-progress; 14:35 UTC update says exploitation is still
+        ongoing. No counts.
+    - id: 'REF-CISA'
+      type: 'incident-campaign-secondary-source'
+      title: 'Critical Vulnerabilities in PHP Require Immediate Patching'
+      publisher: 'CISA'
+      url: 'https://www.cisa.gov/news-events/alerts/2026/10/21/critical-vulnerabilities-php-require-immediate-patching'
+      trust_tier: 'government'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Campaign status: CISA 'has not observed exploitation of these vulnerabilities as of the time
+        of publication' (2026-10-21). Advises offline for unpatched or PHP 8.1-or-earlier systems.
+        No KEV mention.
+    - id: 'REF-PHP-FPM-CONFIG'
+      type: 'attack-surface-documentation'
+      title: 'PHP: Configuration - FastCGI Process Manager (FPM) - Manual'
+      publisher: 'PHP project (php.net manual)'
+      url: 'https://www.php.net/manual/en/install.fpm.configuration.php'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        pm.max_requests sets how many requests each child runs before respawning; under ondemand,
+        pm.process_idle_timeout kills idle children. Both are routine, not faults.
+    - id: 'REF-PHP-FIX-COMMIT'
+      type: 'attack-surface-documentation'
+      title: 'Avoid state corruption via bailout'
+      publisher: 'PHP project (php-src)'
+      url: 'https://github.com/php/php-src/commit/3584a98bda0f2c0d367255b046798b0d3a221a19'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Fix commit (2026-10-21, 14:06 UTC) replaces the out-of-memory bailout with an unwind exit,
+        resets startup globals, fixes both GHSAs. Does not say what a patched host logs. PR 22113 is
+        not this fix.
+    - id: 'REF-SCHMALBACH'
+      type: 'incident-campaign-secondary-source'
+      title: 'CVE-2026-109618 and CVE-2026-109619: What you should do now'
+      publisher: 'Vincent Schmalbach (personal blog)'
+      url: 'https://www.vincentschmalbach.com/cve-2026-109618-and-cve-2026-109619-what-you-should-do-now/'
+      trust_tier: 'researcher'
+      verification: 'confirmed-with-scope-caveat'
+      citation_caveat: 'partial-use'
+      citation_caveat_note: >-
+        Single personal blog; advisories and vendor writeups do not say non-POST triggers either
+        flaw. Claim does not survive dropping it: carried as unverified; method is a ranking
+        feature, not a filter.
+      evidence_use: >-
+        Only the advice to refuse multipart for all methods, because PHP 8.4 added
+        request_parse_body() parsing multipart for other methods. Shows the advice exists, not that
+        non-POST triggers either flaw.
+    - id: 'REF-ABSTRACT'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Critical PHP RCE Vulnerabilities CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'Abstract Security'
+      url: 'https://www.abstract.security/blog/php2shell-critical-php-rce-vulnerabilities-cve-2026-109618-and-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        ModSecurity and Suricata rules on request-body structure (session id as form field,
+        serialized-object markers, oversized names, header folding, parse failures), two log-only,
+        and a hunt-grade burst rule.
+    - id: 'REF-CYBAVERSE'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Check Exposure and Hunt for Compromise'
+      publisher: 'CybaVerse'
+      url: 'https://www.cybaverse.co.uk/en/php2shell-checker'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Sigma rules 'POST Requests Returning HTTP 500 to PHP Endpoints', 'PHP Memory Exhaustion or
+        FPM Worker Killed by Signal', 'Shell or Recon Tool Spawned by PHP Worker', and five hunts.
+        Rule text read. No compromise.
+    - id: 'REF-TALOS'
+      type: 'incident-campaign-secondary-source'
+      title: 'Two critical RCEs in PHP core'
+      publisher: 'Cisco Talos'
+      url: 'https://blog.talosintelligence.com/two-critical-rces-in-php-core/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports that Snort SIDs 67359, 67360 and 67375 cover these vulnerabilities for subscribers
+        and that free community rules are live through the Community Ruleset. No compromise.
+    - id: 'REF-IMPERVA'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: When PHP Runs Out of Memory at the Wrong Moment'
+      publisher: 'Imperva'
+      url: 'https://www.imperva.com/blog/php2shell-vulnerability-updates/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Pre-disclosure monitoring saw no matching traffic; recommends correlating suspicious requests with memory-exhaustion errors and worker crashes. Single vendor.
+    - id: 'REF-QUALYS'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: PHP Patches Two Critical RCE Vulnerabilities, Urges Immediate Updates'
+      publisher: 'Qualys'
+      url: 'https://blog.qualys.com/vulnerabilities-threat-research/2026/10/20/php-announces-critical-security-release-for-two-vulnerabilities'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        A patched runtime can end a worker at its hard memory threshold, bypassing normal shutdown handlers. Single vendor.
+    - id: 'REF-VULNCHECK'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell Vulnerabilities: CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'VulnCheck'
+      url: 'https://www.vulncheck.com/blog/php2shell-vulnerabilities'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Campaign status: canary-network scans and one unsuccessful session-path webshell attempt on
+        2026-10-21, 17:22-17:24 UTC; no public proof of concept independently bypasses ASLR on x86-64. No
+        compromise.
+    - id: 'REF-REDHAT'
+      type: 'incident-campaign-secondary-source'
+      title: 'CVE-2026-109619'
+      publisher: 'Red Hat'
+      url: 'https://access.redhat.com/security/cve/cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Supports the Red Hat CVSS v3.1 score of 8.1 for CVE-2026-109619 (NVD lists 9.8) with high
+        attack complexity, cited in the campaign summary.
+    - id: 'REF-PRECURSOR'
+      type: 'incident-campaign-secondary-source'
+      title: 'Live Blog: PHP2Shell Critical PHP RCE Vulnerabilities (CVE-2026-109618 & CVE-2026-109619)'
+      publisher: 'Precursor Security'
+      url: 'https://www.precursorsecurity.com/blog/php2shell-critical-php-rce-vulnerabilities'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports the report that multipart requests carry boundary values referencing the CVE
+        identifiers; the original observer is not named. No share of attempts.
