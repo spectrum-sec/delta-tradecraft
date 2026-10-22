@@ -1,0 +1,897 @@
+identity:
+  uuid: '9e14e340-911a-478c-8c93-72a0f3a0f275'
+  id: 'DT-P2S-APP-001'
+  name: 'A PHP worker spawns an unusual child process'
+  incident: >-
+    PHP2Shell (CVE-2026-109618, CVE-2026-109619): two unauthenticated PHP engine RCE flaws,
+    disclosed and patched 2026-10-21. This object is generic post-exploitation shared with every PHP
+    RCE and webshell; no source shows PHP2Shell post-exploitation, so it is expected-behavior
+    coverage.
+  first_observed: '2026-10'
+  last_reviewed: '2026-10-21'
+
+classification:
+  primary_attack_surface: 'application-runtime'
+  secondary_attack_surfaces:
+    - 'host-os'
+  behavior_classes:
+    - 'other'
+  behavior_classes_note: >-
+    web-worker-spawned-child-process: a PHP-hosting process creates a shell, interpreter, downloader or
+    network-utility child. No existing member names this runtime-to-operating-system hand-off.
+  tags:
+    - 'php'
+    - 'php2shell'
+    - 'web-tier'
+    - 'post-exploitation'
+    - 'process-lineage'
+    - 'webshell'
+    - 'inferred'
+
+behavior:
+  definition: >-
+    After gaining code execution in a PHP web worker, an attacker causes the worker to create a shell, scripting
+    interpreter, downloader or network utility as a child process, so that commands run on the host under the
+    web worker account.
+  detailed_definition: >-
+    The adversary already runs code as the web worker account, by any entry route. That code starts
+    a command interpreter, scripting runtime, downloader or network utility, whose command line may
+    carry recon commands or socket and pipe constructs. Code acting only inside the worker creates
+    no child.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers any code running in a PHP worker asking the operating system to start a program; does not cover
+      execution that stays inside the worker process.
+    summary: >-
+      Possible whenever attacker-controlled code runs in a PHP-hosting process that may create
+      children. CrowdStrike reproduced a shell launch from mod_php in lab; no source reports it in an
+      intrusion. Not possible where the OS or hardening blocks process creation.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Observable where a sensor records process creation with parent identity on the web tier. Many Linux web
+      servers run no endpoint sensor and no execve auditing, so the child leaves no queryable record.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          Process creation with parent image and command line is recorded only when an EDR sensor is installed
+          or kernel audit rules for execve are loaded and exported. Neither is on by default.
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          Process telemetry on the web tier, containers, shared-hosting accounts and control-panel bundled PHP
+          varies by estate and is usually uneven across the fleet.
+    summary: >-
+      Observable when a process-creation record names a PHP-hosting parent (php-fpm, php-cgi, web
+      server with in-process PHP, FrankenPHP, lsphp) with child image, command line, user and host.
+      Access logs show requests, not spawns; a crash or 5xx proves nothing about a child; no parent
+      identity, no proof.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Separable when the child falls outside a per-host baseline of what each PHP-hosting parent
+      starts; without a baseline, by shell, interpreter or downloader class and command. Without
+      parent identity only the web account's command line remains, a weaker signal. No-child
+      execution is for siblings.
+    blocking_conditions:
+      - condition: 'environment-inventory-required'
+        note: >-
+          CMS plugins and hosting software legitimately start mail, image, archive and version control tools
+          from PHP workers, so the benign child set must be inventoried per host or application.
+      - condition: 'action-emits-no-record'
+        note: >-
+          In-process execution (file writes, socket connections and evaluated code inside the worker) emits no
+          child-creation record. The file-write and outbound-connection siblings are the cross-checks.
+    summary: >-
+      Separation rests on parent identity, the child against that parent's per-host baseline, and
+      command-line content. A shell, interpreter or downloader child of a web worker is expected to
+      be uncommon on a clean host (pack inference, unmeasured). A known plugin helper is not
+      suspicious; a tool name alone is not enough.
+
+attack_surface_context:
+  surface: >-
+    PHP request-serving processes on Linux and Windows web servers: php-fpm pools behind a web frontend, php-cgi
+    and lsphp, web server processes with the engine loaded in-process, and FrankenPHP.
+  how_the_surface_works: >-
+    A web server hands each request to a PHP worker: a web server child with the engine in-process (mod_php),
+    or a long-lived pool over a FastCGI-style socket, running as a low-privilege account. Applications start
+    OS programs for image, mail and archive tasks, so a worker has a small stable child set per host.
+  incident_processing_path: >-
+    Source-attested: unauthenticated code execution as the web worker account. Lab only: Wiz,
+    CrowdStrike (one request launching a shell from mod_php). Huntress, endorsing Florian Roth's
+    prediction, expects suspicious PHP child processes. Pack inference: intruders would use a child.
+  processing_stages:
+    - 'worker-code-execution-achieved'
+    - 'command-function-reached'
+    - 'child-process-creation'
+    - 'interpreter-or-utility-start'
+    - 'command-line-execution'
+    - 'host-level-effect'
+  stage_evidence: >-
+    A process-creation event proves a child was created by a named parent, not how the parent was compromised.
+    Command-line content proves what was asked, not whether it succeeded. A later network or file event proves a
+    consequence only if lineage links it to the same child.
+  trust_boundaries: >-
+    Worker to OS process namespace: reached only if a child is created; shown in lab by CrowdStrike,
+    not in an intrusion; expected from PHP RCE tradecraft (inferred). Worker account to broader privilege: not reached,
+    the child inherits the account. Container and sandbox boundaries may block the hand-off; unverified.
+  security_control_context: >-
+    Controls that decide the outcome: MAC or seccomp profiles denying process creation, read-only
+    filesystems, EDR shell-from-web-worker rules. Disabling execution functions blocks
+    webshell-style PHP calls; not shown to stop native code from an engine exploit (unverified).
+    Bypass: an in-worker payload with no child.
+  practitioner_implication: >-
+    Before alerting, discover which web hosts run an endpoint sensor or execve auditing, which executables count
+    as PHP-hosting parents (including control-panel bundled PHP, containers and Windows FastCGI hosts), and what
+    each application legitimately spawns. Build the baseline per host group.
+
+threat_research:
+  why_it_matters: >-
+    A child process is where web-tier code execution becomes host-level activity such as reconnaissance, payload
+    fetch and persistence. It is visible regardless of the vulnerability, tool or payload, so on the disclosure
+    day it is one of the few signals that does not depend on knowing the exploit.
+  threat_actor: >-
+    Unknown. No source attributes PHP2Shell activity to a named actor.
+  campaign: >-
+    PHP2Shell (CVE-2026-109618 and CVE-2026-109619), status as of 2026-10-21. Wiz and CrowdStrike
+    have demonstrated unauthenticated remote code execution in lab conditions, CrowdStrike end to
+    end on Apache mod_php, and the PHP advisory for CVE-2026-109619 validates its session path
+    against both mod_php and PHP-FPM. Exploitation attempts are reported by Cloudflare, watchTowr,
+    Patchstack (a 07:34 UTC entry relays active exploitation incidents from hosting partners; a
+    13:57 UTC entry describes only probing), Kaspersky (attempts before the patch), Hadrian
+    (exploitation at scale, with no counts) and VulnCheck (canary scans and at least one session-path webshell attempt on 21 October, 17:22-17:24 UTC, whose ten follow-up reads all returned 404). No source documents a confirmed compromise: CISA has not observed exploitation,
+    ReliaQuest has not seen successful exploitation in customer environments, and Tanium reported on
+    21 October that neither CVE was in the CISA KEV catalog. Red Hat rates CVE-2026-109619 CVSS 3.1
+    8.1 for high attack complexity, while Red Hat's page lists NVD's score as 9.8. VulnCheck reports that none of the public
+    proofs of concept it reviewed independently bypasses ASLR on x86-64, and that exploitation works
+    on ARM64 and on x86 without ASLR.
+  victim: >-
+    No victim is documented for post-exploitation. Exposed class: internet-facing PHP web servers running
+    affected builds.
+  capability: >-
+    Shell launch demonstrated in lab by CrowdStrike; not documented in an intrusion. Huntress,
+    endorsing Florian Roth's prediction, expects suspicious child processes from PHP after exploitation.
+  target: >-
+    PHP-hosting processes and the host operating system beneath them. Reachability depends on serving model,
+    hardening profile and estate telemetry.
+  victimology:
+    - 'Internet-facing PHP applications: WordPress, Drupal, Joomla and custom code.'
+    - 'Shared hosting and control-panel hosts with bundled PHP builds, which may be slow to patch (pack inference).'
+    - 'Container images that embed a PHP runtime and may keep it past the vendor fix (pack inference).'
+  framework_mappings:
+    - framework: 'MITRE ATT&CK'
+      id: 'T1190'
+      name: 'Exploit Public-Facing Application'
+      evidence: >-
+        The precondition, not the behavior itself: the advisories describe unauthenticated engine flaws
+        reachable through ordinary requests. The child-process step follows initial access.
+    - framework: 'MITRE ATT&CK'
+      id: 'T1059'
+      name: 'Command and Scripting Interpreter'
+      evidence: >-
+        A shell or interpreter child of a web worker is command and scripting interpreter use. The mapping is by
+        general technique; no source shows PHP2Shell using it.
+
+visibility:
+  telemetry_sources:
+    - source: 'Endpoint detection and response process-creation events'
+      purpose: >-
+        Record that a PHP-hosting parent created a child, with the child image, command line and user, so the
+        lineage condition can be evaluated.
+      event_vocabulary: 'host-process-event'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'parent process image or path'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+          note: >-
+            Believed to be emitted by endpoint sensors with a process tree; spelling is product-specific and no
+            documentation is cited here.
+        - name: 'child process image and command line'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+          note: 'Command-line capture can be disabled or truncated by sensor policy.'
+        - name: 'user or account of the child'
+          attestation: 'unattested-inferred'
+          load_bearing: false
+        - name: 'host identifier'
+          attestation: 'unattested-inferred'
+          load_bearing: false
+      details: >-
+        Process-start events from an installed sensor carry the parent chain, child, command line and account.
+        They are the most direct record of the hand-off and, on most Linux hosts, the only one that names both
+        ends in one event.
+      limitations:
+        - 'Many Linux web servers run no endpoint sensor, so no record exists for them.'
+        - 'A sensor may normalise away the full parent chain, hiding a worker behind a supervisor.'
+        - 'Command lines can be truncated or redacted by policy.'
+        - 'Execution inside the worker process creates no process-start event.'
+    - source: 'Linux kernel audit execve records'
+      purpose: >-
+        Provide process-creation evidence on hosts with no endpoint sensor, from audit rules on the exec system
+        calls.
+      event_vocabulary: 'kernel-audit'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'execve arguments and parent process id'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+          note: >-
+            Believed to be emitted when audit rules for exec are loaded; the parent is a numeric pid that must
+            be resolved to an image by a join, and pids are reused.
+        - name: 'auid, uid and executable path'
+          attestation: 'unattested-inferred'
+          load_bearing: false
+      details: >-
+        With exec audit rules loaded and forwarded, each program start yields a record with the arguments,
+        account and parent process id. Resolving the parent to the PHP-hosting image needs a process-accounting
+        join or a second record.
+      limitations:
+        - 'Audit rules must be written, loaded and forwarded, and volume on busy hosts is high.'
+        - >-
+          The parent is a pid, so attribution to a worker image needs a join and can be wrong after pid reuse.
+        - 'Argument records may be split or truncated across multiple lines.'
+    - source: 'Container runtime security and orchestrator process events'
+      purpose: >-
+        Cover PHP workers running in containers, where the host sensor may not see inside and the container
+        image defines the baseline.
+      event_vocabulary: 'host-process-event'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      details: >-
+        A runtime security sensor or eBPF agent reports process starts inside containers with container and pod
+        identity, which makes a per-image baseline of PHP children feasible.
+      limitations:
+        - >-
+          Only present where a runtime sensor is deployed; the Kubernetes audit log records API calls such as
+          pods/exec, not process starts inside a container.
+        - 'Short-lived pods can exit before investigation, losing the surrounding context.'
+        - 'Sidecar and init processes complicate which process counts as the PHP parent.'
+    - source: 'Windows process-creation events for IIS and FastCGI PHP hosts'
+      purpose: >-
+        Cover Windows web tiers where php-cgi runs under the IIS worker and children inherit that lineage.
+      event_vocabulary: 'host-process-event'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      details: >-
+        Process-creation auditing or a system monitor records parent image, child, command line and user.
+        ReliaQuest lists w3wp.exe among parents whose shell or interpreter children to alert
+        on and names certutil among download utilities; the IIS worker is a candidate parent, not observed
+        PHP2Shell behavior.
+      limitations:
+        - >-
+          Command-line capture in process-creation auditing is a separate policy that is off by default.
+        - >-
+          Lineage may pass through a FastCGI handler, and the PHP parent image name differs by host.
+    - source: 'Per-host baseline of children by PHP-hosting parent'
+      purpose: >-
+        Define the normal child set of each worker class so that a shell, interpreter or downloader outside it
+        can be separated from plugin helpers.
+      event_vocabulary: 'none'
+      tier: 'not-applicable'
+      operational_viability: 'first-party-build'
+      details: >-
+        A computed table, built from the process-creation stream over a clean window, of the child images and
+        command-line shapes each PHP-hosting parent starts on a host or host group.
+      limitations:
+        - >-
+          Must be seeded from a window known to be clean; seeding from an affected window enrols the attack as
+          normal.
+        - 'Application updates and new plugins change the baseline and force a rebuild.'
+    - source: 'Web server access and error logs'
+      purpose: >-
+        Corroborate the request activity around a spawn, without being able to prove the spawn.
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'on-by-default'
+      details: >-
+        Access logs record URI, method, status, size and client for requests near the time of the child
+        creation; error logs may hold PHP warnings.
+      limitations:
+        - 'Records requests, not process starts, so it cannot establish the child.'
+        - 'Request bodies and the triggering parameter are not logged by default.'
+        - 'Attribution of a spawn to one request is a timing inference.'
+
+detection:
+  scope: >-
+    Child-process hand-off from a PHP-hosting parent to a shell, interpreter, downloader or network utility.
+    Two strategies: lineage against a per-host child baseline and, where lineage is absent, command line
+    alone. In-worker execution with no child is covered by the file-write and outbound-connection siblings.
+  outcome_guardrails: >-
+    A request proves a request. A child proves a program start by the worker, not how it was compromised. A
+    command line proves what was asked, not success or intent. A later connection or file write is a
+    consequence only if lineage links it. A firing rule proves unusual worker activity, not exploitation of
+    either CVE.
+  shared_normalization_context: >-
+    Normalise the parent to a PHP-hosting class (php-fpm, php-cgi, lsphp, FrankenPHP, in-process PHP,
+    or the PHP CLI serving requests via -S or a worker server) across OS, container and versioned names;
+    nginx is not one. Normalise the child by image, class and command-line shape; judge a shell by its
+    command and children.
+  shared_enrichment_context: >-
+    Join deploy and plugin-update history, worker user and pool configuration, and access-log
+    requests just before the spawn. A thirty-day baseline helps; a first-seen shell child of a web
+    worker is meaningful without one. DT-P2S-APP-007 or DT-P2S-APP-008 records from the same host
+    beforehand raise confidence.
+  strategies:
+    - id: 'STRAT-WORKER-CHILD-LINEAGE-BASELINE'
+      name: 'PHP-hosting parent to child outside the per-host baseline'
+      objective: >-
+        Detect a PHP-hosting process creating a shell, interpreter, downloader or network-utility child that is
+        not part of that host's normal child set.
+      incident_relevance: >-
+        Detects a possible consequence of any PHP RCE, PHP2Shell included. It does not detect the exploit
+        request.
+      detection_logic: >-
+        Alert when process-creation telemetry with parent identity shows a PHP-hosting parent creating a shell,
+        interpreter, downloader or network-utility child that is absent from the baseline of that parent on that
+        host or host group. Raise severity when the command line carries a socket, named-pipe or
+        reverse-connection construct, or reconnaissance commands run in sequence. Normalise parent and child
+        before comparing. Treat a child matching a baselined helper by image and command-line shape as
+        non-alerting. A shell image is never baselined alone; compare its command and children, as PHP string
+        commands start a shell. Re-evaluate the baseline after each deploy or plugin update window.
+      minimum_evidence: >-
+        One process-creation record naming a PHP-hosting parent, the child image, the user and the host, with
+        the child outside the baseline. Without the command line, report an unusual child of a web worker, not a
+        suspected shell or payload fetch.
+      correlation_context: >-
+        Key on host and parent process identity. Where the web access log is joined, look back sixty seconds for
+        POSTs from one client; this is an inferred timing association, not proof the request caused the spawn.
+        Baseline lookups need the host group, so ingestion delay must not split a record from its baseline
+        refresh.
+      detectors:
+        - detector_class: 'endpoint-process-lineage-rule'
+          technologies:
+            - 'EDR with process-tree detection'
+            - 'Microsoft Defender for Endpoint advanced hunting'
+            - 'CrowdStrike Falcon'
+            - 'Elastic Defend'
+            - 'Huntress managed EDR'
+            - 'Wiz Sensor'
+          contribution: >-
+            Evaluates parent and child directly on the sensor or in the SIEM and can block the child by policy.
+          limitations: >-
+            Requires an installed sensor; many Linux web servers have none. The baseline exclusion list is a
+            tuning surface that can hide an attack.
+        - detector_class: 'host-process-telemetry-correlation'
+          technologies:
+            - 'auditd with a SIEM forwarder'
+            - 'Sysmon for Linux'
+            - 'osquery'
+            - 'Wazuh'
+            - 'Falco'
+            - 'Splunk'
+            - 'Elastic'
+            - 'Google SecOps'
+          contribution: >-
+            Provides process-start evidence where no sensor exists, with the parent resolved by a join.
+          limitations: >-
+            Parent attribution depends on pid joins and can be wrong after pid reuse; volume is
+            high. Content gaps: Splunk "Web or Application Server Spawning a Shell" lists no PHP
+            parent on Linux (Windows lists php*.exe); SigmaHQ 818f7b24 matches recon-command
+            children; SigmaHQ c0d3734d needs auditd on euid 33.
+      benign_explanations:
+        - explanation: >-
+            CMS plugins and web applications start mail, image, archive, PDF and version-control tools from PHP
+            workers as part of normal operation.
+          distinguishing_context: >-
+            The helper appears in the host's baseline and its command line matches the known application pattern;
+            a shell or downloader with a socket construct does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding all children of a worker or all children under a CMS path would hide an attacker who
+            chooses a tool in the application's own set.
+        - explanation: >-
+            Administrators run a diagnostic shell or script through a PHP-based control panel.
+          distinguishing_context: >-
+            An authenticated administrator session and a change ticket exist for the host in the same window.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Suppressing the control-panel parent excludes the worker an attacker would also use.
+      forbidden_exclusions:
+        - field: 'child image name or single command string as an allow-list'
+          reason: >-
+            Adversary-settable: the attacker chooses the tool, and a name allow-list is defeated by using an
+            allowed name or a renamed copy.
+        - field: 'parent worker path or document root as an allow-list'
+          reason: >-
+            Excluding a worker class or web root suppresses the exact lineage an intrusion produces, since the
+            attacker runs as that worker.
+        - field: 'requesting client address or user agent'
+          reason: >-
+            Adversary-settable and rotating; the attacker request is not the signal and is often absent from the
+            record that proves the spawn.
+        - field: 'the vulnerability or tool name in the command line'
+          reason: >-
+            Free to change; keying on a name makes the rule miss every variant.
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: >-
+          No source states a rate and no exercise has measured one. Volume depends on how much of the fleet runs
+          workers that legitimately start helper programs, so it varies by estate.
+      blind_spots:
+        - description: >-
+            Evasion: file writes made inside the worker, with no child, are invisible to this strategy.
+          routes_to: 'DT-P2S-HOST-002'
+        - description: >-
+            Evasion: sockets opened and outbound connections made from the worker itself, with no child, do
+            not appear as a spawn.
+          routes_to: 'DT-P2S-APP-004'
+        - description: >-
+            Evasion: pure in-memory evaluation of code in PHP, with no file, socket or child, is invisible to
+            this strategy and no sibling object covers it.
+          routes_to: null
+        - description: >-
+            Missing telemetry: hosts with no endpoint sensor or exec auditing record nothing.
+          routes_to: null
+        - description: >-
+            Evasion: a child that matches a baselined helper, or a baseline seeded during an affected window,
+            hides the spawn.
+          routes_to: null
+      analyst_response: >-
+        Identify the host, worker pool and child with full command line; walk the process tree up to the
+        worker and down to descendants. Pull preceding access logs; check plugin or deploy changes, file
+        writes, outbound connections, scheduler or account changes, PHP build state. Preserve the process
+        record before recycling.
+      safe_conclusion: >-
+        A PHP-hosting process created a child outside its host baseline; whether that is attacker activity, and
+        how the worker was compromised, needs the surrounding evidence.
+    - id: 'STRAT-WORKER-CHILD-CMDLINE-WITHOUT-LINEAGE'
+      name: 'Web-tier shell or downloader command lines without parent lineage'
+      objective: >-
+        Detect shell, downloader or socket-construct command lines on web-tier hosts when the record carries no
+        parent identity.
+      incident_relevance: >-
+        Detects a possible consequence of PHP RCE on hosts whose telemetry lacks lineage. It is weaker than the
+        lineage strategy and does not distinguish a web worker child from an administrator session.
+      detection_logic: >-
+        On hosts classified as web tier, alert on execution of a command line that combines a shell or
+        interpreter with a socket, named-pipe or reverse-connection construct, or a downloader fetching a script
+        to a writable path, when the account is the web worker account. Use the executing account as the proxy
+        for lineage. Report as a lower-fidelity risk signal, never as a confirmed worker spawn.
+      minimum_evidence: >-
+        One execution record on a web-tier host by the web worker account carrying the command-line construct.
+        The account is the only lineage evidence, so the claim is limited to that account running the command.
+      correlation_context: >-
+        Key on host and account. A thirty-second join to the access log can add candidate requests but remains
+        an inferred association.
+      detectors:
+        - detector_class: 'command-line-content-rule'
+          technologies:
+            - 'Splunk'
+            - 'Elastic'
+            - 'Microsoft Sentinel'
+            - 'Google SecOps'
+          contribution: >-
+            Matches execution records on the web tier by account and command-line shape.
+          limitations: >-
+            No lineage, so shared accounts and administrators produce overlap; a renamed tool or an obfuscated
+            command line evades it.
+      benign_explanations:
+        - explanation: >-
+            Deployment, backup and monitoring scripts run under the web account and use shells and downloaders.
+          distinguishing_context: >-
+            The invocation matches a scheduled or deployment job known to the host and runs from a fixed parent
+            such as the scheduler.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding the web account or the host class outright removes the signal.
+      forbidden_exclusions:
+        - field: 'a fixed tool name or the PHP2Shell name'
+          reason: >-
+            Adversary-settable and free to rotate; the attacker picks the tool and the construct.
+        - field: 'web account as a blanket exclusion'
+          reason: >-
+            The attacker runs as the web account, so excluding it suppresses the incident record.
+      blind_spots:
+        - description: >-
+            Attribution limit: the account is not the worker, so an administrator using the same account is
+            indistinguishable without lineage.
+          routes_to: null
+        - description: >-
+            Evasion: split or encoded command lines and renamed tools evade pattern matching.
+          routes_to: null
+        - description: >-
+            Evasion: in-process file writes create no command line at all.
+          routes_to: 'DT-P2S-HOST-002'
+        - description: >-
+            Evasion: in-process sockets create no command line at all.
+          routes_to: 'DT-P2S-APP-004'
+        - description: >-
+            Evasion: pure in-memory evaluation of code, with no file, socket or child, creates no command
+            line at all.
+          routes_to: null
+      analyst_response: >-
+        Establish whether a worker or an administrator ran the command by pulling session and parent records
+        from any other source on the host. Check the command line for socket or pipe constructs and fetched
+        scripts, and look for file writes and outbound connections from the same account in the same window.
+      safe_conclusion: >-
+        The web account executed a command line of a shell or downloader shape; whether a PHP worker created it
+        is not established without lineage.
+
+detector_requirements:
+  required: >-
+    Lineage rule: process-creation telemetry with parent identity, or execve audit with a parent
+    join; normalised parent and child classes; a clean-window baseline (until built, the
+    no-baseline fallback). Command-line rule: account and command line. Name a worker spawn only
+    with lineage.
+  optional: >-
+    Deploy and plugin-update history to retire benign helpers, and access-log joins for candidate triggering
+    requests. Neither gates the core lineage rule.
+  correlation:
+    capability: >-
+      Stable host and process identifiers across process, file and network records so descendants of one worker
+      can be followed; parent resolution robust to pid reuse; and synchronised clocks between the sensor and the
+      web logs.
+    window: >-
+      Sixty seconds back to the access log for candidate requests; process-lineage joins are exact on the sensor
+      identifiers and inferred on pids.
+  baselines:
+    - name: 'Children per PHP-hosting parent per host or host group'
+      window: '30-day rolling'
+      seeded_from: >-
+        Process-creation records from a window known to be clean and covering normal plugin and batch activity;
+        never seeded from a window that contains the suspected intrusion or from the alerts themselves, which
+        would enrol the attack child as normal.
+  product_support_caveat: >-
+    A named product is only a candidate; support depends on sensors, logging and fields. Mapped
+    rules detect shells from web workers generically, not PHP2Shell. CrowdStrike states generic
+    coverage without rule names; Kaspersky and Google name products with no rule text read. Per-rule
+    gaps are under evidence references.
+
+missing_context:
+  unverified:
+    - >-
+      Whether any in-the-wild PHP2Shell intrusion has used a child process; only a lab demonstration (CrowdStrike,
+      2026-10-21) is reported, no post-exploitation.
+    - >-
+      The exact process-start field names and parent-chain depth of each endpoint product on PHP hosts.
+    - >-
+      Which PHP-hosting parent images appear on Windows FastCGI and container deployments in a given estate.
+    - >-
+      The proportion of internet-facing Linux web servers that run an endpoint sensor or exec auditing.
+  assumptions:
+    - id: 'ASSUMPTION-CHILD-PROCESS-EXPECTED'
+      verdict_changing: true
+      statement: >-
+        That PHP2Shell post-exploitation would create a worker child (Huntress expects this;
+        CrowdStrike showed it in lab; no intrusion report). If wrong, the signal still catches webshells
+        and other PHP RCE but not in-process intrusions. Resolve it by a published post-exploitation
+        report or an instrumented reproduction.
+    - id: 'ASSUMPTION-BASELINE-STABILITY'
+      verdict_changing: false
+      statement: >-
+        That a per-host child baseline stays stable over thirty days; no source measures PHP worker child
+        sets. If wrong, the rule is noisy on update-heavy hosts but the verdict holds; change the window or
+        grouping. Resolve by baselining sample production hosts and counting new children per host per week.
+  standing_negatives:
+    - statement: >-
+        No source reviewed on 2026-10-21 reports PHP2Shell post-exploitation, production
+        compromise or intrusion child process (CrowdStrike: lab only). Bounded by Patchstack's unreconciled 07:34 UTC (incidents
+        from hosting partners) and 13:57 UTC (probing only) entries. Checked: PHP advisories,
+        Huntress, watchTowr, Cloudflare.
+      ref: 'REF-WATCHTOWR'
+      valid_until: '2026-10-28'
+      recheck: >-
+        Re-check the CISA KEV catalog for either CVE, the watchTowr PHP2Shell page and the Patchstack live
+        timeline (including any reconciliation of its 07:34 and 13:57 UTC entries) for a post-exploitation
+        report that names a child process.
+
+missing_states:
+  - id: 'MISSING_PROCESS_LINEAGE_TELEMETRY'
+    meaning: >-
+      Missing telemetry: the web tier has no endpoint sensor or exec auditing, so no process-creation record
+      exists.
+    coverage_claim: 'no-coverage'
+    response: >-
+      Report no coverage for the spawn behavior on those hosts and rely on the file-write and
+      outbound-connection siblings or on web-log pivots; do not state that the host is clean.
+  - id: 'MISSING_PARENT_IDENTITY'
+    meaning: >-
+      Missing telemetry: the record carries the child but not the parent image, or only a pid that cannot be
+      resolved.
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Apply the command-line strategy with the account as lineage proxy and label the result as a web-account
+      execution, not a worker spawn.
+  - id: 'MISSING_IN_PROCESS_EXECUTION_RECORD'
+    meaning: >-
+      Analyst trap: a clean process-creation stream is read as proof of no compromise, though in-process
+      execution emits no child record.
+    coverage_claim: 'coverage-limited'
+    response: >-
+      State that the absence of a child proves nothing about in-process activity, and check the file-write and
+      outbound-connection signals before concluding.
+  - id: 'MISSING_CHILD_BASELINE'
+    meaning: >-
+      Missing context: no clean baseline of the host's worker children exists.
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Alert on any shell, interpreter, downloader or network-utility child, judging a shell by its command and
+      children; a socket construct or reconnaissance sequence raises severity. Build the baseline from a clean
+      window.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'actor_or_explicit_missing_state'
+    - 'host_and_worker_pool_identity'
+    - 'parent_process_identity_and_lineage_source'
+    - 'child_image_and_command_line'
+    - 'baseline_comparison_result_or_missing_baseline_state'
+    - 'web_account_and_privilege_context'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'candidate_triggering_requests'
+      condition: 'when web access logs for the host are joined within the sixty-second look-back'
+    - field: 'descendant_file_and_network_activity'
+      condition: 'when the same lineage produced file or connection records after the spawn'
+  recommended_title: 'PHP worker created an unusual child process outside its host baseline'
+  unsupported_title: 'PHP2Shell exploitation confirmed on web server'
+
+evidence:
+  confirmed_incident_behavior: >-
+    Advisories confirm two unauthenticated flaws running code as the web worker account. No source documents
+    post-exploitation. CrowdStrike and Wiz are lab demonstrations, and CrowdStrike's demonstration launched a shell from
+    mod_php. A child in a real intrusion is this pack's inference; not PHP2Shell coverage.
+  supported_conclusion: >-
+    Code in a PHP worker can start operating system programs; a child of a web worker is expected to be
+    uncommon (pack inference, unmeasured); a lineage rule against a per-host baseline can emit it. This supports reporting an unusual child of a web worker, not an exploited vulnerability.
+  unsupported_conclusions: >-
+    Not established: that PHP2Shell has been exploited successfully, that any intrusion has used a child
+    process, any actor, tooling or payload, or that a clean process stream means a host is safe. In-process
+    execution is not covered.
+  procedure_boundary: >-
+    This procedure is child-process creation by a PHP-hosting parent. File-write (DT-P2S-HOST-002),
+    configuration-override (DT-P2S-HOST-003) and outbound connection (DT-P2S-APP-004) are sibling steps with
+    or without a child; the entry exploit request is separate. A later step succeeding is not evidence this
+    one occurred.
+  references:
+    - id: 'REF-GHSA-109618'
+      type: 'attack-surface-documentation'
+      title: 'RCE via OOM corruption'
+      publisher: 'PHP project (php-src security advisories)'
+      url: 'https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports that the flaw lets unauthenticated requests run code as the web worker account and that no
+        complete interim measure exists. No post-exploitation behavior.
+    - id: 'REF-GHSA-109619'
+      type: 'attack-surface-documentation'
+      title: 'RCE via stale global state'
+      publisher: 'PHP project (php-src security advisories)'
+      url: 'https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports the several separate paths, the statement that clean logs do not prove a host is safe, and
+        execution as the web worker account. No post-exploitation behavior or child-process use.
+    - id: 'REF-HUNTRESS'
+      type: 'incident-campaign-secondary-source'
+      title: 'Rapid Response: php2shell, Leaked Critical PHP Vulnerabilities (CVE-2026-109618 & CVE-2026-109619)'
+      publisher: 'Huntress'
+      url: 'https://huntress.com/blog/php2shell-leaked-critical-php-vulnerabilities'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Huntress, endorsing Florian Roth's prediction, expects suspicious PHP child processes; points to his
+        free process-watcher. Advises checking webshells, files, cron, tasks, accounts.
+    - id: 'REF-WATCHTOWR'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: PHP Remote Code Execution Exploited'
+      publisher: 'watchTowr'
+      url: 'https://watchtowr.com/intelligence/php-remote-code-execution-php2shell/'
+      trust_tier: 'researcher'
+      verification: 'confirmed'
+      evidence_use: >-
+        watchTowr's 14:19 UTC 2026-10-21 report of active exploitation attempts against both flaws; describes
+        no post-exploitation, anchoring the standing negative.
+    - id: 'REF-WIZ'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: AI uncovers critical RCE vulnerabilities affecting 70% of the Internet'
+      publisher: 'Wiz Research'
+      url: 'https://www.wiz.io/blog/php2shell-php-rce'
+      trust_tier: 'researcher'
+      verification: 'confirmed'
+      evidence_use: >-
+        Demonstration of unauthenticated code execution on WordPress, Drupal and Joomla containers; no child
+        process, not in the wild. Its CVE-to-bug-class table differs from the advisories, so not used for
+        mapping.
+    - id: 'REF-CROWDSTRIKE'
+      type: 'incident-campaign-secondary-source'
+      title: 'CrowdStrike Protects Customers from Threats Delivered via PHP2Shell'
+      publisher: 'CrowdStrike'
+      url: 'https://www.crowdstrike.com/en-us/blog/crowdstrike-protects-customers-from-php-rce-zero-days/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        In CrowdStrike's own testing, one anonymous POST produced a shell on mod_php; says existing
+        IOAs cover child-process activity, no rule named. Not in the wild.
+    - id: 'REF-FALCO-RULES'
+      type: 'detection-modeling-reference'
+      title: 'Falco rules repository (rules directory)'
+      publisher: 'Falco project (falcosecurity/rules)'
+      url: 'https://github.com/falcosecurity/rules/tree/main/rules'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Sandbox rules (not loaded by default) list php-fpm, php-cgi and php parents. Stable rule: shell
+        descendants of nginx, httpd, httpd-foregroun, lighttpd, apache, apache2 only; no php-fpm or php-cgi parent.
+    - id: 'REF-PATCHSTACK-PHP'
+      type: 'incident-campaign-secondary-source'
+      title: 'Major security alert: PHP vulnerable to critical RCE, attacks ongoing'
+      publisher: 'Patchstack'
+      url: 'https://patchstack.com/articles/php-major-vulnerability-alert-10-2026/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Unreconciled entries bounding the standing negative: 07:34 UTC relays active exploitation incidents
+        from hosting partners; 13:57 UTC describes only probing. No post-exploitation or confirmed compromise.
+    - id: 'REF-TANIUM'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Responding to CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'Tanium Guardian Research Team'
+      url: 'https://www.tanium.com/blog/php2shell-responding-to-cve-2026-109618-and-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Per Tanium's 14:04 UTC timeline entry, neither CVE was in CISA KEV; relays watchTowr
+        honeypot exploitation and, via Tenable, Cloudflare early attacks; no public IOCs released.
+    - id: 'REF-CLOUDFLARE'
+      type: 'incident-campaign-secondary-source'
+      title: 'Cloudflare deploys protections against php2shell vulnerability'
+      publisher: 'Cloudflare'
+      url: 'https://blog.cloudflare.com/php-vulnerabilities-waf-protection/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Campaign status: Cloudflare observed attack traffic targeting its customers; edge attempts, not host
+        compromise.
+    - id: 'REF-KASPERSKY'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: How to Protect Your Server'
+      publisher: 'Kaspersky'
+      url: 'https://www.kaspersky.com/blog/cve-2026-109618-109619-php-vulnerabilities/56583/'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Campaign status: first exploitation attempts seen before patches, undescribed, no compromise reported.
+        NEXT EDR Expert said to detect exploitation attempts on Linux and Windows; no rule read.
+    - id: 'REF-RELIAQUEST'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Responding to Critical PHP Vulnerabilities | Threat Spotlight'
+      publisher: 'ReliaQuest'
+      url: 'https://reliaquest.com/blog/threat-spotlight-php2shell-responding-to-critical-php-vulnerabilities/'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Status: no successful exploitation observed in customer environments; reports early, inconsistent,
+        some probing only. Lists w3wp.exe among parents whose cmd.exe or PowerShell children to alert on;
+        names certutil.
+    - id: 'REF-GOOGLE'
+      type: 'incident-campaign-secondary-source'
+      title: 'Responding to core PHP vulnerabilities CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'Google Cloud'
+      url: 'https://cloud.google.com/blog/products/identity-security/responding-to-core-php-vulnerabilities-cve-2026-109618-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Names Security Command Center container threat detection for GKE and Cloud Run threat detection as
+        intrusion monitoring. Does not describe what either detects for this behavior.
+    - id: 'REF-HADRIAN'
+      type: 'incident-campaign-secondary-source'
+      title: 'php2shell: Leaked critical PHP RCEs (CVE-2026-109618, -109619)'
+      publisher: 'Hadrian'
+      url: 'https://hadrian.io/vulnerability-alerts/php2shell-leaked-critical-php-rce-cve-2026-109618-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      citation_caveat: 'contradicted-elsewhere'
+      citation_caveat_note: >-
+        CISA and ReliaQuest observed no (successful) exploitation; Hadrian claims it at scale, no counts.
+        Vendor claim only; the campaign survives without it (Cloudflare, watchTowr, Patchstack report
+        attempts).
+      evidence_use: >-
+        Campaign status: 11:35 UTC update says exploited at scale, mostly via the session upload-progress
+        path; 14:35 UTC repeats it. No counts or indicators. Advises treating a PHP worker that starts a shell
+        as compromise.
+    - id: 'REF-CISA'
+      type: 'incident-campaign-secondary-source'
+      title: 'Critical Vulnerabilities in PHP Require Immediate Patching'
+      publisher: 'CISA'
+      url: 'https://www.cisa.gov/news-events/alerts/2026/10/21/critical-vulnerabilities-php-require-immediate-patching'
+      trust_tier: 'government'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Campaign status: CISA "has not observed exploitation of these vulnerabilities as of the time of
+        publication" (2026-10-21). Advises watching for PHP workers launching shells. KEV statement rests on
+        Tanium.
+    - id: 'REF-CYBAVERSE'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Check Exposure and Hunt for Compromise'
+      publisher: 'CybaVerse'
+      url: 'https://www.cybaverse.co.uk/en/php2shell-checker'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Three Sigma rules (POST 500s to PHP endpoints; memory exhaustion or FPM worker killed; "Shell or Recon
+        Tool Spawned by PHP Worker") and five hunts. The shell rule matches parents by substring, omits
+        FrankenPHP.
+    - id: 'REF-VULNCHECK'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell Vulnerabilities: CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'VulnCheck'
+      url: 'https://www.vulncheck.com/blog/php2shell-vulnerabilities'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Canary-network observations: one session-path webshell attempt (17:22-17:24 UTC) whose
+        follow-up reads all returned 404; no reviewed PoC bypasses ASLR on x86-64 (works on ARM64,
+        x86 without ASLR). No post-exploitation.
+    - id: 'REF-REDHAT'
+      type: 'incident-campaign-secondary-source'
+      title: 'CVE-2026-109619'
+      publisher: 'Red Hat'
+      url: 'https://access.redhat.com/security/cve/cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Supports the Red Hat CVSS v3.1 score of 8.1 with high attack complexity for CVE-2026-109619 (NVD lists
+        9.8).
+    - id: 'REF-SPLUNK-WEBSHELL'
+      type: 'detection-modeling-reference'
+      title: 'Web or Application Server Spawning a Shell'
+      publisher: 'Splunk (splunk/security_content)'
+      url: 'https://github.com/splunk/security_content/blob/develop/detections/endpoint/web_or_application_server_spawning_a_shell.yml'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports that the Linux parent list names java, tomcat*, httpd, lighttpd, apache2, nginx, node and caddy
+        and no PHP-FPM parent, while the Windows branch lists php*.exe.
+    - id: 'REF-SIGMA-WEBSHELL'
+      type: 'detection-modeling-reference'
+      title: 'Linux Webshell Indicators'
+      publisher: 'SigmaHQ'
+      url: 'https://github.com/SigmaHQ/sigma/blob/master/rules/linux/process_creation/proc_creation_lnx_webshell_detection.yml'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Matches recon-command children (whoami, ifconfig, uname, cat, crontab and others) of httpd,
+        lighttpd, nginx, apache2, node, caddy parents; no PHP-FPM or CGI parent.
+    - id: 'REF-SIGMA-AUDITD-WEB-RCE'
+      type: 'detection-modeling-reference'
+      title: 'Webshell Remote Command Execution'
+      publisher: 'SigmaHQ'
+      url: 'https://github.com/SigmaHQ/sigma/blob/master/rules/linux/auditd/syscall/lnx_auditd_web_rce.yml'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports that the rule requires auditd execve rules scoped to the web server user id (euid 33 by
+        default).
+    - id: 'REF-ELASTIC-SUSPICIOUS-CHILD'
+      type: 'detection-modeling-reference'
+      title: 'Suspicious Child Execution via Web Server'
+      publisher: 'Elastic (elastic/detection-rules)'
+      url: 'https://github.com/elastic/detection-rules/blob/main/rules/linux/persistence_webserver_suspicious_child_execution.toml'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        EQL rule needs no baseline; parents include php-fpm*, lsphp*, php-cgi, frankenphp.
+    - id: 'REF-ELASTIC-UNUSUAL-CHILD'
+      type: 'detection-modeling-reference'
+      title: 'Unusual Child Execution via Web Server'
+      publisher: 'Elastic (elastic/detection-rules)'
+      url: 'https://github.com/elastic/detection-rules/blob/main/rules/linux/persistence_webserver_unusual_child_execution.toml'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        New-terms rule (php-cgi, php-fpm*, lsphp*, frankenphp parents; needs a baseline) excludes shell,
+        downloader and network-utility children; the EQL rule covers those.

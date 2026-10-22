@@ -697,7 +697,7 @@ alert must name. Reference-pack objects carry 12 to 18 tokens.
 | `.references[].publisher` | R (entry) | string | Publisher or vendor. |
 | `.references[].url` | R (entry) | string | Canonical URL.<br>**Wrong:** a search result or archive link when a canonical one exists. |
 | `.references[].local_path` | O | string | Repository-relative path to a local copy, when one exists. |
-| `.references[].trust_tier` | R | enum | Who published it. Pick one member; there is no `other`. `primary` only where the publisher is the party the incident happened to.<br>**Wrong:** reading it as credence. It says nothing about whether the claim is believed. |
+| `.references[].trust_tier` | R | enum | Who published it. Pick one member; there is no `other`. `primary` only where the publisher is the party the incident happened to; `government` for a national or intergovernmental cybersecurity authority.<br>**Wrong:** reading it as credence. It says nothing about whether the claim is believed. |
 | `.references[].verification` | R | enum | Whether the URL was fetched and checked, and nothing else. Pick one member; there is no `other`.<br>**Wrong:** `confirmed` for a link you did not open. The honest answer for an unfetched URL is `not-resolved-out-of-scope`. Scope caveats ride in `evidence_use`. |
 | `.references[].citation_caveat` | O | enum | Whether the citation needs care, and why. Pick one member; there is no `other`. A property of *this citation*, not of the publisher and not of the claim. See [the division of labor](#trust_tier-verification-and-citation_caveat).<br>**Wrong:** setting it to mark a source you simply distrust. That is a credence judgment, and the format has no field for one. |
 | `.references[].citation_caveat_note` | C | string | Required whenever `citation_caveat` is set; omit otherwise. What specifically is at issue, and whether the claim survives discounting this source entirely.<br>**Wrong:** "treat with caution". Nobody can check that, or ever retire it. |
@@ -740,12 +740,14 @@ Use `-secondary-source` for news-tier campaign sources; typing them as
 
 #### `trust_tier`
 
-Pick one of `vendor` · `primary` · `news` · `researcher` · `registry` ·
-`aggregator`. There is no `other`.
+Pick one of `vendor` · `primary` · `government` · `news` · `researcher` ·
+`registry` · `aggregator`. There is no `other`.
 
 Who published it, and nothing else. `primary` only where the publisher is the
 party the incident happened to; a vendor writing about its own product in
-someone else's incident is `vendor`.
+someone else's incident is `vendor`. `government` is a national or
+intergovernmental cybersecurity authority publishing in that capacity (for
+example CISA, CERT-EU, a national NCSC).
 
 #### `verification`
 

@@ -1,0 +1,799 @@
+identity:
+  uuid: '98240a97-c50d-4a54-b3d1-cde767f94d3f'
+  id: 'DT-P2S-APP-009'
+  name: 'PHP response returns an oversized PHPSESSID Set-Cookie value carrying leaked worker memory'
+  incident: >-
+    PHP2Shell (CVE-2026-109618, CVE-2026-109619), disclosed and patched 2026-10-21: the memory-disclosure
+    variant described by Wiz and Imperva, in which a response Set-Cookie header carries leaked PHP
+    worker memory with no code execution.
+  first_observed: '2026-10'
+  last_reviewed: '2026-10-21'
+
+classification:
+  primary_attack_surface: 'application-runtime'
+  secondary_attack_surfaces:
+    - 'in-process-runtime'
+  behavior_classes:
+    - 'other'
+  behavior_classes_note: >-
+    memory-disclosure-via-response-header: a request to a PHP endpoint makes the engine place worker
+    process memory into a response header field (the session cookie value), so data crosses out of
+    the worker without any file write, child process or outbound connection.
+  tags:
+    - 'php'
+    - 'php2shell'
+    - 'memory-disclosure'
+    - 'response-header'
+    - 'set-cookie'
+    - 'capability-evidence'
+    - 'not-seen-in-the-wild'
+    - 'low-observability'
+
+behavior:
+  definition: >-
+    An unauthenticated client sends a request to a vulnerable PHP endpoint and receives a response
+    whose Set-Cookie header for the PHP session cookie carries an abnormally long value that holds
+    leaked worker memory, so secrets resident in the worker can be read without running any code on
+    the host.
+  detailed_definition: >-
+    The adversary controls only the request; the engine puts process state it should not expose into
+    the cookie value, crossing the worker memory boundary. Success begins when a response carries a
+    non-session-identifier header value. No source says what a real case returned. Not RCE: no
+    process, file or socket event.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers the memory-disclosure variant as demonstrated by Wiz and described by Imperva; it does
+      not cover code execution and does not establish that any leak occurred outside research or
+      honeypots.
+    summary: >-
+      Needs a reachable endpoint on a defective build and the worker in the state the defect depends
+      on; the application need not use sessions (Wiz). Wiz demonstrated it through
+      the PHPSESSID response cookie; Imperva names Set-Cookie and about 67 KB (single source). No
+      real victim is reported.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Observable only at a component recording response header names and value lengths or content: a
+      reverse proxy, CDN, load balancer or network sensor with header-level logging. Default access
+      logs record no response headers (the pack's reading of common log formats).
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          Response-header logging must be switched on at a proxy or CDN, or a network sensor must
+          decode responses; none is the default for a stock web tier.
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          Whether any component sees the plaintext response header depends on TLS termination point,
+          CDN features and sensor placement.
+    summary: >-
+      Needs a record of the response Set-Cookie name and at least its length, tied to the request;
+      request session state is context only. No sensor rule for this signal is established. Request
+      line, status or response size alone is too weak, as is a client-side PHPSESSID check, since
+      the abnormal value is in the response.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Separable from benign session issuance only by the Set-Cookie value's length and character
+      profile against the application's normal identifier, or by any session cookie from an
+      application that issues none, at a component seeing response headers; no CVE or content.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          Without response-header telemetry there is nothing to measure.
+      - condition: 'environment-inventory-required'
+        note: >-
+          Normal session identifier length and format differ per application and session handler,
+          so a per-application baseline is needed before an outlier can be defined.
+    summary: >-
+      A genuine session identifier is short, bounded and narrow in character set, so a length
+      outlier is a mechanism-tied signal. Size varies, so use an outlier against the
+      per-application baseline, not a fixed byte count. Proof needs the retained header. Without a
+      sensor, reformulate to secret reuse (DT-P2S-APP-010).
+
+attack_surface_context:
+  surface: >-
+    The PHP engine's session handling and response header emission inside a web-serving worker
+    (mod_php, php-fpm, php-cgi, FrankenPHP or lsphp), fronted by a web server and optionally a proxy
+    or CDN.
+  how_the_surface_works: >-
+    A worker keeps per-process state across requests. When a session starts or resumes the engine
+    issues a cookie with a short identifier, relayed by the web server and often a proxy or CDN.
+    Access logs record request line, status and bytes, not response headers.
+  incident_processing_path: >-
+    Wiz demonstrated unauthenticated disclosure of attacker-sized worker memory; Imperva reports
+    about 67 KB. Wiz and Sansec put the leak under CVE-2026-109618; the PHP
+    advisories put upload-progress under 109619, with no Set-Cookie leak. The object is CVE-agnostic. No sample header or victim is published.
+  processing_stages:
+    - 'multipart-request-received'
+    - 'worker-state-condition-met'
+    - 'session-cookie-assembly'
+    - 'worker-memory-copied-into-header-value'
+    - 'response-header-emission'
+    - 'proxy-or-cdn-relay'
+    - 'client-receives-leaked-bytes'
+  stage_evidence: >-
+    Request and access logs prove arrival, status and size, not the header. Only a record captured
+    after header assembly shows the oversized value; only the retained header proves what returned.
+    Later secret reuse proves misuse, not this leak.
+  trust_boundaries: >-
+    The worker process memory boundary, crossed by data flowing to an unauthenticated requester
+    (demonstrated by Wiz; not seen in the wild). The session-identifier contract (an opaque short
+    token), violated in the demonstrated case. Nothing beyond the worker is reached; use of leaked
+    secrets is a separate behavior.
+  security_control_context: >-
+    Patching is the only full control (DT-P2S-ESTATE-011). Cloudflare's WAF rules are
+    defense-in-depth (Patchstack: stopgap); attackers mutated payloads, so request rules are not
+    durable. Corelight's package has no Set-Cookie length logic. A proxy size limit may turn
+    a leak into a 502, removing evidence.
+  technology_variants:
+    - variant: 'reverse-proxy-or-cdn-in-front'
+      context: >-
+        A proxy with header-size limits can reject the response and log an upstream error rather
+        than pass the header. The rejection is itself a signal worth retaining, and the leak may
+        then never reach the client.
+    - variant: 'direct-origin-no-proxy'
+      context: >-
+        With no proxy or CDN the only response-side vantage is a network sensor with TLS visibility
+        or a web server module; the stock access log shows nothing.
+  practitioner_implication: >-
+    Discover where the estate can see response headers, whether TLS is terminated there, the normal
+    session identifier length and character set per application, how long response headers can be
+    retained, and whether a proxy size limit already rejects oversized headers.
+
+threat_research:
+  why_it_matters: >-
+    A disclosure needs no code execution, so none of the code-execution telemetry fires. Secrets in
+    a PHP worker, such as database credentials and other users' session data, are the attacker's
+    value, and their use elsewhere is the only other chance to notice.
+  threat_actor: >-
+    Unknown. The sources attribute no actor to the memory-disclosure variant.
+  actor_class: 'unknown'
+  campaign: >-
+    PHP2Shell (CVE-2026-109618 and CVE-2026-109619), status as of 2026-10-21. Wiz and CrowdStrike
+    have demonstrated unauthenticated remote code execution in lab conditions, CrowdStrike end to
+    end on Apache mod_php, and the PHP advisory for CVE-2026-109619 validates its session path
+    against both mod_php and PHP-FPM. Exploitation attempts are reported by Cloudflare, watchTowr,
+    Patchstack (a 07:34 UTC entry relays active exploitation incidents from hosting partners; a
+    13:57 UTC entry describes only probing), Kaspersky (attempts before the patch), Hadrian
+    (exploitation at scale, with no counts) and VulnCheck (canary scans and at least one session-path webshell attempt on 21 October, 17:22-17:24 UTC, whose ten follow-up reads all returned 404). No source documents a confirmed compromise: CISA has not observed exploitation,
+    ReliaQuest has not seen successful exploitation in customer environments, and Tanium reported on 21 October that neither CVE was in the CISA KEV catalog. Red Hat rates CVE-2026-109619 CVSS 3.1 8.1 for high attack
+    complexity, while Red Hat's page lists NVD's score as 9.8. VulnCheck reports that none of the public proofs of concept it reviewed independently bypasses ASLR on x86-64, and that exploitation works on ARM64 and on x86 without ASLR.
+  victim: >-
+    None documented. Wiz demonstrates the memory disclosure in general and its remote code execution
+    against WordPress, Drupal and Joomla; no victim organisation is reported.
+  capability: >-
+    A memory leak returned in a response cookie for PHPSESSID with no code execution. Wiz
+    demonstrated the disclosure through the PHPSESSID response cookie (attacker-sized region);
+    Imperva names the Set-Cookie header and about 67 KB (single source).
+  target: >-
+    Internet-reachable PHP workers on defective builds. Floor disputed: 5.4 vs all of 5 and 7 plus 8.2-8.5 below fixes (watchTowr). Official fixes 8.5.12,
+    8.4.27, 8.3.36, 8.2.35 (php.net).
+  victimology:
+    - >-
+      Internet-facing PHP applications on unpatched engine builds; Wiz's remote code execution
+      demonstrations covered WordPress, Drupal and Joomla.
+    - >-
+      Workers whose process memory holds database credentials, API keys or other users' session
+      data.
+
+  framework_mappings:
+    - framework: 'MITRE ATT&CK'
+      technique_mapping_status: 'mapped'
+      id: 'T1190'
+      name: 'Exploit Public-Facing Application'
+      evidence: >-
+        The disclosure is delivered by a request to a public-facing PHP endpoint. Covers the entry
+        only.
+    - framework: 'MITRE ATT&CK'
+      technique_mapping_status: 'mapped'
+      id: 'T1552'
+      name: 'Unsecured Credentials'
+      evidence: >-
+        A consequence only, if the leaked memory held credentials; the pack's reading, not a
+        reported outcome.
+
+visibility:
+  telemetry_sources:
+    - source: 'Reverse proxy, CDN or load balancer response-header logging'
+      purpose: >-
+        Record the Set-Cookie header name, its value length and, as context, the request cookie
+        presence for the response that carried it.
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'response Set-Cookie header name and value length'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+          note: 'Field names are product specific and no evidence reference documents them here.'
+        - name: 'request Cookie header presence'
+          attestation: 'unattested-inferred'
+          load_bearing: false
+          note: 'Context only; not a condition for the strategy.'
+      details: >-
+        Where a proxy or CDN can log response headers or a custom log variable for them, the
+        Set-Cookie length for the PHP session cookie name can be recorded per response and joined to
+        the client and request. A CDN with response-side rules may emit a detection event instead of
+        the raw header.
+      advantages:
+        - 'Sees the header after the origin assembled it and before the client uses it.'
+        - 'Length can be logged without storing the leaked content.'
+      limitations:
+        - 'Off by default in common configurations and absent in some CDN tiers.'
+        - >-
+            A proxy header-size limit may reject the response so the oversized header is never
+            logged.
+        - >-
+            Recording the full value stores leaked memory in the log and creates a secret-bearing
+            log.
+    - source: 'Network sensor with response decoding (Zeek or Suricata style)'
+      purpose: >-
+        Match an oversized Set-Cookie response header on the wire where plaintext is visible.
+      event_vocabulary: 'other'
+      event_vocabulary_note: 'HTTP transaction record from a network sensor'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      details: >-
+        Precursor reports that Corelight published Zeek and Suricata detections; the Corelight
+        package has no Set-Cookie length logic (checked in the Corelight repository), so such a
+        detection is not established. A sensor sees the header only where traffic is plaintext or
+        decrypted, often inside the TLS terminator.
+      limitations:
+        - 'Blind to encrypted traffic unless placed behind TLS termination.'
+        - 'Signature content is rotatable, and a length rule is the part that does not rotate.'
+        - 'A sensor event names a response, not what the bytes contained.'
+    - source: 'Web server and PHP runtime access and error logs'
+      purpose: >-
+        Show the request line, status and response size, and any early engine warnings, as context
+        for a correlated alert rather than as the evidence.
+      event_vocabulary: 'application-record'
+      tier: 'request'
+      operational_viability: 'rejected-not-coverage'
+      details: >-
+        The default access log carries the request line, status and bytes, not the deciding
+        evidence. It still places the request in time and shows the sibling failed-attempt pattern
+        (DT-P2S-APP-007).
+      limitations:
+        - 'Does not record response headers in the default format.'
+        - 'A leak in a header may leave response size and status ordinary.'
+
+detection:
+  scope: >-
+    Two strategies: one measures the oversized session cookie value in the response at a
+    header-capable component; the other reformulates to the consequence, secret use elsewhere, and
+    routes to the credential reuse object. No strategy detects the leak from host process, file or
+    socket events; none exist.
+  outcome_guardrails: >-
+    An oversized Set-Cookie value shows one response carried a header that is not a session
+    identifier; not its contents, that a secret was taken, or the CVE. A reused secret shows misuse,
+    not that this leak was the origin. A header-size rejection or a request without a response
+    record shows neither attempt nor disclosure.
+  shared_normalization_context: >-
+    Normalise the Set-Cookie header by cookie name, and compare the value length and character set
+    to the per-application session identifier profile. Treat a length outlier as the signal, not a
+    fixed size.
+  shared_enrichment_context: >-
+    Join the response record to the request cookie presence, client address, URI, time and origin
+    host. Retain the header length and, where policy allows, a hash of the value; avoid retaining
+    the value itself.
+  strategies:
+    - id: 'STRAT-SESSION-COOKIE-LENGTH-OUTLIER'
+      name: 'oversized session cookie value in a response'
+      objective: >-
+        Detect a response whose PHP session Set-Cookie value is a length outlier for the issuing
+        application.
+      incident_relevance: >-
+        Detects the demonstrated memory-disclosure outcome directly, where a header-capable sensor
+        exists. It does not address the code execution variant.
+      detection_logic: >-
+        For each response with a Set-Cookie header named as the session cookie, compute the value
+        length and compare it with the per-application baseline of issued identifier lengths. Raise
+        when it exceeds the baseline maximum by a wide margin. Count repeats per client and origin
+        as context. Where the baseline shows the application never issues the session cookie,
+        raise on any session Set-Cookie from it, more severely when long or percent-encoded (this
+        pack's inference from Wiz). Report a response rejected by a proxy for header size as a
+        related, weaker signal on the same client and time.
+      minimum_evidence: >-
+        The response header name and value length from a component that saw the response, compared
+        with the application baseline. Without the baseline, report an unexplained long cookie
+        value, not a leak.
+      correlation_context: >-
+        Join on request id or connection and time within seconds. Proxy header-size rejections and
+        the client's earlier multipart POSTs (DT-P2S-APP-007) in a short window raise confidence.
+        CDN log export delay can be minutes; keep the window wide enough.
+      detectors:
+        - detector_class: 'proxy-or-cdn-header-rule'
+          technologies:
+            - 'Cloudflare'
+            - 'NGINX'
+            - 'HAProxy'
+            - 'Apache HTTP Server'
+            - 'Imperva'
+          contribution: 'Records or alerts on the Set-Cookie length at the response boundary.'
+          limitations: >-
+            Needs header logging or a response rule, and no size limit dropping the response.
+            Cloudflare's full transaction detection post describes a response ruleset exposing
+            cf.waf.signature.response.confidence, categories and ref fields. Set-Cookie not mentioned; coverage not established.
+        - detector_class: 'network-sensor-response-signature'
+          technologies:
+            - 'Zeek'
+            - 'Suricata'
+            - 'Corelight'
+          contribution: >-
+            Matches an oversized Set-Cookie header on the wire where traffic is plaintext.
+          limitations: >-
+            Needs plaintext placement and a length rule, not a content signature.
+      benign_explanations:
+        - explanation: >-
+            An application sets a legitimately large session or tracking cookie that uses the PHP
+            session cookie name.
+          distinguishing_context: >-
+            The baseline shows the same large value is issued routinely and is structured, not
+            random memory; an outlier against it is not explained.
+          overlaps_incident_instance: false
+        - explanation: >-
+            A custom session handler encodes extra data into the cookie value.
+          distinguishing_context: >-
+            The handler is documented and the value length is stable per user, unlike a one-off
+            outlier to an unauthenticated client.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding the session cookie name or all long values for an application removes the
+            leak channel.
+      forbidden_exclusions:
+        - field: 'Set-Cookie header name equal to the PHP session cookie name'
+          reason: >-
+            The leak channel is that header; excluding it removes the incident's own record.
+        - field: 'a fixed value length or fixed byte count as the sole criterion'
+          reason: >-
+            Leak size is single-source and variable; a fixed figure would miss other sizes.
+        - field: 'client address, user agent or request body signature of known exploit tooling'
+          reason: >-
+            Adversary-settable and free to rotate; excluding or requiring them misses mutated
+            attempts.
+      blind_spots:
+        - description: >-
+            Missing telemetry: standard access logs carry no response headers, so a stock estate
+            has no data for this strategy.
+          routes_to: null
+        - description: >-
+            Evasion: a proxy header-size limit can reject the response, leaving only an upstream
+            error and no logged header. Repeated multipart POSTs with such errors from one client are
+            the header-level repetition branch of the request-anomaly object.
+          routes_to: 'DT-P2S-APP-008'
+        - description: >-
+            Attribution limit: an outlier value does not show what was in the bytes or which secret
+            was exposed.
+          routes_to: 'DT-P2S-APP-010'
+      analyst_response: >-
+        Retrieve the response record and any retained header hash or length, find the originating
+        request and client, check that client for earlier multipart POSTs and worker crashes,
+        identify the application and engine build, and treat the worker's secrets as exposed until
+        the engine is patched and workers restarted.
+      safe_conclusion: >-
+        A response carried a session cookie far longer than the application normally issues, or one
+        it never issues, consistent with the memory-disclosure variant; content and use are unknown.
+    - id: 'STRAT-LEAK-CONSEQUENCE-SECRET-REUSE'
+      name: 'reformulate to the consequence: a secret held by the worker used elsewhere'
+      objective: >-
+        Cover estates with no response-header visibility by routing to the reuse of a database, API
+        or session secret from a source that is not the PHP host.
+      incident_relevance: >-
+        Targets a later consequence of a leak, not the leak. No source reports real reuse.
+      detection_logic: >-
+        When a worker's host is known to have run an affected engine build in an internet-facing
+        role, raise the priority of the DT-P2S-APP-010 secret-reuse detections for the credentials
+        and sessions that worker held. This strategy emits no alert itself; it reweights another
+        object's alert and defines the review scope: every secret resident in that worker.
+      minimum_evidence: >-
+        An inventory entry showing the worker ran an affected build, plus a DT-P2S-APP-010 alert on
+        a secret that worker could hold. Inventory alone is context, not a finding.
+      correlation_context: >-
+        Join the asset inventory (DT-P2S-ESTATE-011) to identity and cloud logs on the principal or
+        secret identifier. The window follows the secret's lifetime, not minutes.
+      detectors:
+        - detector_class: 'inventory-to-identity-correlation'
+          technologies:
+            - 'Splunk'
+            - 'Elastic'
+            - 'Microsoft Sentinel'
+            - 'Google SecOps'
+          contribution: 'Raises the weight of secret-reuse alerts for workers on affected builds.'
+          limitations: >-
+            Needs the inventory, identity or cloud telemetry, and a known secret-to-worker map.
+      benign_explanations:
+        - explanation: >-
+            Administrators and CI systems legitimately use the same secrets from other hosts.
+          distinguishing_context: >-
+            The use matches the principal's own history of source and tooling; first use from a new
+            source does not.
+          overlaps_incident_instance: false
+      forbidden_exclusions:
+        - field: >-
+            exclusion of cloud provider or corporate egress address ranges from secret-reuse alerts
+          reason: >-
+            A stolen cloud key used from a cloud-hosted address would be excluded with legitimate
+            tooling.
+      blind_spots:
+        - description: >-
+            Attribution limit: nothing links a later reuse to this leak unless the response record
+            or worker inventory ties them.
+          routes_to: 'DT-P2S-APP-010'
+        - description: >-
+            Missing telemetry: a secret that is never reused in a logged system leaves no trace.
+          routes_to: null
+      analyst_response: >-
+        Enumerate the secrets the worker held, rotate them, review their use since the worker first
+        ran an affected build, and escalate any use from a new source.
+      safe_conclusion: >-
+        A secret held by an exposed PHP worker was used from a new source; whether it came from this
+        leak is not established.
+
+  supporting_technologies_considered: >-
+    Packet capture with TLS visibility and worker memory forensics could show a leaked value after
+    the fact, but neither is primary event evidence at scale. Scanners and asset inventories show
+    exposure, not occurrence (DT-P2S-ESTATE-011).
+
+detector_requirements:
+  required: >-
+    Cookie-length strategy: response-header capture or a response-side rule where the plaintext
+    header is seen; a per-application identifier baseline; a response-to-client join; header length
+    or hash retention; alert text saying an oversized cookie was returned. The reuse strategy needs
+    engine inventory and reuse alerts.
+  optional: >-
+    Proxy header-size rejection logs and worker restart records add coverage of suppressed leaks
+    and a crash correlation; neither gates the core strategy.
+  correlation:
+    capability: >-
+      Stable request or connection ids between proxy, CDN and origin records, and aligned clocks
+      across them.
+    window: 'Seconds between request and response; minutes to absorb CDN log export delay.'
+  baselines:
+    - name: 'Per-application session identifier length and character set'
+      window: '14-day window known to be clean, not rolling past 2026-10-21 on unpatched hosts'
+      seeded_from: >-
+        Set-Cookie issuance for the session cookie name over a clean window, capped at the
+        configured session id length (session.sid_length); never seeded after 2026-10-21 on
+        unpatched hosts. A clean window with no issuance records the application as sessionless.
+  product_support_caveat: >-
+    A named product is only a candidate technology; support depends on sensors, logging, retained
+    fields, licensing and architecture. Verify a component logs Set-Cookie length, TLS ends at or
+    before it, and no size limit discards the evidence. No product is shown to cover this.
+
+missing_context:
+  unverified:
+    - >-
+      The first observed date '2026-10' is researcher-demonstrated (Wiz reported the
+      vulnerabilities, including the memory disclosure, to PHP on 2026-08-24; public 2026-10-21).
+      Not seen in the wild. Evidence class: demonstrated.
+    - >-
+      The exact size and content of leaked data in any real case; the 67 KB figure is single-source
+      (Imperva, approximate); variability rests on Wiz's "attacker-sized" wording.
+    - 'Whether the variant has been used against any real victim; no source reports it.'
+    - >-
+      Which CVE the leak belongs to: Wiz and Sansec place the memory disclosure under 109618; the advisories place upload
+      progress under 109619 (GHSA-6wmf-4rv5-p3rp) and do not mention a Set-Cookie leak. The pack
+      follows the advisories. The object does not depend on the answer.
+    - >-
+      The affected PHP version floor, disputed between PHP 5.4 and all of 5 and 7 plus 8.2 to 8.5
+      below fixed versions.
+  assumptions:
+    - id: 'ASSUMPTION-LENGTH-OUTLIER-SEPARATES'
+      verdict_changing: true
+      statement: >-
+        Normal PHP session cookie values are short and bounded, so a very long value separates from
+        benign issuance by length. The pack's reading; no source publishes length distributions. If
+        wrong, the detectable answer drops. Resolve by measuring 14 days of session Set-Cookie
+        lengths on representative applications.
+    - id: 'ASSUMPTION-HEADER-SIZE-LIMITS-SUPPRESS'
+      verdict_changing: false
+      statement: >-
+        A proxy with a response header size limit rejects an oversized leak and logs an upstream
+        error instead of passing it. This is the pack's reading of ordinary proxy behavior. If
+        wrong, the rejection signal is empty. Resolve by sending an oversized header through the
+        estate's proxy in a lab.
+    - id: 'ASSUMPTION-NGINX-FPM-TOO-BIG-HEADER'
+      verdict_changing: false
+      statement: >-
+        Behind nginx with FPM, a response header block far above the proxy buffer size likely yields
+        a 502 and an on-by-default nginx error-log line about a too-big upstream header. Inferred
+        from defaults; a candidate signal. If wrong, only the response-header strategy remains.
+        Resolve by a lab test through nginx.
+  standing_negatives:
+    - statement: >-
+        No source reviewed publishes a captured sample of the leaked header or a case of real data
+        recovered from it; checked across the Wiz, Imperva, Patchstack and Precursor writeups on
+        2026-10-21.
+      ref: 'REF-WIZ'
+      valid_until: '2026-12-31'
+      recheck: >-
+        Re-read the Wiz and Imperva posts and any later report for a published sample or victim
+        account.
+
+missing_states:
+  - id: 'MISSING_RESPONSE_HEADER_TELEMETRY'
+    meaning: >-
+      Missing telemetry: no component records the response Set-Cookie header, as in default web
+      server logs.
+    coverage_claim: 'no-coverage'
+    response: >-
+      Do not claim the estate is free of the leak; state that it cannot be observed, rely on the
+      credential reuse strategy and patching, and review enabling header length logging at the
+      proxy.
+  - id: 'MISSING_SESSION_LENGTH_BASELINE'
+    meaning: >-
+      Missing context: no per-application baseline was built. A baseline showing no issuance is not
+      missing.
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report an unexplained long cookie value, not a leak, and build the baseline from Set-Cookie
+      issuance across responses in a window known to be clean.
+  - id: 'MISSING_TLS_VISIBILITY'
+    meaning: 'Missing telemetry: a network sensor sits where traffic is encrypted.'
+    coverage_claim: 'no-coverage'
+    response: 'Place the sensor behind the TLS terminator or rely on proxy logging.'
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'client_address_and_request_cookie_presence'
+    - 'request_uri_and_host'
+    - 'set_cookie_name_and_value_length'
+    - 'engine_build_and_worker_inventory_when_known'
+    - 'component_that_observed_the_response'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'application_baseline_length_and_margin'
+      condition: 'when a baseline exists; otherwise state that none was built or that it shows no issuance'
+    - field: 'related_proxy_header_size_rejection'
+      condition: 'when a proxy logged an upstream error for the same client within the window'
+    - field: 'earlier_multipart_post_count'
+      condition: 'when the same client sent multipart POSTs to PHP endpoints before the response'
+  recommended_title: >-
+    PHP response carried an oversized session cookie value, consistent with a worker memory leak
+  unsupported_title: 'Attacker stole database credentials from PHP memory via PHP2Shell'
+
+evidence:
+  confirmed_incident_behavior: >-
+    Wiz demonstrated disclosure through the PHPSESSID response cookie; Imperva says an attack can
+    expose about 67 KB via a Set-Cookie: PHPSESSID header. Wiz advises watching for large or malformed
+    PHPSESSID response cookies (via Patchstack). The same-family reading is the pack's; no sample or victim is
+    published.
+  supported_conclusion: >-
+    A vulnerable PHP worker can return worker memory in a PHPSESSID cookie with no code
+    execution; where response headers are recorded, a length outlier is a mechanism-tied signal. A
+    detector may report an oversized session cookie value from a header-capable component.
+  unsupported_conclusions: >-
+    The evidence does not establish in-the-wild use, an actor, leak contents, that any secret was
+    taken or used, a fixed leak size, or the CVE. Stock web logs cannot detect the variant.
+  procedure_boundary: >-
+    This object is response-side disclosure of worker memory in a header. Failed multipart attempts
+    and crashes are DT-P2S-APP-007, stolen-secret reuse DT-P2S-APP-010, the unpatched state
+    DT-P2S-ESTATE-011; code execution and host effects (objects 001 to 006) are separate, and no
+    source shows them for this variant.
+  references:
+    - id: 'REF-WIZ'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: AI uncovers critical RCE vulnerabilities affecting 70% of the Internet'
+      publisher: 'Wiz'
+      url: 'https://www.wiz.io/blog/php2shell-php-rce'
+      trust_tier: 'researcher'
+      verification: 'confirmed'
+      evidence_use: >-
+        States that it demonstrated unauthenticated memory disclosure (application-agnostic) and,
+        separately, RCE against WordPress, Drupal and Joomla. No in-the-wild use or leaked content.
+    - id: 'REF-IMPERVA'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: When PHP Runs Out of Memory at the Wrong Moment'
+      publisher: 'Imperva'
+      url: 'https://www.imperva.com/blog/php2shell-vulnerability-updates/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Single vendor: an attack can expose approximately 67 KB of process memory through a Set-Cookie: PHPSESSID header; leads include unexpectedly large PHPSESSID response values. Size not corroborated.
+    - id: 'REF-PATCHSTACK-PHP'
+      type: 'incident-campaign-secondary-source'
+      title: 'Major security alert: PHP vulnerable to critical RCE, attacks ongoing'
+      publisher: 'Patchstack'
+      url: 'https://patchstack.com/articles/php-major-vulnerability-alert-10-2026/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Lists 'unexpectedly large or malformed PHPSESSID cookies in responses'. 07:34 UTC entry relays
+        active-exploitation reports; 13:57 UTC entry describes only probing; not reconciled. Reports
+        no victim use of this variant.
+    - id: 'REF-PRECURSOR'
+      type: 'incident-campaign-secondary-source'
+      title: 'Live Blog: PHP2Shell Critical PHP RCE Vulnerabilities (CVE-2026-109618 & CVE-2026-109619)'
+      publisher: 'Precursor Security'
+      url: 'https://www.precursorsecurity.com/blog/php2shell-critical-php-rce-vulnerabilities'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Reports that Corelight published Zeek and Suricata detections; does not say they address a
+        response-side leak or Set-Cookie.
+    - id: 'REF-PHPNET'
+      type: 'attack-surface-documentation'
+      title: 'PHP: News Archive - 2026'
+      publisher: 'PHP Group (php.net)'
+      url: 'https://www.php.net/archive/2026.php#2026-10-21-5'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Fixes 8.5.12, 8.4.27, 8.3.36, 8.2.35; CVE descriptions (109618 OOM corruption, 109619 stale
+        global state). No Set-Cookie leak mention. Home-page notice, not permanent; the GHSAs are
+        durable.
+    - id: 'REF-GHSA-109618'
+      type: 'attack-surface-documentation'
+      title: 'RCE via OOM corruption'
+      publisher: 'PHP Group (php-src security advisories)'
+      url: 'https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports the CVE mapping (109618 is the out-of-memory corruption flaw), which this pack
+        follows over Sansec's. No response-cookie leak.
+    - id: 'REF-GHSA-109619'
+      type: 'attack-surface-documentation'
+      title: 'RCE via stale global state'
+      publisher: 'PHP Group (php-src security advisories)'
+      url: 'https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports the CVE mapping (stale state, incl. session upload progress and fatal error
+        backtraces). Companion GHSA-w8hw-w9fx-j79w covers 109618. No response-cookie leak.
+    - id: 'REF-CLOUDFLARE'
+      type: 'incident-campaign-secondary-source'
+      title: 'Cloudflare deploys protections against php2shell vulnerability'
+      publisher: 'Cloudflare'
+      url: 'https://blog.cloudflare.com/php-vulnerabilities-waf-protection/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Reports WAF rules as defense-in-depth, attackers mutating the payload, and full-transaction
+        (request plus response) detection; supports that a request rule is not durable coverage.
+    - id: 'REF-SANSEC'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Critical PHP RCE (CVE-2026-109618, CVE-2026-109619)'
+      publisher: 'Sansec'
+      url: 'https://sansec.io/research/php2shell'
+      trust_tier: 'researcher'
+      verification: 'confirmed-with-scope-caveat'
+      citation_caveat: 'contradicted-elsewhere'
+      citation_caveat_note: >-
+        Sansec's CVE mapping differs from the GHSAs. Cited only for the PHP 5.4 affected floor,
+        which does not depend on that mapping and also appears in Wiz and Cloudflare material.
+      evidence_use: >-
+        Used for the PHP 5.4 affected-floor figure in the target field and to record the CVE-mapping
+        disagreement against the GHSAs.
+    - id: 'REF-CROWDSTRIKE'
+      type: 'incident-campaign-secondary-source'
+      title: 'CrowdStrike Protects Customers from Threats Delivered via PHP2Shell'
+      publisher: 'CrowdStrike'
+      url: 'https://www.crowdstrike.com/en-us/blog/crowdstrike-protects-customers-from-php-rce-zero-days/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Cited for campaign status: "CrowdStrike has verified end-to-end that a single anonymous POST
+        request can cause an Apache mod_php worker to launch a shell process". Lab demonstration,
+        not an observed intrusion.
+    - id: 'REF-TANIUM'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Responding to CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'Tanium'
+      url: 'https://www.tanium.com/blog/php2shell-responding-to-cve-2026-109618-and-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Cited for the statement in the campaign description that neither CVE is in the CISA KEV
+        catalog; also states no public indicators of compromise have been released.
+    - id: 'REF-WATCHTOWR'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: PHP Remote Code Execution Exploited'
+      publisher: 'watchTowr'
+      url: 'https://watchtowr.com/intelligence/php-remote-code-execution-php2shell/'
+      trust_tier: 'researcher'
+      verification: 'confirmed'
+      evidence_use: >-
+        Cited for campaign status: "watchTowr is observing active exploitation attempts of both
+        CVE-2026-109618 and CVE-2026-109619" (post at 14:19 UTC). Attempts, not documented
+        compromise.
+    - id: 'REF-KASPERSKY'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: How to Protect Your Server'
+      publisher: 'Kaspersky'
+      url: 'https://www.kaspersky.com/blog/cve-2026-109618-109619-php-vulnerabilities/56583/'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Cited for the exploitation status in the campaign description: first attempts were observed
+        before the patches were published, undescribed; no confirmed compromise. Checked 2026-10-21.
+    - id: 'REF-RELIAQUEST'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Responding to Critical PHP Vulnerabilities | Threat Spotlight'
+      publisher: 'ReliaQuest'
+      url: 'https://reliaquest.com/blog/threat-spotlight-php2shell-responding-to-critical-php-vulnerabilities/'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Cited for campaign status: has not observed successful exploitation in customer
+        environments; in-the-wild reports early, inconsistent, some only probing. Checked
+        2026-10-21.
+    - id: 'REF-CORELIGHT-REPO'
+      type: 'detection-modeling-reference'
+      title: 'corelight/php2shell-detect: Zeek and Suricata Detections for "php2shell" CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'Corelight'
+      url: 'https://github.com/corelight/php2shell-detect'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Negative only, read at commit 4d5131c via the GitHub API: the package reads Set-Cookie
+        solely to correlate session ids, with no length or response-side leak rule, so no sensor
+        rule for this signal.
+    - id: 'REF-CLOUDFLARE-FTW'
+      type: 'incident-campaign-secondary-source'
+      title: 'Introducing full transaction detection for Cloudflare WAF'
+      publisher: 'Cloudflare'
+      url: 'https://blog.cloudflare.com/full-transaction-waf/'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Post cites php2shell as motivation; three response signature fields; up
+        to three custom response rules (Log and Block, all plans). No Set-Cookie mention: no
+        coverage shown.
+    - id: 'REF-HADRIAN'
+      type: 'incident-campaign-secondary-source'
+      title: 'php2shell: Leaked critical PHP RCEs (CVE-2026-109618, -109619)'
+      publisher: 'Hadrian'
+      url: 'https://hadrian.io/vulnerability-alerts/php2shell-leaked-critical-php-rce-cve-2026-109618-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      citation_caveat: 'contradicted-elsewhere'
+      citation_caveat_note: >-
+        CISA and ReliaQuest report no observed (successful) exploitation; Hadrian reports it at
+        scale without counts. Vendor claim only; Cloudflare, watchTowr and Patchstack separately
+        report attempts.
+      evidence_use: >-
+        Cited for campaign status: 11:35 UTC update says "We are now seeing php2shell exploited in
+        the wild at scale", mostly via session upload-progress; repeated at 14:35 UTC. Vendor claim;
+        no counts, no compromise.
+    - id: 'REF-CISA'
+      type: 'incident-campaign-secondary-source'
+      title: 'Critical Vulnerabilities in PHP Require Immediate Patching'
+      publisher: 'CISA'
+      url: 'https://www.cisa.gov/news-events/alerts/2026/10/21/critical-vulnerabilities-php-require-immediate-patching'
+      trust_tier: 'government'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Cited for campaign status: CISA "has not observed exploitation of these vulnerabilities as
+        of the time of publication" (2026-10-21). No KEV mention (KEV rests on Tanium). Supports no
+        compromise.
+    - id: 'REF-VULNCHECK'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell Vulnerabilities: CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'VulnCheck'
+      url: 'https://www.vulncheck.com/blog/php2shell-vulnerabilities'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Cited for campaign status: canary scans, one unsuccessful session-path webshell attempt at
+        17:22-17:24 UTC on 2026-10-21, no public proof of concept bypassing ASLR on x86-64. Atomic
+        indicators not copied.
+    - id: 'REF-REDHAT'
+      type: 'incident-campaign-secondary-source'
+      title: 'CVE-2026-109619'
+      publisher: 'Red Hat'
+      url: 'https://access.redhat.com/security/cve/cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Cited for the Red Hat CVSS 3.1 score of 8.1, high attack complexity, in
+        the campaign description.

@@ -1,0 +1,1060 @@
+identity:
+  uuid: 'cada2c15-2fe9-444c-82ad-0dc0b38cc878'
+  id: 'DT-P2S-ESTATE-011'
+  name: >-
+    Internet-facing PHP runs a vulnerable engine build, or patched binaries with unrestarted workers
+  incident: >-
+    PHP2Shell (CVE-2026-109618, CVE-2026-109619), disclosed and patched 2026-10-21: the exposure
+    state that the advisories say only an engine update closes. A control and exposure object, not
+    an adversary behavior.
+  first_observed: '2026-10'
+  last_reviewed: '2026-10-21'
+
+classification:
+  primary_attack_surface: 'estate-preventive-control-configuration'
+  secondary_attack_surfaces:
+    - 'application-runtime'
+    - 'host-os'
+    - 'container-workload'
+  behavior_classes:
+    - 'control-state-verification'
+    - 'estate-precondition-removal'
+  tags:
+    - 'php'
+    - 'php2shell'
+    - 'control'
+    - 'negative-object'
+    - 'exposure-state'
+    - 'patch-and-restart'
+    - 'inventory'
+    - 'advisory-evidence'
+    - 'prevent'
+
+behavior:
+  definition: >-
+    The pack's control companion. It carries the exposed state every PHP2Shell object depends on: a
+    reachable PHP engine build that has the defects, or binaries patched on disk while workers still
+    run the old build.
+  detailed_definition: >-
+    A state, not a step. Three forms: an affected engine build installed; a fixed package on disk
+    with workers still running the old code until restart; or an engine bundled in a panel,
+    container or appliance the package manager does not report. The boundary is exposed host versus
+    not exposed.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers the existence of the exposed state on any estate running an affected build or
+      unrestarted workers; not that any host was attacked or compromised.
+    summary: >-
+      The state exists when an internet-facing PHP engine is on an affected build. Fixed versions
+      are 8.5.12, 8.4.27, 8.3.36 and 8.2.35 (php.net). It exists too when a package is updated but
+      workers are not restarted, or a bundled engine was missed. Backports keep old version strings,
+      so a version check can mislead (THN).
+  observable:
+    answer: 'yes'
+    answer_scope: >-
+      Visible in asset inventory: installed package, binary build, container image, and process
+      start time against package install time. A state of the estate, read from inventory, not from
+      an event stream.
+    summary: >-
+      Needs an inventory of PHP engines, including bundled copies and container images, with build
+      identifiers, changelog entries naming the CVE ids, and each worker's start time. A version
+      string alone is too weak under backports; so is a banner or ini-setting check, since a
+      mitigation setting does not close other paths.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      An exposure assessment, not attack detection. Where build, changelog and worker-start
+      inventory exists, a comparison separates an exposed host from a fixed one. A clean inventory
+      does not cover engines it did not read.
+    blocking_conditions:
+      - condition: 'environment-inventory-required'
+        note: >-
+          An inventory of PHP engine builds including bundled copies, container image layers and
+          package changelog entries naming the CVE ids. The estate must build it; without it the
+          host is unknown, not fixed.
+      - condition: 'environment-inventory-required'
+        note: >-
+          For the stale-worker strategy, start times for each PHP master and worker process on the
+          same hosts. Without them a fixed package cannot be told from a fixed running engine.
+      - condition: 'cross-source-join-required'
+        note: >-
+          For the stale-worker strategy, package install times joined to process start times by host
+          and process, with aligned clocks, to separate fixed-on-disk, unrestarted from closed.
+    summary: >-
+      Exposure is not an action, so no traffic pattern discriminates it. An inventory comparison
+      does: build identifier, changelog for the CVE ids, and worker start time against package
+      install time, conditional on the inventories above. Strategies: inventory, plus a
+      configuration scoping record.
+
+attack_surface_context:
+  surface: >-
+    The installed PHP engine builds and running worker processes on internet-facing hosts,
+    containers and bundled copies inside control panels or appliances.
+  how_the_surface_works: >-
+    PHP comes from distribution packages, vendor repositories, images, source builds or
+    control-panel bundles. An update replaces files on disk but not running code until restart or
+    reload. Distributions often backport fixes under the old version number. Images pin an engine
+    until rebuilt.
+  incident_processing_path: >-
+    Huntress and Tenable list fixed versions. The PHP advisories say FPM exploitation
+    depends on an application operation. Tenable relays the PHP Foundation: no
+    functional public exploit was identified at release. Tanium and Qualys say to restart workers;
+    Qualys says to check for workers left on the old build.
+  processing_stages:
+    - 'engine-build-installed'
+    - 'worker-processes-start-and-load-engine'
+    - 'host-exposed-to-requests'
+    - 'fixed-package-installed'
+    - 'worker-restart-or-reload'
+    - 'exposure-closed'
+  stage_evidence: >-
+    A package record or backport changelog proves what is on disk, not what is running. Workers
+    fork from their master, so a new worker can carry old code. Only a fixed package plus a master
+    started after the update, or a verified running build, supports a closed claim.
+  trust_boundaries: >-
+    The internet to PHP worker boundary, which the exposure state leaves open. The state crosses no
+    boundary itself, and no source shows a host compromised through it.
+  security_control_context: >-
+    Updating the engine is the only complete control (advisories); Tanium and Qualys add restarting
+    workers afterwards. Partial: disabling upload progress; memory_limit=-1 (GHSA: not
+    complete); WAF/CDN rules (Cloudflare reports payload mutation). Hiding errors does not help;
+    clean logs prove nothing.
+  technology_variants:
+    - variant: 'distribution-backported-packages'
+      context: >-
+        The package may contain the fix with an unchanged version string; check the package
+        changelog for the CVE ids and the package release, not the version number.
+    - variant: 'container-images-and-bundled-engines'
+      context: >-
+        An image keeps its build-time engine until rebuilt and redeployed; control panels and
+        appliances may bundle an engine the package manager does not list. Inventory must read the
+        binary or image layers, not only the package database.
+    - variant: 'end-of-life-engines-without-fix'
+      context: >-
+        PHP 5.4 to 7.3 has no official upstream fix (Tenable): isolate, upgrade or use compensating
+        controls. 7.4 to 8.1 have only PHP security team source backports (Huntress). Ubuntu Pro and Legacy Support ship fixed 7.4, 7.2, 7.0 and 5.5 packages
+        (USN-8948-2); the distribution advisory decides those hosts.
+    - variant: 'origin-reachable-bypassing-the-edge'
+      context: >-
+        Edge rules protect only an origin that is not directly reachable (VirusTotal). An origin
+        reachable without the WAF or CDN is exposed whatever the edge does, so record whether each
+        PHP origin is reachable other than through the edge.
+  practitioner_implication: >-
+    Discover every place a PHP engine runs, including bundled and containerised copies, how each is
+    updated, each distribution's fix route, how workers restart, and which hosts have no fix.
+    CERT-EU recommends the NCSC-NL php2shell repository for finding software that embeds PHP.
+
+threat_research:
+  why_it_matters: >-
+    Only correcting the exposure state closes the flaws (advisories). Detection is partial, clean
+    logs prove nothing, and PHP is deployed in forms patching misses. On mod_php, request data is
+    parsed before any application code, so exploitation is application-independent; on FPM it
+    needs a suitable application operation.
+  threat_actor: >-
+    Not applicable. This object describes an estate state, not an actor.
+  campaign: >-
+    PHP2Shell (CVE-2026-109618 and CVE-2026-109619), status as of 2026-10-21. Wiz and
+    CrowdStrike have demonstrated unauthenticated remote code execution in lab conditions,
+    CrowdStrike end to end on Apache mod_php, and the PHP advisory for CVE-2026-109619 validates
+    its session path against both mod_php and PHP-FPM. Exploitation attempts are reported by
+    Cloudflare, watchTowr, Patchstack (a 07:34 UTC entry relays active exploitation incidents
+    from hosting partners; a 13:57 UTC entry describes only probing), Kaspersky (attempts before
+    the patch), Hadrian (exploitation at scale, with no counts) and VulnCheck (canary scans and at least one session-path webshell attempt on 21 October, 17:22-17:24 UTC, whose ten follow-up reads
+    all returned 404). No source documents a confirmed compromise: CISA has not
+    observed exploitation, ReliaQuest has not seen successful exploitation in customer environments, and Tanium reported on 21 October that neither CVE was in the CISA KEV catalog. Red Hat rates CVE-2026-109619 CVSS 3.1
+    8.1 for high attack complexity, while Red Hat's page lists NVD's score as 9.8. VulnCheck reports that none of the public proofs of concept it reviewed independently bypasses ASLR on x86-64, and that exploitation works on ARM64 and
+    on x86 without ASLR.
+  victim: >-
+    None documented. Any internet-facing PHP host on an affected build is in scope.
+  capability: >-
+    Not applicable as an adversary capability. The advisories describe the flaws as unauthenticated,
+    with high attack complexity; the reported maximum severity is 9.2 on the version 4.0 scale.
+  target: >-
+    Internet-facing PHP engines. The affected floor is disputed, PHP 5.4 (Sansec, Wiz, Cloudflare)
+    against all 5, 7 and 8 (watchTowr, unconfirmed); official fixes exist only for 8.2 and later.
+  victimology:
+    - >-
+        Internet-facing PHP hosts, including content management systems, control panels and
+        containers.
+    - 'Estates that update packages without restarting workers.'
+    - 'Estates running end of life PHP with no available fix.'
+
+  framework_mappings:
+    - framework: 'MITRE ATT&CK'
+      technique_mapping_status: 'mapped'
+      id: 'T1190'
+      name: 'Exploit Public-Facing Application'
+      evidence: >-
+        The state is the precondition of exploiting a public-facing application. The mapping marks
+        what the state enables, not any exploitation.
+
+visibility:
+  telemetry_sources:
+    - source: 'Software and package inventory with changelog data'
+      purpose: >-
+        Show the installed PHP package, release and changelog entries naming the fix, including
+        bundled copies.
+      event_vocabulary: 'none'
+      tier: 'not-applicable'
+      operational_viability: 'first-party-build'
+      details: >-
+        An estate-built inventory reading package databases, changelogs, bundled binaries and
+        container image layers. Because version strings mislead under backports, the changelog
+        check for the CVE ids is part of the record.
+      advantages:
+        - 'Directly answers whether the fix is installed.'
+        - 'Covers bundled engines when built to read binaries and images.'
+      limitations:
+        - 'Does not exist unless the estate builds it; no stock source reports bundled copies.'
+        - 'Changelogs may not name CVE ids for every distribution.'
+        - 'A package record cannot show which code a running worker loaded.'
+    - source: 'Process start time and uptime for PHP worker processes'
+      purpose: 'Show whether workers started after the fixed package was installed.'
+      event_vocabulary: 'host-process-event'
+      tier: 'metadata'
+      operational_viability: 'on-by-default'
+      details: >-
+        Endpoint and process inventory records each worker's start time, compared with the package
+        install time for the fixed build.
+      limitations:
+        - 'Needs process inventory from the host, which agentless estates lack.'
+        - >-
+            Workers fork from their master, so a worker started after the update may still run old
+            code if the master predates it; a PHP-FPM graceful reload re-executes the master in place
+            without changing its start time, so master age alone is inconclusive.
+        - 'Container restarts reset start time without confirming the image changed.'
+    - source: 'Container image and registry inventory'
+      purpose: 'Show which running containers use an image with an affected engine layer.'
+      event_vocabulary: 'none'
+      tier: 'not-applicable'
+      operational_viability: 'first-party-build'
+      details: >-
+        An image scan or software bill of materials records the engine build in each layer; the
+        orchestrator records which images run where.
+      limitations:
+        - 'A scan reports the image, not whether every running pod has been redeployed.'
+        - 'Base layers may contain several PHP copies, only one of which is served.'
+    - source: 'Passive network inventory of advertised PHP versions'
+      purpose: >-
+        Show which internet-facing servers advertise an affected PHP version in a response header
+        or phpinfo-style content, as an inventory pointer.
+      event_vocabulary: 'other'
+      event_vocabulary_note: 'HTTP transaction record from a network sensor'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'PHP version advertised in a response header'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CORELIGHT-REPO'
+          load_bearing: true
+          note: >-
+            Zeek notice Potentially_Affected_PHP_Version and a Suricata rule (3000651); the version
+            cutoffs are provisional.
+        - name: 'PHP version in phpinfo-style response content'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-CORELIGHT-REPO'
+          load_bearing: false
+      details: >-
+        A network sensor reads the advertised version and raises a notice when it falls in the
+        configured affected range. A banner read: a pointer for the inventory strategies, not fix
+        state.
+      limitations:
+        - 'Hidden or rewritten version headers hide the host; backports keep an old version string.'
+        - 'Needs HTTP visibility; blind to TLS terminated beyond the sensor.'
+        - 'Cannot show worker start time or an ini setting.'
+    - source: 'External exposure scanner banners and version probes'
+      purpose: 'Considered as evidence of the engine version seen from outside.'
+      event_vocabulary: 'none'
+      tier: 'not-applicable'
+      operational_viability: 'rejected-not-coverage'
+      details: >-
+        Banner and header checks may reveal a version string, but backports and hidden headers make
+        the result unreliable, and an ini setting cannot be seen from outside.
+      limitations:
+        - 'Version strings mislead under distribution backports.'
+        - 'Many deployments hide the version header.'
+        - 'Cannot show worker start time.'
+
+detection:
+  scope: >-
+    The detectable gate is conditional on inventory, so the strategies frame exposure assessment:
+    affected builds including bundled copies; patched packages with workers that predate the update;
+    and configuration bearing on the engine paths, for scoping only. None detects an attack or
+    claims to cover exploitation.
+  outcome_guardrails: >-
+    An affected build establishes exposure, not compromise; an unreadable one is unknown, not
+    exposed. A fixed package with a stale worker is still-open exposure, not an attack. A clean
+    inventory does not rule out bundled engines it did not read; absent exploitation logs do not
+    show a host was not attacked.
+  shared_normalization_context: >-
+    Normalise engine builds to upstream branch and fix state using the distribution changelog for
+    the CVE ids, not the reported version number alone, and normalise container and bundled copies
+    to the same record. Read distribution fix status from the distributor, not from a copy of it.
+  shared_enrichment_context: >-
+    Join the inventory to internet exposure, application owner and worker start times. Prioritise
+    by internet exposure and end of life status. No behavioral baseline is required.
+  strategies:
+    - id: 'STRAT-AFFECTED-BUILD-INVENTORY'
+      name: 'inventory of affected or unfixable PHP engine builds including bundled copies'
+      objective: >-
+        Find every internet-facing PHP engine on an affected build or a branch with no fix,
+        including copies bundled in control panels and container images.
+      incident_relevance: >-
+        Addresses the precondition of the disclosed flaws, not any observed attack. The
+        reformulation required because the object is not detectable as behavior.
+      detection_logic: >-
+        Per host, image and bundled application, record engine branch, build and distribution
+        release from OS packages, Homebrew, bundled Windows copies (XAMPP, WampServer, Laragon),
+        bundled PHP, image tags and PHP command lines. Read the version from the binary, not a
+        banner; under backports it does not decide fix state. Mark fixed only an upstream build at
+        or above its own branch's fix (8.2.35, 8.3.36, 8.4.27, 8.5.12), a package whose distribution
+        or LTS changelog names the CVE ids, or a 7.4 to 8.1 source build recorded as carrying the PHP
+        security team backport (Huntress); else exposed. Unfixable only when no fix applies. Record
+        end of life (8.1 and older) apart; unknown when unreadable.
+      minimum_evidence: >-
+        The engine build and the changelog or version evidence for its fix state. Without it,
+        report the host as unknown rather than fixed.
+      correlation_context: >-
+        Join on host and image identifiers and application owner. A stale inventory cannot show a
+        recent update.
+      detectors:
+        - detector_class: 'software-inventory-and-sbom'
+          technologies:
+            - 'Tanium Installed Applications'
+            - 'Tanium Homebrew Applications'
+            - 'Tanium Index (new Windows PHP installs)'
+            - 'Tanium (other vendor-stated candidate sensors, see the Tanium reference)'
+            - 'Package manager queries'
+            - 'Container image scanners'
+            - 'Software bill of materials tooling'
+            - 'Endpoint inventory agents'
+          contribution: 'Establishes the installed engine build and fix state per host and image.'
+          limitations: >-
+            Reads only what it is built to read; bundled engines and renamed binaries need explicit
+            checks, and backports need changelog logic.
+        - detector_class: 'vulnerability-scanner'
+          technologies:
+            - 'Authenticated vulnerability scanners'
+            - 'Tenable'
+            - 'Qualys VMDR'
+            - 'JFrog Xray'
+            - 'Google Artifact Analysis and On-Demand Scanning API'
+            - 'Wiz'
+            - 'CrowdStrike Falcon Exposure Management'
+          contribution: >-
+            Tenable WAS plugins 115719 to 115722 flag affected versions; Tenable plugins 48243, 58987,
+            200476, 216936 only identify installs and EOL versions. Qualys: 389102, 39033 (PHP2Shell); 5019895, 5019896 (Composer); 45110 (detection only, not vulnerability); distro 6056502, 711202, 290606, 6877311, 6877310.
+          limitations: >-
+            Version-string logic can misreport backports. Vendor-stated candidates with
+            check logic unread, some banner-based; none is verified for fix state or stale workers.
+            Xray flags affected ranges; Google Artifact Analysis notifies on artifacts and
+            Google advises container rebuild or redeploy.
+        - detector_class: 'passive-network-version-inventory'
+          technologies:
+            - 'Zeek (Corelight php2shell-detect, Potentially_Affected_PHP_Version)'
+            - 'Suricata (Corelight php2shell-detect, rules 3000651 and 3000652)'
+          contribution: >-
+            Points at servers advertising an affected PHP version in a response header or
+            phpinfo-style content, which finds hosts the
+            package inventory missed.
+          limitations: >-
+            A banner read: version cutoffs are provisional, backports and hidden headers mislead,
+            and it shows neither fix state nor stale workers. These rules map to this object, not
+            to the request-side objects.
+      benign_explanations:
+        - explanation: >-
+            The distribution package carries the fix under an old version string; check the
+            changelog for the CVE ids.
+          distinguishing_context: >-
+            The distribution changelog or advisory names the CVE ids for the installed release.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Suppressing all hosts with a patched distribution release without reading the changelog
+            would hide hosts whose release predates the fix.
+        - explanation: >-
+            The engine is present but not reachable from untrusted networks.
+          distinguishing_context: >-
+            Network reachability evidence shows no path from the internet or untrusted segments to
+            the workers.
+          overlaps_incident_instance: false
+      forbidden_exclusions:
+        - field: 'exclusion of a host because its version banner or header looks fixed'
+          reason: >-
+            Banners are adversary-visible and unreliable, and backports invalidate version checks.
+        - field: 'exclusion of a host because session upload progress is disabled'
+          reason: >-
+            The advisory states this mitigates one path of several and leaves the others open.
+        - field: 'exclusion of a host because the memory limit is set or removed'
+          reason: >-
+            The advisory describes administratively enforced memory_limit=-1 as the primary
+            configuration mitigation for CVE-2026-109618 and states it is not complete.
+        - field: 'exclusion of a host because logs show no exploitation'
+          reason: 'The advisory states clean logs do not prove a host is safe.'
+      blind_spots:
+        - description: >-
+            Missing telemetry: bundled engines inside control panels and appliances are not in the
+            system package database and are missed unless read from binaries.
+          routes_to: null
+        - description: >-
+            Evasion: a renamed or statically built engine binary escapes name-based inventory.
+          routes_to: null
+        - description: >-
+            Attribution limit: an exposed host cannot be linked to attempted exploitation by this
+            strategy; the failed-attempt cluster is a separate object.
+          routes_to: 'DT-P2S-APP-007'
+      analyst_response: >-
+        List hosts by exposure and fix state, confirm fix evidence from the changelog, schedule
+        update and restart, isolate or replace engines with no fix (CERT-EU advisory 2026-018), and
+        review hosts exposed before the update for DT-P2S-APP-001 to DT-P2S-HOST-006.
+      safe_conclusion: >-
+        An affected or unfixable build shows exposure, not compromise. An unreadable build or fix
+        state shows exposure cannot be determined, not that the host is exposed or fixed.
+    - id: 'STRAT-PATCHED-PACKAGE-STALE-WORKER'
+      name: 'fixed package installed while workers predate the update'
+      objective: >-
+        Find hosts and containers where the fixed package is installed but worker processes started
+        before the installation, so they still run the old engine.
+      incident_relevance: >-
+        Addresses the second exposure form, the unrestarted worker, which a package-level check
+        would report as fixed.
+      detection_logic: >-
+        For each host with the fixed package, compare the install time of the package or binary with
+        the start time of the PHP master and each worker. Mark as exposed any worker started before
+        the install time. Workers fork from their master, so a newer worker under an older master
+        is not proof of a fix: an older master (a PHP-FPM graceful reload keeps its start time;
+        Apache keeps its parent) is running-state-unknown until the running build is verified. Mark
+        closed only when the fixed build is running and every serving worker was replaced. For
+        containers, compare the running image id with the fixed image.
+      minimum_evidence: >-
+        The package install time and the master and worker start times on the same host. Without
+        process start data, report the host as fixed-on-disk, running-state-unknown.
+      correlation_context: >-
+        Join on host and process id with the package install event. Align clocks between package
+        manager and process inventory when the interval is short. Keep process data current, since
+        workers recycle.
+      detectors:
+        - detector_class: 'endpoint-process-and-package-correlation'
+          technologies:
+            - 'Endpoint detection and response inventory'
+            - 'Osquery'
+            - 'Velociraptor'
+            - 'Configuration management facts'
+          contribution: 'Compares process start time with package install time per host.'
+          limitations: >-
+            Needs process inventory and package install times from the same host; does not cover
+            agentless or unmanaged hosts.
+        - detector_class: 'orchestrator-image-comparison'
+          technologies:
+            - 'Kubernetes API inventory'
+            - 'Container registry metadata'
+          contribution: 'Shows whether running pods use the fixed image.'
+          limitations: 'Shows image identity, not whether the engine inside is the one served.'
+      benign_explanations:
+        - explanation: >-
+            A scheduled restart behind a maintenance window or compensating control; the host is
+            exposed until it completes.
+          distinguishing_context: >-
+            A change ticket and an enforced block at the edge both exist and the window is short.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            A permanent exception for scheduled restarts would leave long-lived workers exposed
+            indefinitely.
+        - explanation: >-
+            The host was rebuilt from a fixed image, so the install time reflects the image build.
+          distinguishing_context: >-
+            The process start time is after the image build and the running image id matches the
+            fixed one.
+          overlaps_incident_instance: false
+      forbidden_exclusions:
+        - field: 'exclusion of hosts because the package manager reports the fixed version'
+          reason: 'The workers may still run the old code loaded before the update.'
+        - field: 'exclusion of a host because a worker was recently restarted for another reason'
+          reason: >-
+            A restart before the package update still leaves the old engine loaded; compare to the
+            install time, not to any restart.
+      blind_spots:
+        - description: >-
+            Missing telemetry: hosts without process inventory cannot be assessed and show only the
+            package state.
+          routes_to: null
+        - description: >-
+            Evasion: none applies to an adversary; the gap is operational, where a graceful reload
+            leaves an old master process running.
+          routes_to: null
+      analyst_response: >-
+        Restart PHP-FPM and web server workers so the new binary is loaded, or redeploy the listed
+        containers, confirm start times after the update, then re-run the comparison; for hosts
+        exposed during the gap, review the sibling post-exploitation objects.
+      safe_conclusion: >-
+        The host has a fixed package but workers that started earlier and may still run the old
+        engine; exposure remains until they restart.
+
+    - id: 'STRAT-PHP-CONFIG-SCOPING'
+      name: 'per-host PHP configuration record for scoping the engine paths'
+      objective: >-
+        Scoping only. Record, per host, the configuration that bears on the engine paths, because
+        the advisory for CVE-2026-109619 states: "There is no complete generic configuration
+        mitigation." The record narrows which hosts and SAPIs to patch and restart first; it never
+        closes an exposure.
+      incident_relevance: >-
+        Addresses the configuration facts the two advisories name as producers and early consumers
+        of the stale-state and memory paths. Reformulates the exposure question for scoping; does
+        not describe or detect any attack.
+      detection_logic: >-
+        Per host, record: whether fatal_error_backtraces is enabled (PHP 8.5; the confirmed RCE
+        producer); whether deprecated or invalid INI directives apply before request initialization,
+        via .htaccess or Apache server or directory php_value, php_flag or php_admin_* on mod_php, or
+        PHP_VALUE or PHP_ADMIN_VALUE from nginx or mod_proxy_fcgi to PHP-FPM; whether LSAPI applies
+        early environment INI (conditional candidate); session.upload_progress.enabled; and whether
+        memory_limit is enforced administratively. As a logging audit, set log_errors On with E_ALL and
+        review for warnings repeated before scripts run and "Maximum execution time exceeded".
+      minimum_evidence: >-
+        The per-host values above with the SAPI and the file or pool they were read from. A host
+        with any value unread is unknown for that item. A logging audit result is an exposure audit
+        finding, never a statement that the host is safe.
+      correlation_context: >-
+        Join on host and SAPI to the inventory strategies. Read values from the file that applies to
+        the SAPI and process manager in use, and record the read time, since configuration is
+        mutable.
+      detectors:
+        - detector_class: 'configuration-audit-and-management'
+          technologies:
+            - 'Configuration management facts'
+            - 'Osquery'
+            - 'Velociraptor'
+            - 'Web server and PHP-FPM configuration file collection'
+          contribution: >-
+            Gives a per-host record of the producer and early-consumer conditions the advisories
+            name, so patching and restart order can be set and a conditionally exposed SAPI is not
+            described as untouched.
+          limitations: >-
+            Reads only what it is built to read; web server and frontend configuration that injects
+            PHP_VALUE or PHP_ADMIN_VALUE lives outside PHP and is missed unless collected. It does
+            not show fix state or which code a worker loaded.
+      benign_explanations:
+        - explanation: >-
+            A directive set for a legitimate reason (memory limit, upload setting). Record it as a
+            fact; fix state comes from the inventory strategies.
+          distinguishing_context: >-
+            The record is a scoping aid; the setting is reported as a fact and fix state is decided
+            by the inventory strategies, not by whether the setting is legitimate.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            A tuning step that skips hosts with legitimate directives would drop the very hosts
+            whose early consumers the advisory names as conditionally exposed.
+        - explanation: >-
+            Error logging was enabled for ordinary debugging and warnings appear on healthy hosts.
+          distinguishing_context: >-
+            Warnings repeated before scripts run, or timeouts of the "Maximum execution time
+            exceeded" kind, are exposure-audit findings to scope on, not evidence of compromise.
+          overlaps_incident_instance: false
+      forbidden_exclusions:
+        - field: 'exclusion of a host because session upload progress is disabled'
+          reason: >-
+            The advisory says this blocks only the demonstrated session paths; Tanium adds that it
+            does nothing for CVE-2026-109618.
+        - field: 'exclusion of a host because logs are clean or the audit found no warnings'
+          reason: >-
+            The advisory states that absence of an error in logs is not proof of safety, and the
+            early warning need not be fatal, displayed or logged.
+        - field: 'exclusion of a host because a configuration value looks safe'
+          reason: >-
+            The advisories state that an application, extension or server path may publish stale
+            state or consume it without a predictable log entry, so no single value closes the
+            exposure.
+      blind_spots:
+        - description: >-
+            Missing telemetry: web server, proxy and PHP-FPM frontend configuration is outside the
+            PHP configuration files, so Apache php_value, php_flag and php_admin_* on mod_php, and
+            PHP_VALUE and PHP_ADMIN_VALUE sent to PHP-FPM, are missed unless that configuration is
+            collected.
+          routes_to: null
+        - description: >-
+            Scope limit: the record names conditions the advisories say bear on the paths. It does
+            not enumerate every producer or consumer, which the advisory says may be unpredictable.
+          routes_to: null
+        - description: >-
+            Attribution limit: a configuration finding cannot be linked to attempted exploitation by
+            this strategy; the failed-attempt cluster is a separate object.
+          routes_to: 'DT-P2S-APP-007'
+      analyst_response: >-
+        Order patching and restart by the record, patch and restart every PHP worker regardless of
+        it, and use the inventory strategies for fix state. Treat any clean-log result as an
+        exposure audit result only.
+      safe_conclusion: >-
+        The host has PHP configuration that bears on the PHP2Shell engine paths as recorded; this
+        scopes patching priority and does not establish fix state, attack or compromise.
+
+  supporting_technologies_considered: >-
+    External attack surface scanners and WAF rules can reduce or reveal exposure but do not
+    establish fix state. Configuration changes such as disabling upload progress are partial
+    mitigations, not exposure closers. Memory and disk forensics are used after suspected
+    compromise and do not fit an inventory object.
+
+detector_requirements:
+  required: >-
+    A build inventory covering bundled and containerised copies, with changelog or advisory logic
+    for backported fix state; for stale workers, process start and package install times per host;
+    for scoping, PHP and web server configuration; internet exposure data; alert text reporting
+    exposure, not compromise.
+  optional: >-
+    Origin reachability beyond the edge and application ownership improve prioritisation and
+    ticket routing but do not gate the inventory.
+  correlation:
+    capability: >-
+      Stable host and image identifiers across package, process and orchestrator inventory, and
+      aligned clocks between package install times and process start times.
+    window: >-
+      Per host at the time of the inventory run; process start time compared to the last install.
+  product_support_caveat: >-
+    A named product is only a candidate; verify sensors, logging, fields and licensing first.
+    Confirm the inventory reads bundled engines and container layers, changelog logic handles each
+    backport route, and process start times exist for every PHP host. Tanium's and Corelight's
+    content is not fix-state coverage.
+
+missing_context:
+  unverified:
+    - >-
+      Talos says every PHP build since 5.4 is affected; Imperva believes back to 5.4.0 but not every release was tested; both support the 5.4 floor.
+    - >-
+      Qualys Deep Scan (QID 389102) finds PHP binaries outside standard paths, and php -v may name a different installation than the one serving requests; a patched runtime can end a worker at its hard memory threshold.
+    - >-
+      Optional measures, all partial: Qualys pm.max_requests=1 on PHP-FPM, blocking multipart requests where unused, and memory_limit=-1 as temporary only; Imperva opcache.enable=0; updating is the complete fix.
+    - >-
+      Source conflict: Upwind advises session.upload_progress.enabled=0 in php.ini, .user.ini or .htaccess; PHP, Talos and Qualys say not to rely on .user.ini.
+    - >-
+      Exposure range: Sansec, Wiz and Cloudflare name PHP 5.4 (2012-03-01) as the
+      earliest affected line. The release date is fact; exposure from then is a disputed researcher
+      claim (watchTowr; Kaspersky cites unofficial reports; the advisories do not cover PHP 5), so
+      the first-observed date is 2026-10.
+    - >-
+      Recon pivot, context only: VulnCheck (2026-10-21, Canary telemetry)
+      saw scanners request the site root, then common PHP information-page paths. Passive inventory
+      also finds such pages, so probing of estate hosts is scan context, not exploitation.
+    - >-
+      Partial mitigations per VulnCheck. 109618: low post_max_size, smaller
+      upload_max_filesize; proxy limits on body size, field, part and header counts and nesting
+      depth; cgroup limits. 109619: fatal_error_backtraces=0 on PHP 8.5; remove invalid early
+      per-request settings; fix reachable fatals and timeouts.
+    - >-
+      The affected version floor, disputed between PHP 5.4 (Sansec, Wiz, Cloudflare, Talos, Imperva, Google: 5.4 through 8.5.11) and all 5, 7
+      and 8 (watchTowr, unconfirmed); official fixes exist only for 8.2 and later.
+    - >-
+      Which distributions carry backports of the fix and under which package releases; read this
+      from each distribution's advisory.
+    - 'Whether a given control panel or appliance bundles an affected engine and how it is updated.'
+    - >-
+      Sansec's CVE-to-bug assignment differs from the php.net and GHSA mapping: CVE-2026-109618 is
+      OOM corruption (GHSA-w8hw-w9fx-j79w), CVE-2026-109619 stale global state
+      (GHSA-6wmf-4rv5-p3rp). The object is unaffected.
+  assumptions:
+    - id: 'ASSUMPTION-WORKERS-KEEP-OLD-CODE'
+      verdict_changing: true
+      statement: >-
+        Long-lived PHP workers keep the code they loaded, so an update closes exposure only at
+        restart. Tanium and Qualys say to restart after patching; the advisories require restarts
+        only after configuration mitigations. Holding for every SAPI is the pack's
+        generalisation; if wrong, the stale-worker strategy overreports.
+    - id: 'ASSUMPTION-CHANGELOG-NAMES-CVES'
+      verdict_changing: false
+      statement: >-
+        A distribution changelog or advisory names the CVE ids for a backported fix, so fix state
+        can be read from it (the pack's reading of the THN advice). If wrong for a distribution, fix
+        state stays unknown and inventory over-reports exposure. Resolve by reading each
+        distribution's security tracker for the two CVE ids.
+  standing_negatives:
+    - statement: >-
+        The advisories reviewed on 2026-10-21 document no complete interim measure short of update
+        and restart; upload-progress and memory-limit changes are partial.
+      ref: 'REF-GHSA-109619'
+      valid_until: '2026-12-31'
+      recheck: >-
+        Re-read the two PHP security advisories for a newly documented complete mitigation that does
+        not require updating.
+
+missing_states:
+  - id: 'MISSING_BUNDLED_ENGINE_INVENTORY'
+    meaning: >-
+      Missing telemetry: no inventory of PHP engines inside control panels, appliances and
+      container layers.
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report system-package results only and say bundled engines are unassessed; schedule a binary
+      and image scan.
+  - id: 'MISSING_PROCESS_START_DATA'
+    meaning: 'Missing telemetry: no process start times for PHP workers on a host.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report the host as fixed on disk with running state unknown, and restart workers as the
+      conservative step.
+  - id: 'FIX_STATE_UNREADABLE'
+    meaning: >-
+      Analyst trap: a version string that looks old on a backported package, or new on an unfixed
+      vendor build.
+    coverage_claim: 'no-coverage'
+    response: >-
+      Do not decide fix state from the version string; read the changelog or advisory for the CVE
+      ids.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_exposure_claim'
+    - 'host_or_image_and_owner'
+    - 'engine_branch_build_and_distribution_release'
+    - 'fix_state_and_evidence_for_it'
+    - 'internet_exposure_state'
+    - 'worker_start_times_versus_package_install_time'
+    - 'end_of_life_flag'
+    - 'timestamps_and_inventory_freshness'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'bundled_application_or_appliance'
+      condition: >-
+        when the engine is a bundled copy inside a control panel, appliance or container layer
+    - field: 'compensating_control_and_expiry'
+      condition: >-
+        when an edge block or maintenance window is relied on for a host that is not yet fixed
+  recommended_title: >-
+    Internet-facing PHP engine is affected by PHP2Shell or has workers older than its fix
+  unsupported_title: 'Host was compromised through PHP2Shell'
+
+evidence:
+  confirmed_incident_behavior: >-
+    Both GHSA advisories carry CVSS v4 9.2
+    (CVSS:4.0/AV:N/AC:H/AT:P/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N) and list CWE-416, CWE-755,
+    CWE-824, CWE-1325 and CWE-1419. CVE mapping: 109618 is
+    out-of-memory corruption, 109619 stale global state.
+  supported_conclusion: >-
+    Updating the engine is the only complete fix (then restarting workers, per Tanium and Qualys),
+    version strings mislead under backports, and exposure is assessable from inventory by
+    build, changelog and worker start time. A report may state that a host is exposed, fixed on disk
+    with workers unrestarted, or unknown.
+  unsupported_conclusions: >-
+    The evidence does not establish that any host was attacked or compromised, that an exposed host
+    was targeted, the affected version floor, or that an exposed state implies exploitation. A fixed
+    inventory entry does not prove the host was never compromised before the update.
+  procedure_boundary: >-
+    Attempts against this state are DT-P2S-APP-007 and DT-P2S-APP-008, the leak is DT-P2S-APP-009,
+    secret reuse is DT-P2S-APP-010, and host effects after code execution are DT-P2S-APP-001 to
+    DT-P2S-HOST-006; none shows this state existed on a particular host without the inventory.
+  references:
+    - id: 'REF-PHPNET-540'
+      type: 'attack-surface-documentation'
+      title: 'PHP 5.4.0 release data (php.net releases index)'
+      publisher: 'PHP Group (php.net)'
+      url: 'https://www.php.net/releases/index.php?json&version=5.4.0'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        PHP 5.4.0 release date, 2012-03-01, the disputed start of the researcher-claimed exposure
+        range.
+    - id: 'REF-VULNCHECK'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell Vulnerabilities: CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'VulnCheck'
+      url: 'https://www.vulncheck.com/blog/php2shell-vulnerabilities'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Canary telemetry 2026-10-21: scanner probes and multipart POSTs; one failed session-path
+        webshell attempt (ten follow-up reads all 404). None
+        of the public PoCs VulnCheck reviewed independently bypasses ASLR on x86-64.
+    - id: 'REF-GHSA-109618'
+      type: 'attack-surface-documentation'
+      title: 'RCE via OOM corruption'
+      publisher: 'PHP project (php-src security advisories)'
+      url: 'https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Memory path: trigger classes, SAPI susceptibility, no complete interim measure, restart
+        every PHP worker, and the CVSS v4 9.2 vector and CWE list.
+    - id: 'REF-GHSA-109619'
+      type: 'attack-surface-documentation'
+      title: 'RCE via stale global state'
+      publisher: 'PHP project (php-src security advisories)'
+      url: 'https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Early consumers (.htaccess and server directives on mod_php, PHP_VALUE or PHP_ADMIN_VALUE on
+        PHP-FPM, not .user.ini); upload progress mitigates one path only; clean logs prove nothing;
+        CVSS v4 9.2 vector and CWE list.
+    - id: 'REF-HUNTRESS'
+      type: 'incident-campaign-secondary-source'
+      title: 'Rapid Response: php2shell, Leaked Critical PHP Vulnerabilities (CVE-2026-109618 & CVE-2026-109619)'
+      publisher: 'Huntress'
+      url: 'https://huntress.com/blog/php2shell-leaked-critical-php-vulnerabilities'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Fixed versions; none seen on partner systems as of 4:30pm ET; versions prior to 8.2 likely have no
+        official patch; source backports exist for 7.4, 8.0 and 8.1. Not exploitation evidence.
+    - id: 'REF-THN-PROTECTS'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: What Actually Protects You Before the 14:00 UTC PHP RCE Patch, and What Doesn''t'
+      publisher: 'The Hacker News'
+      url: 'https://thehackernews.com/2026/10/php2shell-what-actually-protects-you.html'
+      trust_tier: 'news'
+      verification: 'confirmed'
+      evidence_use: >-
+        Backports keep old version strings; check the package changelog for the CVE. It mentions a
+        possible emergency restart but gives no instruction to restart workers after patching; that
+        advice comes from Tanium and Qualys.
+    - id: 'REF-TENABLE-FAQ'
+      type: 'incident-campaign-secondary-source'
+      title: 'php2shell (CVE-2026-109618, CVE-2026-109619): Critical PHP RCE FAQ'
+      publisher: 'Tenable'
+      url: 'https://www.tenable.com/blog/php2shell-cve-2026-109618-cve-2026-109619-frequently-asked-questions-about-critical-php-remote'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        PHP 5.4 to 7.3 is end of life with no fix from the PHP project; circulating proof of concept
+        code is unverified. Supports the upstream end-of-life label.
+    - id: 'REF-SANSEC'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Critical PHP RCE (CVE-2026-109618, CVE-2026-109619)'
+      publisher: 'Sansec'
+      url: 'https://sansec.io/research/php2shell'
+      trust_tier: 'researcher'
+      verification: 'confirmed-with-scope-caveat'
+      citation_caveat: 'contradicted-elsewhere'
+      citation_caveat_note: >-
+        Sansec assigns a bug to a CVE differently from the GHSA text; the 5.4 floor and stopgaps
+        used here do not depend on it and also appear in Wiz and Cloudflare.
+      evidence_use: >-
+        The 5.4 floor and the stopgap list, not its CVE mapping. The floor stays disputed against
+        watchTowr, which is unconfirmed.
+    - id: 'REF-PHPNET'
+      type: 'attack-surface-documentation'
+      title: 'PHP: News Archive - 2026'
+      publisher: 'PHP Group (php.net)'
+      url: 'https://www.php.net/archive/2026.php#2026-10-21-5'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Fixed builds (listed in manifestation.possible) and the CVE descriptions (109618 OOM
+        corruption, 109619 stale global state).
+    - id: 'REF-CROWDSTRIKE'
+      type: 'incident-campaign-secondary-source'
+      title: 'CrowdStrike Protects Customers from Threats Delivered via PHP2Shell'
+      publisher: 'CrowdStrike'
+      url: 'https://www.crowdstrike.com/en-us/blog/crowdstrike-protects-customers-from-php-rce-zero-days/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Vulnerable-version exposure assessment (Falcon Exposure Management) and end-to-end RCE on
+        Apache mod_php. Supports the exposure statement only.
+    - id: 'REF-TANIUM'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Responding to CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'Tanium'
+      url: 'https://www.tanium.com/blog/php2shell-responding-to-cve-2026-109618-and-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Status of 8.1 and older and the 7.4 to 8.1 stopgap; version readable from PHP 5 to 8
+        binaries; restart workers after patching; upload-progress nuance; internet-facing, mod_php,
+        ARM64 priority; CERT-EU isolation advice.
+    - id: 'REF-WIZ'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: AI uncovers critical RCE vulnerabilities affecting 70% of the Internet'
+      publisher: 'Wiz Research'
+      url: 'https://www.wiz.io/blog/php2shell-php-rce'
+      trust_tier: 'researcher'
+      verification: 'confirmed'
+      evidence_use: >-
+        Exploitation status in the status statement: Wiz reports unauthenticated code execution
+        impact. No in-the-wild compromise or post-exploitation behavior.
+    - id: 'REF-CLOUDFLARE'
+      type: 'incident-campaign-secondary-source'
+      title: 'Cloudflare deploys protections against php2shell vulnerability'
+      publisher: 'Cloudflare'
+      url: 'https://blog.cloudflare.com/php-vulnerabilities-waf-protection/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Exploitation status in the status statement: early attacks seen at the Cloudflare WAF.
+        Attempts against an edge, not compromise of a host.
+    - id: 'REF-WATCHTOWR'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: PHP Remote Code Execution Exploited'
+      publisher: 'watchTowr'
+      url: 'https://watchtowr.com/intelligence/php-remote-code-execution-php2shell/'
+      trust_tier: 'researcher'
+      verification: 'confirmed'
+      evidence_use: >-
+        Campaign status: "watchTowr is observing active exploitation attempts of both
+        CVE-2026-109618 and CVE-2026-109619", posted 14:19 UTC. Attempts, not compromise.
+    - id: 'REF-PATCHSTACK-PHP'
+      type: 'incident-campaign-secondary-source'
+      title: 'Major security alert: PHP vulnerable to critical RCE, attacks ongoing'
+      publisher: 'Patchstack'
+      url: 'https://patchstack.com/articles/php-major-vulnerability-alert-10-2026/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Campaign status: 07:34 UTC "Multiple active exploitation incidents reported to Patchstack by
+        hosting partners"; 13:57 UTC "only probing attacks, with no hard evidence of breaches yet".
+        Not reconciled on the page.
+    - id: 'REF-KASPERSKY'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: How to Protect Your Server'
+      publisher: 'Kaspersky'
+      url: 'https://www.kaspersky.com/blog/cve-2026-109618-109619-php-vulnerabilities/56583/'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Exploitation status in the status statement: first attempts observed before the patches
+        were published, undescribed; the page does not report a compromise.
+    - id: 'REF-RELIAQUEST'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Responding to Critical PHP Vulnerabilities | Threat Spotlight'
+      publisher: 'ReliaQuest'
+      url: 'https://reliaquest.com/blog/threat-spotlight-php2shell-responding-to-critical-php-vulnerabilities/'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Exploitation status in the status statement: no successful exploitation observed in
+        customer environments; in-the-wild reports are early and inconsistent, some only probing.
+    - id: 'REF-VIRUSTOTAL'
+      type: 'incident-campaign-secondary-source'
+      title: 'Sizing the PHP exposure window for CVE-2026-109618 and CVE-2026-109619 with VirusTotal'
+      publisher: 'VirusTotal'
+      url: 'https://blog.virustotal.com/2026/10/sizing-php-exposure-window-for-cve-2026.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Edge rules help only if the origin is not directly reachable; expose_php Off hides the
+        header, not the flaw; PHP 5.2 and 5.3 predate upload progress. Exposure counts are
+        footprint, not confirmed vulnerable hosts.
+    - id: 'REF-UBUNTU'
+      type: 'attack-surface-documentation'
+      title: 'USN-8948-2: PHP vulnerabilities'
+      publisher: 'Canonical'
+      url: 'https://ubuntu.com/security/notices/USN-8948-2'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Fixed packages for Ubuntu Pro and Legacy Support PHP 7.4 (20.04), 7.2 (18.04), 7.0 (16.04),
+        5.5 (14.04), including FPM and, where listed, the Apache module. Other distributions not
+        covered.
+    - id: 'REF-QUALYS'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: PHP Patches Two Critical RCE Vulnerabilities, Urges Immediate Updates'
+      publisher: 'Qualys'
+      url: 'https://blog.qualys.com/vulnerabilities-threat-research/2026/10/20/php-announces-critical-security-release-for-two-vulnerabilities'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Lists the QIDs, a Deep Scan for non-standard PHP paths and temporary measures; titles only, no check logic, so confirm availability in the platform.
+    - id: 'REF-TALOS'
+      type: 'incident-campaign-secondary-source'
+      title: 'Two critical RCEs in PHP core'
+      publisher: 'Cisco Talos'
+      url: 'https://blog.talosintelligence.com/two-critical-rces-in-php-core/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Says the flaws affect every PHP build since 5.4; advises not relying on .user.ini. Single vendor.
+    - id: 'REF-IMPERVA'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: When PHP Runs Out of Memory at the Wrong Moment'
+      publisher: 'Imperva'
+      url: 'https://www.imperva.com/blog/php2shell-vulnerability-updates/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Believed to affect PHP back to 5.4.0, not every release tested; opcache.enable=0 and upload progress off are temporary, not complete.
+    - id: 'REF-UPWIND'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Two Critical Unpatched PHP RCEs (CVE-2026-109618 & CVE-2026-109619) - Update'
+      publisher: 'Upwind'
+      url: 'https://www.upwind.io/feed/initial-assessment-php2shell-two-critical-unpatched-php-rces-cve-2026-109618-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Advises disabling upload progress in php.ini, .user.ini or .htaccess, which conflicts with other sources. Single vendor.
+    - id: 'REF-JFROG'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: All You Need to Know About CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'JFrog'
+      url: 'https://research.jfrog.com/post/php2shell-all-you-need-to-know-about-cve-2026-109618-and-cve-2026-109619/'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Xray flags PHP versions in the affected ranges in scanned artifacts and dependencies. No
+        check logic or fix-state handling described.
+    - id: 'REF-GOOGLE'
+      type: 'incident-campaign-secondary-source'
+      title: 'Responding to core PHP vulnerabilities CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'Google Cloud'
+      url: 'https://cloud.google.com/blog/products/identity-security/responding-to-core-php-vulnerabilities-cve-2026-109618-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Updated 3:30 p.m. PDT on 2026-10-21. Affected: PHP 5.4 through 8.5.11. Container rebuild or redeploy; Artifact Analysis notifications. No fix-state logic.
+    - id: 'REF-REDHAT'
+      type: 'incident-campaign-secondary-source'
+      title: 'CVE-2026-109619'
+      publisher: 'Red Hat'
+      url: 'https://access.redhat.com/security/cve/cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Red Hat rates CVE-2026-109619 CVSS v3.1 8.1 (attack complexity high); NVD scores 9.8; FPM is
+        conditionally affected through application-stage paths. The mitigation bulletin it cites was
+        not read.
+    - id: 'REF-CERTEU'
+      type: 'incident-campaign-secondary-source'
+      title: 'CERT-EU - Critical Vulnerabilities in PHP'
+      publisher: 'CERT-EU'
+      url: 'https://cert.europa.eu/publications/security-advisories/2026-018/'
+      trust_tier: 'government'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Recommends the NCSC-NL php2shell repository for finding third-party PHP; fixes published
+        13:30 UTC 2026-10-21 (this pack anchors on the GHSA publication, 13:34 UTC).
+    - id: 'REF-HADRIAN'
+      type: 'incident-campaign-secondary-source'
+      title: 'php2shell: Leaked critical PHP RCEs (CVE-2026-109618, -109619)'
+      publisher: 'Hadrian'
+      url: 'https://hadrian.io/vulnerability-alerts/php2shell-leaked-critical-php-rce-cve-2026-109618-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      citation_caveat: 'contradicted-elsewhere'
+      citation_caveat_note: >-
+        CISA and ReliaQuest report no (successful) exploitation; Hadrian reports it at scale without
+        counts. Cited only as a vendor claim; the campaign statement survives without it.
+      evidence_use: >-
+        11:35 UTC "We are now seeing php2shell exploited in the wild at scale", mostly via upload
+        progress; no counts. Treat a worker (php-fpm, php-cgi, httpd, apache2) starting a shell or
+        downloading tools as compromise.
+    - id: 'REF-CISA'
+      type: 'incident-campaign-secondary-source'
+      title: 'Critical Vulnerabilities in PHP Require Immediate Patching'
+      publisher: 'CISA'
+      url: 'https://www.cisa.gov/news-events/alerts/2026/10/21/critical-vulnerabilities-php-require-immediate-patching'
+      trust_tier: 'government'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        CISA "has not observed exploitation of these vulnerabilities as of the time of publication"
+        (2026-10-21); advises offline for PHP 8.1 or earlier or unpatchable systems. No KEV mention;
+        the KEV statement rests on Tanium.
+    - id: 'REF-CORELIGHT-REPO'
+      type: 'detection-modeling-reference'
+      title: 'corelight/php2shell-detect: Zeek and Suricata Detections for "php2shell" CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'Corelight'
+      url: 'https://github.com/corelight/php2shell-detect'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Commit 4d5131c: nine Zeek notices under PHP2SHELL:: and Suricata rules 3000650
+        (upload-progress POST field), 3000651 and 3000652 (PHP version in header or phpinfo).
+        Cutoffs provisional; matches can be benign.

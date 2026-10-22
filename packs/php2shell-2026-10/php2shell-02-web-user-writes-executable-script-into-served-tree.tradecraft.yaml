@@ -1,0 +1,763 @@
+identity:
+  uuid: 'c44a2f9b-52fd-4cd2-80f0-3c02e9aab352'
+  id: 'DT-P2S-HOST-002'
+  name: 'The web user writes an executable script into the served tree'
+  incident: >-
+    PHP2Shell (CVE-2026-109618 and CVE-2026-109619), two unauthenticated PHP engine RCE flaws
+    disclosed and patched on 2026-10-21. This object is generic PHP webshell placement shared with
+    every PHP RCE: no published source shows PHP2Shell post-exploitation, so it is expected-behavior
+    coverage, not PHP2Shell-specific.
+  first_observed: '2026-10'
+  last_reviewed: '2026-10-21'
+
+classification:
+  primary_attack_surface: 'host-filesystem'
+  secondary_attack_surfaces:
+    - 'application-runtime'
+  behavior_classes:
+    - 'persistence'
+  tags:
+    - 'php'
+    - 'php2shell'
+    - 'web-tier'
+    - 'webshell'
+    - 'file-write'
+    - 'post-exploitation'
+    - 'inferred'
+
+behavior:
+  definition: >-
+    An attacker with code execution in a PHP web worker writes or modifies an executable script
+    file in a directory the web server serves, outside any deployment process, so a later request
+    can run the code again.
+  detailed_definition: >-
+    The serving account writes code into the tree it serves: a new file in the document root or a
+    web-reachable upload, plugin or temp path, or an overwritten script. Content is free.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers the web worker account creating or changing an executable script in a served path;
+      does not cover code that persists only in memory or in a database, and does not establish that
+      any PHP2Shell intrusion has written a file.
+    summary: >-
+      Possible when the worker can write to a served, executable directory (document root, upload or
+      plugin directory, web-root temp path). Blocked where the tree is read-only for the worker,
+      execution is disabled in writable directories, or a sandbox confines it. No source reports a
+      file written after exploitation.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Observable where a sensor records file creation, rename or modification with the writing
+      process or account, or where file integrity monitoring covers the served paths; without
+      either, only the later request to the new file is visible in access logs.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          Needs an EDR file telemetry policy or kernel audit rules on the served directories, or
+          integrity monitoring with the paths enrolled. These are typically not enabled by default on a
+          web server.
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          Whether web hosts, shared-hosting accounts and containers have file telemetry depends on
+          the estate; coverage is uneven.
+    summary: >-
+      A file event names the writing process or account, path, extension and ideally hash or size.
+      Integrity monitoring shows a file appeared, often not who changed it. The access log shows
+      only the first request. A write-and-delete between polls leaves nothing.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Separable from legitimate writes when the writer is the web worker account or a PHP-hosting
+      process, the extension is executable and the path is served, and the write is outside the
+      known deployment and plugin-update processes; the access-log pivot alone is a weak signal.
+    blocking_conditions:
+      - condition: 'environment-inventory-required'
+        note: >-
+          Deployment tooling, CMS updaters, plugin and theme installers and caching layers write
+          scripts as the web user; their processes, accounts and paths must be inventoried.
+      - condition: 'cross-source-join-required'
+        note: >-
+          Linking a new file to its first request needs the file event joined to the access log by
+          path and time. Without the access log the file-event strategy still runs; only the
+          first-request severity raise is lost.
+    summary: >-
+      Separation rests on writer identity, executable extension in a served path, no deployment
+      process around the write, and where available a first request that is a successful POST. A
+      deployment or updater write is benign; a worker write with no installer is not. A new URI
+      receiving successful POSTs is too noisy alone.
+
+attack_surface_context:
+  surface: >-
+    The web document root and web-reachable writable directories (uploads, plugins, themes, cache,
+    temporary paths) of PHP applications, and the file permissions the worker account holds on them.
+  how_the_surface_works: >-
+    A PHP application is a tree of scripts the server maps to URLs. The worker can usually write
+    some subtrees (uploads, caches, plugin and theme installs); deployment runs as a separate
+    account. A new script in a served directory is reachable at once. Executable extensions: php,
+    phtml, phar and any the server runs.
+  incident_processing_path: >-
+    The advisories describe unauthenticated code execution as the web worker account. Huntress lists
+    webshells among things to look for if compromise is suspected. A webshell here is this pack's
+    inference.
+  processing_stages:
+    - 'worker-code-execution-achieved'
+    - 'writable-path-selected'
+    - 'script-file-written'
+    - 'file-reachable-by-url'
+    - 'first-request-to-new-file'
+    - 'repeat-code-execution'
+  stage_evidence: >-
+    A file event proves a write by a named process, not that the file is malicious or executed. The
+    first request proves reachability and use, not the writer. Integrity monitoring proves a change
+    between polls, not its actor.
+  trust_boundaries: >-
+    Request-handling code to persistent code in a served path: reached only if a write occurs.
+    Transient to repeatable execution under the worker account: reached by a webshell. Worker
+    account to wider privilege: not crossed by this behavior alone.
+  security_control_context: >-
+    Controls: read-only code trees, separate deploy and web accounts, no execution in upload
+    directories, integrity monitoring, EDR blocking script creation by the web user. Bypasses: an
+    already-executable path, appending to an existing file (missed by create-only rules), an unusual
+    executable extension, write-then-delete.
+  practitioner_implication: >-
+    Before writing the rule, find which hosts have file telemetry, which directories the worker can
+    write, which extensions the servers execute, and which deployment and updater processes
+    legitimately write scripts. The served-path inventory must be per application.
+
+threat_research:
+  why_it_matters: >-
+    A written script persists until it is removed, so a one-shot exploit becomes repeatable access.
+    Patching alone does not remove it.
+  threat_actor: >-
+    Unknown. No source attributes PHP2Shell activity to a named actor.
+  campaign: >-
+    PHP2Shell (CVE-2026-109618 and CVE-2026-109619), status as of 2026-10-21. Wiz and CrowdStrike
+    have demonstrated unauthenticated remote code execution in lab conditions, CrowdStrike end to
+    end on Apache mod_php, and the PHP advisory for CVE-2026-109619 validates its session path
+    against both mod_php and PHP-FPM. Exploitation attempts are reported by Cloudflare, watchTowr,
+    Patchstack (a 07:34 UTC entry relays active exploitation incidents from hosting partners; a
+    13:57 UTC entry describes only probing), Kaspersky (attempts before the patch), Hadrian
+    (exploitation at scale, with no counts) and VulnCheck (canary scans and at least one session-path webshell attempt on 21 October, 17:22-17:24 UTC, whose ten follow-up reads all returned 404). No source documents a confirmed compromise: CISA has not observed exploitation,
+    ReliaQuest has not seen successful exploitation in customer environments, and Tanium reported on 21 October that neither CVE was in the CISA KEV catalog. Red Hat rates CVE-2026-109619 CVSS 3.1 8.1 for high attack
+    complexity, while Red Hat's page lists NVD's score as 9.8. VulnCheck reports that none of the public proofs of concept it reviewed independently bypasses ASLR on x86-64, and that exploitation works on ARM64 and on x86 without ASLR.
+  victim: >-
+    None documented for post-exploitation. Exposed class: PHP web servers where the worker
+    account can write to a served path.
+  capability: >-
+    Not demonstrated for post-exploitation. Huntress lists webshells among things to look for if
+    compromise is suspected.
+  target: >-
+    The served file tree of PHP applications and the worker account's write permission to it.
+  victimology:
+    - 'WordPress, Drupal, Joomla and custom PHP applications (Wiz demonstrated code execution on all three).'
+    - 'Shared hosting where many sites run under accounts with write access to their own roots.'
+  framework_mappings:
+    - framework: 'MITRE ATT&CK'
+      id: 'T1505.003'
+      name: 'Server Software Component: Web Shell'
+      evidence: >-
+        A script written to a served path for repeatable code execution is a web shell by
+        definition. General-technique mapping.
+    - framework: 'MITRE ATT&CK'
+      id: 'T1105'
+      name: 'Ingress Tool Transfer'
+      evidence: >-
+        Applies only if the file arrives from an external fetch rather than being composed in
+        place, and only where the content origin is established.
+
+visibility:
+  telemetry_sources:
+    - source: 'Endpoint detection and response file-create and rename events'
+      purpose: >-
+        Record that a PHP-hosting process or the web account created, renamed or modified a script
+        in a served path.
+      event_vocabulary: 'host-process-event'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'file path, name and extension'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+          note: >-
+            Believed to be emitted by endpoint sensors with file telemetry; spelling is
+            product-specific.
+        - name: 'writing process image and account'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+        - name: 'file hash or size'
+          attestation: 'unattested-inferred'
+          load_bearing: false
+          note: 'Hashes are metadata only here and are never a detection key.'
+      details: >-
+        Events carry the target path, acting process and account, and sometimes hash or size. The
+        most direct record of the worker writing a script.
+      limitations:
+        - 'File telemetry is frequently filtered for volume, and web roots may be excluded by policy.'
+        - 'Many Linux web servers run no endpoint sensor.'
+        - 'The writing process can be a supervisor rather than the worker, hiding lineage.'
+    - source: 'Linux kernel audit file-watch records'
+      purpose: >-
+        File-write evidence on hosts with no endpoint sensor, from watches on served directories.
+      event_vocabulary: 'kernel-audit'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'path, name, auid and exe of the writing process'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+          note: 'Believed to be emitted when watch rules are loaded on the directory.'
+      details: >-
+        Watch rules report creates and attribute changes with account and executable, but need
+        per-path rules.
+      limitations:
+        - 'Rules must name each directory; recursive trees and many sites create heavy rule sets.'
+        - 'High event volume on busy upload paths, and records can be split across lines.'
+    - source: 'File integrity monitoring of served paths'
+      purpose: >-
+        Show that a script appeared or changed where no file event stream exists.
+      event_vocabulary: 'application-record'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      details: >-
+        Compares enrolled files against a baseline and reports additions and changes, with hashes
+        and sometimes the acting account.
+      limitations:
+        - 'Polling misses a file written and deleted between scans.'
+        - 'Usually reports a change, not the acting process.'
+        - 'Upload and cache directories are often excluded because they churn.'
+    - source: 'Web server access logs'
+      purpose: >-
+        Pivot to the first request that reaches a new script and the POSTs it receives.
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'on-by-default'
+      details: >-
+        Shows URI, method, status, size and client. A first-seen URI that begins receiving
+        successful POSTs is a pivot from the file event or a fallback.
+      limitations:
+        - 'Does not show the write, only use of the file.'
+        - 'Legitimate new URIs appear with every deploy and plugin install.'
+        - 'Request bodies are not logged, so file content is invisible.'
+    - source: 'Deployment and change inventory'
+      purpose: >-
+        Define the legitimate writers of scripts: deploy accounts, updaters and install windows.
+      event_vocabulary: 'none'
+      tier: 'not-applicable'
+      operational_viability: 'first-party-build'
+      details: >-
+        A computed list of processes, accounts, paths and windows in which scripts are legitimately
+        created, built from the deployment system, CMS updater configuration and change records.
+      limitations:
+        - 'Must be maintained as applications and pipelines change.'
+        - 'Self-updating CMS code makes the web account itself a legitimate writer in some paths.'
+
+detection:
+  scope: >-
+    Covers the script write and its first use. Two strategies split coverage by telemetry: a
+    file-event strategy that names the writer, and an access-log pivot for when no file event
+    exists. Appends to existing files, in-memory code and configuration overrides are covered by
+    siblings or fall outside.
+  outcome_guardrails: >-
+    A file event proves a write by a named process, not malice. A first request proves reachability
+    and use, not the writer. A successful POST proves a response, not script behavior. A firing rule
+    proves unusual script placement by the web user, not exploitation of CVE-2026-109618 or
+    CVE-2026-109619.
+  shared_normalization_context: >-
+    Normalise paths to each application's served tree, extensions case-insensitively across php,
+    phtml, phar and any server-configured extensions, including any an override maps to PHP
+    (DT-P2S-HOST-003), and the writer to a web-worker class by
+    account and process image. Treat renames into a served path as writes.
+  shared_enrichment_context: >-
+    Join deployment and updater inventory to separate legitimate writers, and the access log to the
+    first request. A thirty-day history of first-seen URIs per site supports the pivot strategy.
+  strategies:
+    - id: 'STRAT-WEB-USER-SCRIPT-WRITE-EVENT'
+      name: 'Web worker writes an executable script into a served path'
+      objective: >-
+        Detect the web worker account or a PHP-hosting process creating, renaming or modifying an
+        executable script in a served path outside deployment processes.
+      incident_relevance: >-
+        Detects a possible consequence of PHP2Shell and of any PHP RCE, not the exploit; generic
+        webshell placement coverage.
+      detection_logic: >-
+        Alert when file telemetry shows a create, rename into place or modify of a file with an
+        executable extension in a served path by the web worker account or a PHP-hosting process,
+        outside a known deployment, updater or install window. Raise severity when the first
+        request to the new path follows within minutes as a successful POST, or when the file sits
+        in an upload or temporary directory where code is not expected. Normalise the path and
+        extension before matching.
+      minimum_evidence: >-
+        One file event naming the writer as the worker account or a PHP-hosting process, the path
+        and executable extension, with no matching deployment, updater or install window. Without
+        the writer, report that a script appeared in a served path, not that the worker wrote it.
+      correlation_context: >-
+        Key on host, path and writer. Join the access log by path within fifteen minutes after the
+        write. A thirty-minute window around known deployment windows is used for exclusion and must
+        be the actual window of the job, not a day.
+      detectors:
+        - detector_class: 'endpoint-file-event-rule'
+          technologies:
+            - 'EDR with file telemetry'
+            - 'Microsoft Defender for Endpoint advanced hunting'
+            - 'Elastic Defend'
+            - 'CrowdStrike Falcon'
+            - 'Sysmon for Linux'
+            - 'Datadog Workload Protection'
+          contribution: >-
+            Evaluates writer, path and extension directly and can block the write by policy.
+          limitations: >-
+            Needs file telemetry on the web tier; web roots are often excluded for volume.
+        - detector_class: 'file-integrity-monitor-with-actor-join'
+          technologies:
+            - 'Wazuh'
+            - 'Tripwire'
+            - 'auditd with a SIEM forwarder'
+            - 'osquery file events'
+          contribution: >-
+            Reports new or changed scripts in enrolled paths and, with audit, the actor.
+          limitations: >-
+            Polling misses short-lived files and most monitors omit the acting process.
+      benign_explanations:
+        - explanation: >-
+            Deployment pipelines and CMS updaters write scripts into the served tree as the web or
+            deploy account.
+          distinguishing_context: >-
+            The write is within a known deployment or update window, from the pipeline process, on
+            known application paths; a write in an upload directory at an unplanned time is not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding the web account as a writer, or a plugin directory entirely, suppresses the
+            exact write an intruder would make.
+        - explanation: >-
+            A site owner installs a plugin or theme through the CMS administration interface.
+          distinguishing_context: >-
+            An authenticated administrator request for the install precedes the file creation and
+            the plugin directory structure is complete.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding all plugin-tree writes by the web account hides a backdoor plugin installed
+            the same way.
+      forbidden_exclusions:
+        - field: 'file name, hash or content string as an allow-list'
+          reason: >-
+            Adversary-settable: an attacker file can borrow an allowed name.
+        - field: 'web account as a blanket writer exclusion'
+          reason: >-
+            The attacker writes as the web account; excluding it suppresses the incident record.
+        - field: 'plugin, theme or upload directory as a blanket path exclusion'
+          reason: >-
+            Common webshell destinations; excluding them hides the incident itself.
+        - field: 'the vulnerability name or a known webshell family name'
+          reason: >-
+            Free to change; keying on a name misses every variant.
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: >-
+          No source states a rate and nothing has been measured. Varies by estate with how often
+          CMS updaters run as the web user and whether upload directories hold scripts.
+      blind_spots:
+        - description: >-
+            Evasion: appending code to an existing file is a modify, not a create, and a create-only
+            implementation misses it.
+          routes_to: null
+        - description: >-
+            Missing telemetry: hosts without file telemetry, and web roots excluded for volume,
+            record nothing.
+          routes_to: null
+        - description: >-
+            Evasion: a file written and deleted between integrity polls, or code held only in memory
+            or in the database, leaves no file.
+          routes_to: null
+        - description: >-
+            Attribution limit: configuration overrides that change engine behavior without a script
+            are a separate behavior.
+          routes_to: 'DT-P2S-HOST-003'
+        - description: >-
+            Related variant: code planted in a session file through the upload-progress path is
+            written by the engine before code execution (this pack's inference), has no executable
+            extension and lies outside the served tree; neither strategy covers it.
+          routes_to: 'DT-P2S-APP-008'
+        - description: >-
+            Related variant: Huntress reported, in a prior-week incident that is not PHP2Shell,
+            a PHP FastCGI process writing a small PHP file into a writable temporary directory,
+            executing it and deleting it. A rule limited to the served tree misses it,
+            and a poll-based integrity check misses the deletion.
+          routes_to: null
+      analyst_response: >-
+        Identify the writer process and account, file path and content, and whether a deployment
+        ran. Pull access-log requests to the path, preserve the file before removal, check child
+        processes, outbound connections and scheduler or account changes from the same lineage, and
+        check the PHP build and restart state.
+      safe_conclusion: >-
+        The web worker account or a PHP-hosting process wrote an executable script into a served
+        path outside deployment activity; whether it is malicious needs the content and use
+        evidence.
+    - id: 'STRAT-NEW-URI-RECEIVES-POSTS-PIVOT'
+      name: 'First-seen URI under the web root begins receiving successful POSTs'
+      objective: >-
+        Detect probable webshell use through a URI never requested before that starts receiving
+        successful POSTs, when no file telemetry exists.
+      incident_relevance: >-
+        Weak pivot for hosts with no file events; cannot establish that the worker wrote a script.
+      detection_logic: >-
+        Alert, as a low-confidence risk signal, when a URI path under a site has no appearance in
+        the thirty-day history and then receives repeated successful POSTs from a small number of
+        clients, particularly in an upload, plugin or temporary directory or with an executable
+        extension. Suppress paths that match recorded deployments.
+      minimum_evidence: >-
+        Access-log records for a first-seen URI with repeated successful POSTs from at least one
+        client and an absent deployment record. Report a suspected unexpected endpoint, not a webshell.
+      correlation_context: >-
+        Key on site, URI and client over a rolling thirty days. Deploy records are joined by site
+        and time; ingestion delay can make a new URI look first-seen twice.
+      detectors:
+        - detector_class: 'web-log-first-seen-rule'
+          technologies:
+            - 'Splunk'
+            - 'Elastic'
+            - 'Microsoft Sentinel'
+            - 'Google SecOps'
+          contribution: >-
+            Computes first-seen URIs and POST patterns over web logs and joins to deploy history.
+          limitations: >-
+            High base rate from legitimate new routes and installs; cannot see the file or the
+            writer.
+      benign_explanations:
+        - explanation: >-
+            New application routes, plugin endpoints and API paths appear with each deployment and
+            receive POSTs from real users.
+          distinguishing_context: >-
+            The URI appears in the deployment record or route definitions and the clients are
+            customer traffic; a bare file path in an upload directory does not.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding all POSTs to plugin paths removes the signal for a backdoor plugin.
+      forbidden_exclusions:
+        - field: 'client address, user agent or country as an allow-list'
+          reason: >-
+            Adversary-settable and rotating; the actor chooses the source.
+        - field: 'URI name patterns as an allow-list'
+          reason: >-
+            Free to choose; an attacker names the file to match an allowed pattern.
+      blind_spots:
+        - description: >-
+            Evasion: the shell is used with GET, or requests are mixed into existing endpoints,
+            avoiding a first-seen URI.
+          routes_to: null
+        - description: >-
+            Missing telemetry: request bodies and file content are absent, so the pivot cannot
+            confirm a shell.
+          routes_to: null
+        - description: >-
+            Attribution limit: a high legitimate base rate makes the pivot only a residual signal.
+          routes_to: null
+      analyst_response: >-
+        Retrieve the file at the URI from the host, check its owner, creation time and content,
+        search deployment records, and examine POST sizes and responses. Look for child processes
+        and outbound connections from the web account at the same times.
+      safe_conclusion: >-
+        An endpoint never seen before began receiving successful POSTs; whether a webshell was
+        placed needs the file and the writer.
+
+detector_requirements:
+  required: >-
+    File-event rule: file-write events or audit watches on served paths with the writer, or
+    integrity monitoring with an actor join; path and extension normalisation. Access-log pivot:
+    a thirty-day first-seen URI history. Both: a deployment writer and window inventory; alert
+    text saying a script appeared.
+  optional: >-
+    Content or hash enrichment for triage, and the access-log join to the first request for the
+    file-event rule. Neither gates that rule, and hashes are never a detection key.
+  correlation:
+    capability: >-
+      Consistent host, path and process identifiers across file and web logs and synchronised
+      clocks, so a file event joins to the first request.
+    window: >-
+      Fifteen minutes from write to first request; thirty minutes around known deployment windows
+      for exclusion.
+  baselines:
+    - name: 'Legitimate script writers and deployment windows per application'
+      window: '30-day rolling'
+      seeded_from: >-
+        Deployment pipeline records, CMS updater schedules and change tickets; never seeded from
+        observed web-account writes, which would enrol an intruder write as normal.
+  product_support_caveat: >-
+    Named products are candidates only; support depends on deployed sensors, logging and fields.
+    Confirm file telemetry covers served paths, records the acting process and separates deployment
+    writers. No vendor rule is cited; generic EDR web-shell content may cover this but is unverified
+    and not PHP2Shell-specific.
+missing_context:
+  unverified:
+    - >-
+      The first-observed date '2026-10' is the month of the public disclosure (GHSA published
+      2026-10-21T13:34Z), not an observation: this behavior has not been observed for PHP2Shell.
+      Evidence class: inferred.
+    - >-
+      Variant: VulnCheck (2026-10-21) saw at least one unsuccessful attempt (17:22-17:24 UTC)
+      to stage code via the session upload-progress path, then ten file reads, all 404. Observables:
+      code in session save path files; stream-wrapper parameters after a multipart POST.
+    - >-
+      VulnCheck labels its upload-progress findings CVE-2026-109618; the GHSAs place that path under
+      CVE-2026-109619, which this pack follows.
+    - 'Whether any PHP2Shell intrusion has written a file; no source reports post-exploitation.'
+    - 'Which of an estate''s web roots and upload paths are excluded from file telemetry.'
+    - 'Whether the web account can write to executable paths on a given host.'
+    - >-
+      The session-store variant's mechanism beyond VulnCheck's at least one unsuccessful attempt was not read at source.
+  assumptions:
+    - id: 'ASSUMPTION-WEBSHELL-EXPECTED'
+      verdict_changing: true
+      statement: >-
+        PHP2Shell post-exploitation writes a script to a served path. Huntress lists webshells
+        among things to look for; no file reported. If wrong, the rule misses PHP2Shell intrusions persisting differently.
+        Resolve it by finding a published post-exploitation report that names a written file.
+    - id: 'ASSUMPTION-WEB-ACCOUNT-CAN-WRITE'
+      verdict_changing: false
+      statement: >-
+        The web account can write to at least one executable served path on typical hosts; no source
+        surveys permissions. If wrong, the behavior is blocked on hardened hosts and the rule is
+        silent there, which is acceptable. Resolve by listing web account write permissions on
+        sampled production web roots.
+  standing_negatives:
+    - statement: >-
+        No source reviewed on 2026-10-21 reports a webshell or file written after PHP2Shell
+        exploitation. Bounded by the Patchstack 07:34 UTC entry (hosting-partner incident reports,
+        unreconciled with its 13:57 UTC probing-only entry). Checked: PHP advisories, Huntress,
+        watchTowr, vendor writeups.
+      ref: 'REF-HUNTRESS'
+      valid_until: '2026-10-28'
+      recheck: >-
+        Re-check the CISA KEV catalog for either CVE, the watchTowr PHP2Shell page and the
+        Patchstack live timeline (including any reconciliation of its 07:34 and 13:57 UTC entries)
+        for a post-exploitation report that names a file.
+
+missing_states:
+  - id: 'MISSING_FILE_WRITE_TELEMETRY'
+    meaning: >-
+      Missing telemetry: no file-write events or audit watches exist for the served paths.
+    coverage_claim: 'no-coverage'
+    response: >-
+      Report no coverage for the write and rely on the access-log pivot only as a low-confidence
+      signal; do not state that no file was written.
+  - id: 'MISSING_WRITER_IDENTITY'
+    meaning: >-
+      Missing telemetry: the integrity monitor reports a changed file but not the acting process or
+      account.
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report that a script appeared in a served path and recover the writer from other sources;
+      do not attribute it to the worker.
+  - id: 'MISSING_SHORT_LIVED_FILE'
+    meaning: >-
+      Analyst trap: a clean integrity report is read as proof that no script was written, though a
+      write-delete cycle between polls leaves no trace.
+    coverage_claim: 'coverage-limited'
+    response: >-
+      State that polling cannot rule out short-lived files, and check process and network signals
+      before concluding.
+  - id: 'MISSING_DEPLOY_INVENTORY'
+    meaning: >-
+      Missing context: legitimate script writers and deployment windows are not inventoried.
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Alert on every worker script write at lower confidence, highest in upload and temporary
+      directories, until the inventory exists; exclude the web account from no path.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'actor_or_explicit_missing_state'
+    - 'host_and_site_identity'
+    - 'file_path_and_extension'
+    - 'deployment_window_check_result'
+    - 'first_request_to_file_when_available'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'writing_process_and_account'
+      condition: 'when the file event or audit record names the writer; otherwise state the missing writer'
+    - field: 'post_write_post_requests'
+      condition: 'when access logs for the site are joined within the fifteen-minute window'
+    - field: 'descendant_process_and_network_activity'
+      condition: 'when the same lineage produced process or connection records after the write'
+  recommended_title: >-
+    Web worker account wrote an executable script into a served path outside deployment
+  unsupported_title: 'Webshell planted through PHP2Shell'
+
+evidence:
+  confirmed_incident_behavior: >-
+    The PHP advisories confirm unauthenticated code execution as the web worker account. No source
+    documents a file written: Wiz and CrowdStrike show lab execution only; Huntress reports no confirmed IOCs.
+    The file write is this pack's inference (see the assumptions).
+  supported_conclusion: >-
+    Code running as the web worker can write executable scripts where the account has write
+    permission; such a write outside deployment is visible where file telemetry exists; and a
+    file-event rule can emit it. This supports reporting an unexpected script in a served path,
+    not an exploited vulnerability.
+  unsupported_conclusions: >-
+    Not established: successful PHP2Shell exploitation, any intrusion writing a file, any actor,
+    tooling or payload, or that clean integrity monitoring means a host is safe. Persistence held
+    only in memory or a database is not covered. This object is generic PHP RCE coverage, not
+    PHP2Shell coverage.
+  procedure_boundary: >-
+    This procedure is the write of an executable script into a served path by the web user.
+    Siblings: child-process (DT-P2S-APP-001), configuration-override (DT-P2S-HOST-003),
+    outbound-connection (DT-P2S-APP-004). A later request executing the file is separate from the
+    write.
+  references:
+    - id: 'REF-VULNCHECK'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell Vulnerabilities: CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'VulnCheck'
+      url: 'https://www.vulncheck.com/blog/php2shell-vulnerabilities'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Canary telemetry on 2026-10-21 (08:37-17:24 UTC): scanner probes and multipart POSTs; at least one
+        unsuccessful session-path webshell attempt 17:22-17:24 UTC; no confirmed exploitation.
+        Atomic indicators not copied.
+    - id: 'REF-HUNTRESS'
+      type: 'incident-campaign-secondary-source'
+      title: 'Rapid Response: php2shell, Leaked Critical PHP Vulnerabilities (CVE-2026-109618 & CVE-2026-109619)'
+      publisher: 'Huntress'
+      url: 'https://huntress.com/blog/php2shell-leaked-critical-php-vulnerabilities'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Lists webshells, new web-root files, cron jobs, tasks and accounts to look for; none seen.
+        Reports a pre-disclosure non-PHP2Shell incident: a FastCGI process wrote a PHP file to a
+        temp directory, ran and deleted it.
+    - id: 'REF-GHSA-109619'
+      type: 'attack-surface-documentation'
+      title: 'RCE via stale global state'
+      publisher: 'PHP project (php-src security advisories)'
+      url: 'https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports execution as the web worker account and that clean logs do not prove a host is
+        safe. Not any file written.
+    - id: 'REF-REDHAT'
+      type: 'attack-surface-documentation'
+      title: 'CVE-2026-109619'
+      publisher: 'Red Hat'
+      url: 'https://access.redhat.com/security/cve/cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        CVSS 3.1 base score 8.1 (AV:N/AC:H) for CVE-2026-109619, cited in the status statement.
+        Not any exploitation.
+    - id: 'REF-WIZ'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: AI uncovers critical RCE vulnerabilities affecting 70% of the Internet'
+      publisher: 'Wiz Research'
+      url: 'https://www.wiz.io/blog/php2shell-php-rce'
+      trust_tier: 'researcher'
+      verification: 'confirmed'
+      evidence_use: >-
+        Demonstration of unauthenticated code execution on WordPress, Drupal and Joomla deployments.
+        No file written; not in-the-wild evidence.
+    - id: 'REF-CROWDSTRIKE'
+      type: 'incident-campaign-secondary-source'
+      title: 'CrowdStrike Protects Customers from Threats Delivered via PHP2Shell'
+      publisher: 'CrowdStrike'
+      url: 'https://www.crowdstrike.com/en-us/blog/crowdstrike-protects-customers-from-php-rce-zero-days/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Verified end to end that one anonymous POST made an Apache mod_php worker launch a shell. No
+        file placement; not in-the-wild evidence.
+    - id: 'REF-PATCHSTACK-PHP'
+      type: 'incident-campaign-secondary-source'
+      title: 'Major security alert: PHP vulnerable to critical RCE, attacks ongoing'
+      publisher: 'Patchstack'
+      url: 'https://patchstack.com/articles/php-major-vulnerability-alert-10-2026/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Bounds the standing negative: 07:34 UTC relays active exploitation incidents from hosting
+        partners; 13:57 UTC describes only probing, no hard evidence of breaches. Unreconciled. Not
+        any post-exploitation behavior.
+    - id: 'REF-TANIUM'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Responding to CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'Tanium Guardian Research Team'
+      url: 'https://www.tanium.com/blog/php2shell-responding-to-cve-2026-109618-and-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Exploitation status in the status statement: neither CVE in CISA KEV, watchTowr
+        exploitation seen in its honeypots, no public IOCs released. Not any compromise.
+    - id: 'REF-CLOUDFLARE'
+      type: 'incident-campaign-secondary-source'
+      title: 'Cloudflare deploys protections against php2shell vulnerability'
+      publisher: 'Cloudflare'
+      url: 'https://blog.cloudflare.com/php-vulnerabilities-waf-protection/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Cited for the exploitation status in the status statement: attack traffic observed
+        against Cloudflare customers. Attempts against an edge, not compromise of a host.
+    - id: 'REF-WATCHTOWR'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: PHP Remote Code Execution Exploited'
+      publisher: 'watchTowr'
+      url: 'https://watchtowr.com/intelligence/php-remote-code-execution-php2shell/'
+      trust_tier: 'researcher'
+      verification: 'confirmed'
+      evidence_use: >-
+        Exploitation status in the status statement: "watchTowr is observing active exploitation
+        attempts of both CVE-2026-109618 and CVE-2026-109619" (post published 14:19 UTC). Attempts, not a
+        compromise.
+    - id: 'REF-KASPERSKY'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: How to Protect Your Server'
+      publisher: 'Kaspersky'
+      url: 'https://www.kaspersky.com/blog/cve-2026-109618-109619-php-vulnerabilities/56583/'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Exploitation status in the status statement: first attempts observed before the patches
+        were published, undescribed; no compromise reported.
+    - id: 'REF-RELIAQUEST'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Responding to Critical PHP Vulnerabilities | Threat Spotlight'
+      publisher: 'ReliaQuest'
+      url: 'https://reliaquest.com/blog/threat-spotlight-php2shell-responding-to-critical-php-vulnerabilities/'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Exploitation status in the status statement: no successful exploitation observed in
+        customer environments; in-the-wild reports are early and inconsistent, some only probing.
+    - id: 'REF-HADRIAN'
+      type: 'incident-campaign-secondary-source'
+      title: 'php2shell: Leaked critical PHP RCEs (CVE-2026-109618, -109619)'
+      publisher: 'Hadrian'
+      url: 'https://hadrian.io/vulnerability-alerts/php2shell-leaked-critical-php-rce-cve-2026-109618-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      citation_caveat: 'contradicted-elsewhere'
+      citation_caveat_note: >-
+        CISA and ReliaQuest report no observed exploitation; Hadrian reports it at scale, no counts.
+        Vendor claim only; the campaign statement survives without it (Cloudflare, watchTowr,
+        Patchstack report attempts).
+      evidence_use: >-
+        Campaign status: 11:35 UTC "We are now seeing php2shell exploited in the wild at scale",
+        mostly via session upload-progress; 14:35 UTC says it is still at scale. No counts or indicators.
+    - id: 'REF-CISA'
+      type: 'incident-campaign-secondary-source'
+      title: 'Critical Vulnerabilities in PHP Require Immediate Patching'
+      publisher: 'CISA'
+      url: 'https://www.cisa.gov/news-events/alerts/2026/10/21/critical-vulnerabilities-php-require-immediate-patching'
+      trust_tier: 'government'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Campaign status: CISA "has not observed exploitation of these vulnerabilities as of the time
+        of publication" (2026-10-21). Advises offlining unpatchable or PHP 8.1-or-earlier systems;
+        KEV claim rests on Tanium.

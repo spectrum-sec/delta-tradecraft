@@ -151,7 +151,7 @@ jobs:
                             "incident-campaign-secondary-source",
                             "attack-surface-documentation", "telemetry-documentation",
                             "framework", "detection-modeling-reference", "other"}
-          TRUST_TIER = {"vendor", "primary", "news", "researcher", "registry", "aggregator"}
+          TRUST_TIER = {"vendor", "primary", "government", "news", "researcher", "registry", "aggregator"}
           VERIFICATION = {"confirmed", "confirmed-with-scope-caveat",
                           "not-resolved-out-of-scope", "not-resolved-no-url-exists"}
           CITATION_CAVEAT = {"headline-overstates-body", "partial-use",

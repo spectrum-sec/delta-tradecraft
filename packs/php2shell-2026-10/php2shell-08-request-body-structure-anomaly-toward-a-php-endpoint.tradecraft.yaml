@@ -1,0 +1,896 @@
+identity:
+  uuid: 'df7d9f69-dcbf-4d1a-b788-a11c2623255b'
+  id: 'DT-P2S-APP-008'
+  aliases:
+    - >-
+      Unauthenticated multipart requests carrying the session upload-progress field probe PHP endpoints (one entry path
+      of several)
+  name: >-
+    Request-body structure anomaly toward a PHP endpoint, with the session upload-progress field as one sub-shape
+  incident: >-
+    PHP2Shell: two unauthenticated PHP engine RCE flaws, disclosed and patched 2026-10-21, with several confirmed paths.
+    Body-structure anomalies are the visible shape; the upload-progress field is one sub-shape, which Hadrian says most
+    attacks use. Status: under research.
+  first_observed: '2026-10'
+  last_reviewed: '2026-10-21'
+
+classification:
+  primary_attack_surface: 'submitted-content-ingest'
+  secondary_attack_surfaces:
+    - 'parser-worker'
+  behavior_classes:
+    - 'other'
+  behavior_classes_note: >-
+    Anomalous request bodies are sent to PHP endpoints, without login, to reach one of several confirmed paths of an
+    engine flaw. A multipart body carrying the session upload-progress field is one sub-shape.
+  tags:
+    - 'php'
+    - 'php2shell'
+    - 'multipart'
+    - 'upload-progress'
+    - 'request-structure'
+    - 'waf'
+    - 'probing'
+    - 'observed-attempts'
+
+behavior:
+  definition: >-
+    An unauthenticated client sends PHP endpoints request bodies with anomalous structure, such as oversized field
+    names, floods or folding of part headers, markers in part metadata or a session id supplied as a form field. One
+    sub-shape is a multipart body carrying the session upload-progress field ahead of a file part.
+  detailed_definition: >-
+    Request bodies are parsed before application code runs, so an anomalous body reaches engine flaws. Visible to a WAF:
+    code or serialized-object markers in part metadata, oversized field names, header floods or folding, strict-parse
+    failures, over-limit bodies, a form-field session id. Upload-progress is one sub-shape.
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers sending an anomalously structured body to PHP endpoints, including, for the upload-progress sub-shape, an
+      anonymous multipart request carrying that field on an engine where the feature is enabled. Disabling it removes
+      only that sub-shape; other body categories stay in scope. Not other confirmed paths.
+    summary: >-
+      Possible against any internet-facing PHP endpoint on an affected engine that accepts an anonymous request body.
+      The upload-progress sub-shape also needs the feature enabled (default in PHP; distribution builds may differ).
+      The advisory confirms mod_php and FPM.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Strategy one is observable only where a WAF, CDN or proxy inspects or logs request bodies. Strategy two needs only
+      access logs with client, method, URI and status (Content-Type to claim multipart, a format change) and supports
+      only probable probing, not this path.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          Strategy one only: body inspection or body-field logging must be enabled on a WAF, CDN or proxy; it is off or unavailable in
+          default web-server logging and costly where enabled.
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          Strategy one only: body fields exist in WAF and edge body-inspection schemas, not access logs. Many estates
+          have no body-capable WAF or proxy in the path; strategy two then applies.
+    summary: >-
+      Observable when an edge or proxy inspects the multipart body and records a match on the upload-progress field
+      name, tolerating folded headers and a missing colon, with URI, anonymity and status. Without body logs
+      it is a POST with a 5xx or drop (multipart only if Content-Type is logged), as any oversized upload makes.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Strategy one separates a body-structure match (the progress field, over-limit bodies and parse failures need an
+      attempt marker); parser leniency can hide the field.
+      Strategy two separates only one trusted client's tuned breadth or repetition with a high error share, reported as
+      probable probing.
+    blocking_conditions:
+      - condition: 'cross-source-join-required'
+        note: >-
+          The body-level match may be joined to session-cookie state and response status from the access or edge record,
+          as risk modifiers.
+      - condition: 'below-alerting-signal-strength'
+        note: >-
+          A single multipart POST with an error is below alerting strength; strategy two needs tuned breadth or
+          repetition per trusted client plus an error share.
+    summary: >-
+      Strategy one: a body-structure match on a PHP URI. The progress field alone is feature use; it,
+      an over-limit body or parse failure with a rejection is a failed upload; a never-issued session id, exploit-rule
+      block, host fault or one client across URIs makes it an attempt. Strategy two: header
+      breadth or repetition.
+attack_surface_context:
+  surface: >-
+    The PHP session upload-progress feature and the multipart form parser that handles it, exposed through any PHP
+    endpoint that accepts a multipart POST.
+  how_the_surface_works: >-
+    With the feature enabled, a progress field before a file part makes the engine record upload progress in the session
+    store; the field name and a configured prefix govern the key. Servers and WAFs may parse the body differently from
+    the engine. Workers are long-lived and state persists across requests.
+  incident_processing_path: >-
+    Upwind reports the upload-progress path and failed attempts (5xx, 502, drops); Imperva says three of five demonstrated
+    techniques use it; the GHSA confirms it among several paths. Fastly names other body shapes for the other exploit
+    family. Hadrian says most use upload-progress. Separability is this object's reading.
+  processing_stages:
+    - 'multipart-request-received'
+    - 'body-parse-by-edge-or-proxy'
+    - 'body-parse-by-engine'
+    - 'upload-progress-session-update'
+    - 'worker-state-persisted'
+    - 'response-or-fault'
+  stage_evidence: >-
+    An edge that parses the body proves the field was sent as that parser read it; the engine's acceptance is invisible.
+    The response status shows an outcome, not whether the field was consumed. Only the edge body log carries the
+    deciding property.
+  trust_boundaries: >-
+    Unauthenticated client into the engine's multipart parsing and per-worker state. Reached: attempts only; no source
+    reports a probe crossing into code execution. The edge-to-engine parser difference is an unverified boundary.
+  security_control_context: >-
+    Controls: patch level, the upload-progress setting (one path only), WAF managed rules (a stopgap; Cloudflare reports
+    payload mutation), body inspection depth, size limits. Bypasses: folded part headers, missing colon, varying
+    boundaries, low-rate spacing.
+  special_context:
+    topic: 'edge-versus-origin-parser-disagreement'
+    context: >-
+      A WAF or proxy and the PHP engine may read a malformed multipart body differently. A body match must normalise
+      part-header folding and tolerate missing separators, and still cannot prove the engine saw the same field.
+  practitioner_implication: >-
+    Before writing a rule, find out whether a WAF, CDN or proxy in the path can inspect and log multipart bodies, how
+    its parser compares to the engine's, whether upload-progress is enabled per build, which endpoints legitimately
+    accept anonymous multipart uploads, and how the estate marks a request unauthenticated.
+threat_research:
+  why_it_matters: >-
+    Hadrian reports most observed attacks use this path (no counts); probing of it is visible at the edge before any host effect. It is one
+    of several confirmed paths, so absence of the probe, or disabling the feature, does not show a host is safe.
+  threat_actor: >-
+    Unknown. Attempts are reported by several parties (see campaign); none is attributed to a named group.
+  actor_class: 'opportunistic-internet-scanning'
+  campaign: >-
+    PHP2Shell (CVE-2026-109618 and CVE-2026-109619), status as of 2026-10-21. Wiz and CrowdStrike have demonstrated
+    unauthenticated remote code execution in lab conditions, CrowdStrike end to end on Apache mod_php, and the PHP
+    advisory for CVE-2026-109619 validates its session path against both mod_php and PHP-FPM. Exploitation attempts are
+    reported by Cloudflare, watchTowr, Patchstack (a 07:34 UTC entry relays active exploitation incidents from hosting
+    partners; a 13:57 UTC entry describes only probing), Kaspersky (attempts before the patch), Hadrian (exploitation at
+    scale, with no counts) and VulnCheck (canary scans and at least one session-path webshell attempt on 21 October, 17:22-17:24
+    UTC, whose ten follow-up reads all returned 404). No source documents a confirmed compromise: CISA has
+    not observed exploitation, ReliaQuest has not seen successful exploitation in customer environments, and Tanium reported on 21 October that neither CVE was in the CISA KEV catalog. Red Hat rates CVE-2026-109619 CVSS 3.1 8.1 for high attack complexity, while Red Hat's page lists NVD's score as 9.8. VulnCheck reports that none of the public proofs of concept it reviewed independently bypasses ASLR on x86-64, and that
+    exploitation works on ARM64 and on x86 without ASLR.
+  victim: >-
+    None documented. Honeypots and WAF fleets report attempts; no compromised organisation is named.
+  capability: >-
+    Attempts via the upload-progress path are reported (Hadrian: most attacks; Upwind describes the path). No source
+    documents a production compromise or post-exploitation from it.
+  target: >-
+    Internet-facing PHP endpoints on affected engines with upload-progress enabled.
+  victimology:
+    - 'Internet-facing PHP hosts, any SAPI, with the engine unpatched or workers not restarted.'
+    - 'Hosts with upload-progress left at its default and no body-aware WAF.'
+  framework_mappings:
+    - framework: 'MITRE ATT&CK'
+      technique_mapping_status: 'mapped'
+      id: 'T1190'
+      name: 'Exploit Public-Facing Application'
+      evidence: >-
+        Unauthenticated requests to public PHP endpoints to reach an engine flaw through one confirmed path. Mapped on
+        reported attempts.
+visibility:
+  telemetry_sources:
+    - source: 'WAF, CDN or proxy with request body inspection or logging'
+      purpose: >-
+        Carry the body-level match on the upload-progress field, tolerant of malformed part headers, with client, URI
+        and decision.
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'body-field match result for the upload-progress field name'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+          note: 'Not a standard field; depends on vendor rule logging and was not checked here.'
+        - name: 'client address, URI, method and Content-Type'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+        - name: 'rule action (blocked, challenged, allowed) and response status'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+        - name: 'session cookie presence'
+          attestation: 'estate-supplied'
+          load_bearing: false
+          note: >-
+            Risk modifier only. Not native in most edge logs; the estate must derive whether the id was issued. Cookie
+            presence alone does not make a request benign.
+      details: >-
+        Managed rule sets (Cloudflare rules live from 03:02 UTC on 2026-10-21; Google says customers with active Cloud Armor managed rules are covered, others should enable at least File Upload and RFI) record matches and actions. A rule naming the field
+        turns the probe into a record; a generic body rule does not.
+      limitations:
+        - 'Body inspection is off or truncated on many estates, and logging bodies is costly and sensitive.'
+        - 'A blocked request shows an attempt but not what the origin would have done.'
+        - 'Edge parser disagreement with the engine can hide the field from a literal match.'
+        - 'Google Cloud Armor decisions appear in application load balancer logs in Cloud Logging only where request logging is enabled on each backend service.'
+    - source: 'Origin web server or reverse proxy access log'
+      purpose: >-
+        Provide the header-level evidence that survives without body logging: method, URI, status and client, plus
+        Content-Type and request length where the log format adds them.
+      event_vocabulary: 'application-record'
+      tier: 'request-response'
+      operational_viability: 'on-by-default'
+      fields:
+        - name: 'method, URI and Content-Type'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+          note: 'Many default formats omit Content-Type; adding it is an opt-in format change. On-by-default applies to method, URI and status only.'
+        - name: 'status code'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+        - name: 'request length'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+          note: >-
+            Opt-in: nginx $request_length or Apache %I (mod_logio). The default bytes field
+            ($body_bytes_sent, %b) counts the response, not the upload.
+        - name: 'client address and forwarded client address'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+      details: >-
+        Supports a weaker pivot: anonymous multipart POSTs from one client across many PHP URIs with error or dropped
+        responses, which failed attempts reportedly produce.
+      limitations:
+        - 'The deciding property (the body field) is not recorded.'
+        - 'Cannot separate this path from other multipart attempts or benign oversized uploads.'
+        - 'Client address is the proxy unless forwarded headers are logged and trusted.'
+    - source: 'Network sensor with HTTP body visibility'
+      purpose: 'Offer a body match where TLS is terminated on or before the sensor.'
+      event_vocabulary: 'other'
+      event_vocabulary_note: 'HTTP transaction record from a network sensor'
+      tier: 'request'
+      operational_viability: 'opt-in'
+      details: >-
+        Zeek or Suricata match body content on decrypted traffic. Corelight's package raises notices for
+        oversized form keys, multipart header floods and serialized-data anomalies, with a rule for the upload-progress
+        field. Abstract publishes Suricata rules (vendor-stated). Boundary-string rules are evaded.
+      limitations:
+        - 'Needs decrypted traffic; blind to TLS terminated beyond the sensor.'
+        - 'Boundary-string rules are evaded by changing the string.'
+        - >-
+          Corelight request inspection is limited to POST, and its notices carry a short body sample that may hold
+          request content.
+detection:
+  scope: >-
+    Input stage only: body-level matching of structure categories, upload-progress among them, at an edge seeing bodies
+    (strategy one), and header-level multipart POSTs with errors across many PHP URIs or repeated to one
+    (strategy two; its repetition branch is the access-log fallback for DT-P2S-APP-007). No other paths.
+  outcome_guardrails: >-
+    A structure-category match shows a probe was sent, not that it was accepted or succeeded; the upload-progress
+    field alone shows feature use, an over-limit body or parse failure alone a rejected upload. A block shows the
+    edge stopped it; a 5xx or drop shows an error, not exploitation. Absence says nothing of others.
+  shared_normalization_context: >-
+    Normalise multipart part headers (unfold continued lines, tolerate a missing colon and odd case) before matching the
+    field name; classify the URI as PHP-served; derive session-cookie state (present or absent, and whether the id was
+    previously issued); resolve the real client through trusted forwarded headers.
+  shared_enrichment_context: >-
+    Join the engine patch level and upload-progress setting per host, the estate's list of anonymous upload endpoints,
+    and the edge action taken. A per-client breadth count (distinct URIs) is useful.
+  strategies:
+    - id: 'STRAT-BODY-FIELD-ANONYMOUS-PROBE'
+      name: >-
+        body-level request structure anomaly, including the upload-progress field, on requests to PHP endpoints
+      objective: >-
+        Detect requests to PHP endpoints whose body structure is anomalous, the upload-progress field being one
+        sub-shape, as probes of the engine's request-side paths.
+      incident_relevance: >-
+        Detects the attempt shape Hadrian reports most attacks use (no counts). Attempts only, one of several paths. Abstract
+        Security's rule text, Fastly and Upwind describe body-structure shapes of this family; this object records the
+        category only.
+      detection_logic: >-
+        On edge body-match logs, report a request to a PHP URI matching a
+        structure category as a probe, save three weak ones: the upload-progress field
+        (PHP_SESSION_UPLOAD_PROGRESS by default, matched after header normalising) alone is feature use;
+        it, an over-limit body or a strict-parse failure with a rejection or drop is a failed or
+        malformed upload (this pack's inference). Call these an attempt only with a never-issued
+        session id, an exploit-rule block, a paired host fault or one client across URIs. PHP writes upload progress to the
+        session before any script runs (PHP manual). A missing session cookie neither clears a
+        request (the id can be a form field, inference) nor marks an attempt.
+      minimum_evidence: >-
+        A body-level match record naming the structure category or the upload-progress field on a
+        PHP URI, with the edge action or status; an attempt on the field, an over-limit body or a
+        parse failure also needs an attempt marker. Without a body match, use the header-level
+        strategy and say so.
+      correlation_context: >-
+        Entity keys are client, URI and edge action; breadth is distinct URIs per client over minutes to hours. Edge and
+        origin records join by request time and URI, with proxy clock offset limiting precision.
+      detectors:
+        - detector_class: 'waf-body-inspection-detection'
+          technologies:
+            - 'Managed WAF rule sets with logging'
+            - 'Open-source WAF with body logging'
+            - 'Cloudflare WAF managed rules'
+            - 'Fastly Next-Gen WAF'
+            - 'Google Cloud Armor managed rules (File Upload and RFI categories)'
+            - 'Google Cloud Armor customer-written rule for oversized or uninspected request content'
+            - 'Akamai App & API Protector'
+            - 'Abstract Security ModSecurity rule sets'
+          contribution: >-
+            Matches the structure category or field in the body and records the action per request.
+          limitations: >-
+            Needs body inspection enabled and parser parity; a mutated payload may escape a literal rule.
+        - detector_class: 'network-body-inspection'
+          technologies:
+            - 'Zeek'
+            - 'Suricata'
+            - 'Snort'
+            - 'Corelight Zeek notices and Suricata rules'
+            - 'Kaspersky Anti Targeted Attack with the NDR module'
+          contribution: >-
+            Matches body content on decrypted traffic. Talos lists Snort SIDs 67359, 67360 and 67375 for
+            subscribers, with 67359 and 67360 also in the Community Ruleset (Cisco Talos); what they match is not stated.
+          limitations: >-
+            Blind to unterminated TLS; boundary-keyed rules are evaded by change. Renamed field (session.upload_progress.name) or lenient multipart parsing evades single-line matchers (Upwind).
+      benign_explanations:
+        - explanation: >-
+            Authenticated or anonymous upload forms using upload-progress, including uploads rejected for size or
+            failing in the application.
+          distinguishing_context: >-
+            Known upload route, an issued session id and no exploit-rule match or host fault, not one client across many
+            URIs; cookie presence alone does not distinguish.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding the field name removes the probe; exclude by auth state and route.
+        - explanation: 'Security scanners and exposure-testing services sending the same shape.'
+          distinguishing_context: 'Source addresses match the estate scanner inventory.'
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Allow-listing by user agent is adversary-settable; allow by source address inventory only.
+      forbidden_exclusions:
+        - field: 'multipart boundary string or any literal boundary token'
+          reason: >-
+            Precursor observed boundary strings referencing the vulnerabilities; they are free to change, and excluding
+            or matching on them reads only a decoy.
+        - field: 'a single literal body signature as the only match'
+          reason: 'Parser leniency lets the probe vary the form; a single literal match is evaded.'
+        - field: 'excluding requests the edge already blocked'
+          reason: 'A block is the attempt record; excluding it removes the incident evidence.'
+        - field: 'CVE identifier or exploit name in any field'
+          reason: 'Requests need carry none, and matching on them reads only a decoy.'
+      expected_volume:
+        band: 'unbounded'
+        basis: 'mechanism-proven-magnitude-inferred'
+        note: >-
+          Internet-facing endpoints receive scanning at an unbounded rate while exploitation is public. The band follows
+          from reported attempts at WAFs and honeypots and was not measured against any estate. Key triage on breadth
+          and repetition, not each hit.
+      blind_spots:
+        - description: >-
+            Missing telemetry: no body inspection in the request path means no field-level evidence.
+          routes_to: null
+        - description: >-
+            Evasion: parser-leniency forms and mutated payloads can hide the field from a literal match, and Cloudflare
+            reports attackers mutating payloads.
+          routes_to: null
+        - description: >-
+            Coverage limit: other confirmed paths (backtrace, early configuration, memory handling) use no such field
+            and are not detected here.
+          routes_to: 'DT-P2S-APP-007'
+      analyst_response: >-
+        Identify the client, URIs, edge action and response statuses. Check origin responses and error and crash logs
+        for paired faults. Confirm patch level, the upload-progress setting and worker restarts after patching. Look for
+        later host effects (new files, outbound destinations, child processes). Decide whether to block.
+      safe_conclusion: >-
+        A client sent requests with an anomalous body structure, or the upload-progress field, an over-limit body or a
+        parse failure with an attempt marker; attempts are shown, success is not. Those three alone, or with an error
+        or rejection, show feature use or a failed or malformed upload only.
+    - id: 'STRAT-ANONYMOUS-MULTIPART-SPRAY-HEADER-LEVEL'
+      name: 'multipart POSTs with errors across many PHP URIs, or repeated to one, from one client'
+      objective: >-
+        Detect, without body logs, one client sending multipart POSTs with error or dropped responses to many distinct
+        PHP URIs, or repeatedly to one, within minutes.
+      incident_relevance: >-
+        Detects possible probing at the header level. It does not name the upload-progress path and overlaps with other
+        multipart attempts and with scanners.
+      detection_logic: >-
+        From access logs, alert when one resolved client sends multipart POSTs with a notable share of 5xx, gateway
+        errors or drops either to more than a tuned number of distinct PHP URIs (breadth), or many times to the same PHP
+        URI within minutes (repetition; a trailing slow 200 is supporting, after Fastly's segfault-burst pattern). Raise
+        severity for endpoints that do not normally accept anonymous uploads; do not lower it for a session cookie.
+        Ignore the body. The repetition branch is the access-log-only fallback for DT-P2S-APP-007. Report probable
+        probing, not the upload-progress path.
+      minimum_evidence: >-
+        Access records showing the breadth or repetition and the error share per client. The anonymous state is a risk modifier; without
+        it, report the same finding at lower confidence as multipart errors by client. Without a logged Content-Type,
+        report POSTs with errors by client, not multipart.
+      correlation_context: >-
+        Entity key is the resolved client over minutes to an hour; breadth is distinct PHP URIs, repetition is
+        requests per URI over minutes; the route list for
+        anonymous uploads supplies the exclusions.
+      detectors:
+        - detector_class: 'web-tier-log-analytics'
+          technologies:
+            - 'Splunk'
+            - 'Elastic'
+            - 'Microsoft Sentinel'
+            - 'Google SecOps'
+          contribution: 'Counts distinct URIs and error shares per client from access logs.'
+          limitations: >-
+            Cannot separate this path or any specific flaw; breadth rules are noisy under scanners.
+      benign_explanations:
+        - explanation: 'Crawlers, scanners and broken clients posting multipart forms widely.'
+          distinguishing_context: >-
+            Sources match the scanner inventory or identify as known crawlers by verified address ownership, not by user
+            agent.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding by user agent is adversary-settable; use verified source ownership.
+        - explanation: 'A single-page application posting multipart forms to many routes after login.'
+          distinguishing_context: >-
+            Requests come from a logged-in user's established session on routes that user can reach; a session id never
+            issued does not support this explanation.
+          overlaps_incident_instance: false
+      forbidden_exclusions:
+        - field: 'user agent as an allow-list key'
+          reason: 'Adversary-settable at no cost.'
+        - field: 'excluding 5xx responses as server noise'
+          reason: >-
+            Failed attempts reportedly present as 5xx, 502 or drops; excluding them removes the evidence.
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: >-
+          Header-level breadth rules fire constantly on internet scanning; no source or estate measurement gives a rate,
+          and the band straddles several.
+      blind_spots:
+        - description: >-
+            Attribution limit: header-level evidence cannot separate this path from other multipart probes or scanning.
+          routes_to: null
+        - description: >-
+            Evasion: a low-rate probe to a few URIs stays under both the breadth and repetition thresholds.
+          routes_to: null
+        - description: >-
+            Coverage limit: the host-side worker fault is not seen at header level; where error or crash logs are
+            forwarded it is DT-P2S-APP-007.
+          routes_to: 'DT-P2S-APP-007'
+      analyst_response: >-
+        Review the client's full request history and responses, check origin error logs for paired faults, and enrich
+        the source against scanner inventories. Treat the finding as exposure context, not exploitation, unless host
+        faults or effects appear.
+      safe_conclusion: >-
+        A client sent multipart POSTs with errors across many PHP URIs or repeatedly to one; probing is probable and
+        the path is not identified.
+  supporting_technologies_considered: >-
+    WAF managed rules and CDN response-side rules are an upstream stopgap, not coverage; they supply attempt records but
+    lag mutated payloads. Vulnerability scanners show the engine patch level and the upload-progress setting, which
+    scopes exposure to this path but does not detect attempts.
+detector_requirements:
+  required: >-
+    Strategy one: a WAF, CDN or proxy that inspects and logs the multipart body with part-header
+    normalisation. Strategy two: access logs with client, method, URI and status (Content-Type to
+    claim multipart). Both: trusted client resolution, the anonymous upload endpoint list, and alert
+    text saying probe, not exploitation.
+  optional: >-
+    Engine patch level and upload-progress setting per host (scoping); per-request anonymity derivation (severity); edge
+    action logs (attempt context); per-client breadth count (triage).
+  correlation:
+    capability: >-
+      Stable client and URI keys across edge and origin logs, aligned clocks, and an anonymity flag derived consistently
+      on both.
+    window: 'Minutes to an hour for breadth per client.'
+  product_support_caveat: >-
+    Candidate implementations only; verify a device in the path logs multipart bodies (off by default), tolerates
+    malformed forms, and the upload-progress setting is known per host. WAF claims are vendor-stated as of 2026-10-21;
+    rule ids are never portable indicators.
+missing_context:
+  unverified:
+    - >-
+      first_observed '2026-10': attempts only. VulnCheck Canary saw probes then a multipart POST (08:37-17:24 UTC);
+      Cloudflare, watchTowr and Hadrian report attempts. Calif found several paths in August 2026 and reported them
+      privately to PHP; it does not date the upload-progress path. No compromise.
+    - >-
+      Recon pivot, context only: VulnCheck (2026-10-21) saw GETs to the site root then to PHP information-page and random probe paths, small POSTs with no User-Agent, and rotating browser User-Agents. Scanner context that rotates quickly; not a detection of this behavior.
+    - >-
+      VulnCheck and Wiz's table label upload-progress as CVE-2026-109618; the GHSAs place it under CVE-2026-109619, which this object follows.
+    - >-
+      Whether the upload-progress path is the most common attempt; Hadrian says most observed attacks abuse it, no
+      counts (Hadrian), and CISA has not observed exploitation.
+    - 'How each WAF and CDN parser compares to the engine parser on malformed multipart bodies.'
+    - 'Whether the upload-progress feature is enabled by default in each distribution build.'
+    - >-
+      CVE mapping disagreement: Sansec differs from the GHSAs, which place upload-progress under CVE-2026-109619 (stale
+      global state, GHSA-6wmf-4rv5-p3rp) and CVE-2026-109618 as the out-of-memory corruption flaw (GHSA-w8hw-w9fx-j79w);
+      CVE-2026-109619 is triggered by a fatal error or a diagnostic.
+    - >-
+      Whether non-POST requests reach either flaw. PHP 8.4's request_parse_body() lets an application
+      parse multipart on other methods (PHP manual); no advisory or writeup confirms an exploit path,
+      so the method is not a filter.
+  assumptions:
+    - id: 'ASSUMPTION-BODY-FIELD-LOGGABLE'
+      verdict_changing: true
+      statement: >-
+        A body-level match on the field can be logged at a WAF or edge; WAF vendors publish no schema, and the Corelight
+        Suricata rule alerts on it. If wrong, the observable gate loses field-level evidence and the object reduces to
+        the header-level strategy. Resolve by checking WAF logs.
+    - id: 'ASSUMPTION-REPEATED-BREADTH'
+      verdict_changing: false
+      statement: >-
+        Probes spread across many endpoints, so breadth distinguishes them from benign forms. Reports say attempts hit
+        WAFs and honeypots widely; no source publishes per-client breadth. If wrong, the breadth discriminator is noisy
+        but the body-field strategy holds. Resolve with honeypot logs of distinct URIs per client.
+  standing_negatives:
+    - statement: >-
+        No source reviewed on 2026-10-21 (Upwind, Cloudflare, Precursor, Abstract, advisories) publishes a WAF log
+        schema with a field-level upload-progress match; the Corelight Suricata rule (3000650) is the exception, as an alert
+        rather than a log schema.
+      ref: 'REF-UPWIND'
+      valid_until: '2026-11-30'
+      recheck: >-
+        Re-read WAF docs and Zeek and Suricata rules for a body-match field.
+    - statement: >-
+        Talos has not seen these flaws exploited in the wild as of 2026-10-21 14:00 UTC.
+      ref: 'REF-TALOS'
+      valid_until: '2026-10-28'
+      recheck: >-
+        Re-read the Talos advisory for an updated exploitation status.
+    - statement: >-
+        Imperva observed no traffic matching its monitored exploit patterns during pre-disclosure monitoring. Its investigation leads include unusually large multipart payloads, excessive field counts and anomalous session-related parameters.
+      ref: 'REF-IMPERVA'
+      valid_until: '2026-10-28'
+      recheck: >-
+        Re-read the Imperva post for post-disclosure observations and leads.
+
+missing_states:
+  - id: 'MISSING_BODY_INSPECTION'
+    meaning: 'Missing telemetry: no device in the request path inspects or logs multipart bodies.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      State that the upload-progress probe cannot be seen; fall back to the header-level strategy and report probable
+      probing without naming the path.
+  - id: 'MISSING_PARSER_PARITY'
+    meaning: >-
+      Attribution limit: the edge parser may read a malformed body differently from the engine.
+    coverage_claim: 'coverage-limited'
+    response: >-
+      State that a non-match does not show the field was absent and that a match does not show the engine read it.
+  - id: 'MISSING_OTHER_PATH_COVERAGE'
+    meaning: 'Analyst trap: other confirmed paths need no upload-progress field.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      Never report a host as unprobed or safe from the absence of this probe, and never treat disabling upload-progress
+      as full mitigation.
+  - id: 'MISSING_ANONYMITY_FLAG'
+    meaning: 'Missing telemetry: the log has no session-cookie or authentication state.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report multipart probes without the anonymity claim and state that authenticated forms cannot be excluded.
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'resolved_client_and_resolution_method'
+    - 'target_uris_and_distinct_uri_count'
+    - 'body_match_result_or_explicit_missing_state'
+    - 'anonymous_state_and_edge_action'
+    - 'response_status_distribution'
+    - 'engine_version_and_upload_progress_setting_when_known'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'body_structure_category'
+      condition: 'when a body-level match exists'
+    - field: 'paired_origin_fault_evidence'
+      condition: 'when origin error or crash logs show faults within seconds of the requests'
+    - field: 'edge_block_context'
+      condition: 'when the edge blocked or challenged any of the requests'
+  recommended_title: >-
+    Client sent requests with an anomalous body structure toward PHP endpoints (probe, success not established)
+  unsupported_title: 'PHP2Shell exploitation of upload-progress path detected'
+
+evidence:
+  confirmed_incident_behavior: >-
+    Upwind describes the upload-progress path and failed attempts as 5xx, 502 or drops. The GHSA confirms it among
+    several paths. Hadrian's 11:35 UTC update claims exploitation at scale, mostly upload-progress, no counts
+    (Hadrian); CISA has not observed exploitation. Cloudflare reports payload mutation.
+  supported_conclusion: >-
+    Hadrian reports most observed attacks use this path (no counts); probes can be matched only where bodies are inspected, and a
+    body-level match on anonymous requests with breadth across URIs is the strongest edge signal for this path. This
+    supports reporting a probe, not exploitation.
+  unsupported_conclusions: >-
+    The evidence does not establish that any probe succeeded, that this is the invariant of the exploitation, that
+    absence of the probe shows safety, that disabling the feature suffices, that an edge match shows the engine read the
+    field, or a rate or per-client breadth.
+  procedure_boundary: >-
+    The input-stage probe through request-body structure anomalies; the session upload-progress field, one confirmed
+    path, is one sub-shape. The failed-attempt sibling covers the worker-fault trace. Backtrace, early-configuration and
+    memory-handling paths, the memory-disclosure variant and post-exploitation are separate.
+  references:
+    - id: 'REF-VULNCHECK'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell Vulnerabilities: CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'VulnCheck'
+      url: 'https://www.vulncheck.com/blog/php2shell-vulnerabilities'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        First-hand Canary telemetry 2026-10-21 (08:37-17:24 UTC): probes, multipart POSTs from scanner-style clients,
+        one failed session-path webshell attempt at 17:22-17:24 UTC. No successful exploitation.
+    - id: 'REF-UPWIND'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Two Critical Unpatched PHP RCEs (CVE-2026-109618 & CVE-2026-109619) - Update'
+      publisher: 'Upwind'
+      url: 'https://www.upwind.io/feed/initial-assessment-php2shell-two-critical-unpatched-php-rces-cve-2026-109618-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Single vendor: default field name only a reliable indicator (name is configurable), lenient parsing evades single-line matchers, failed attempts give 5xx or drops. No rate.
+    - id: 'REF-GHSA-109618'
+      type: 'attack-surface-documentation'
+      title: 'RCE via OOM corruption'
+      publisher: 'PHP project (php-src security advisories)'
+      url: 'https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports the CVE mapping (CVE-2026-109618 is the out-of-memory corruption flaw), against which Sansec is
+        compared, and the nesting-level advice for oversized urlencoded bodies.
+    - id: 'REF-GHSA-109619'
+      type: 'attack-surface-documentation'
+      title: 'RCE via stale global state'
+      publisher: 'PHP project (php-src security advisories)'
+      url: 'https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports the several confirmed paths, including upload-progress on mod_php and FPM, and that disabling
+        upload-progress does not mitigate the others. No attempt rate.
+    - id: 'REF-PRECURSOR'
+      type: 'incident-campaign-secondary-source'
+      title: 'Live Blog: PHP2Shell Critical PHP RCE Vulnerabilities (CVE-2026-109618 & CVE-2026-109619)'
+      publisher: 'Precursor Security'
+      url: 'https://www.precursorsecurity.com/blog/php2shell-critical-php-rce-vulnerabilities'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports observed boundary strings referencing the flaws. No share of attempts using upload-progress.
+    - id: 'REF-GOOGLE'
+      type: 'incident-campaign-secondary-source'
+      title: 'Responding to core PHP vulnerabilities CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'Google Cloud'
+      url: 'https://cloud.google.com/blog/products/identity-security/responding-to-core-php-vulnerabilities-cve-2026-109618-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Updated 3:30 p.m. PDT on 2026-10-21: Cloud Armor managed rules (File Upload and RFI minimum), a large-content rule, and load balancer logs. No rule bodies or field schema.
+    - id: 'REF-CLOUDFLARE'
+      type: 'incident-campaign-secondary-source'
+      title: 'Cloudflare deploys protections against php2shell vulnerability'
+      publisher: 'Cloudflare'
+      url: 'https://blog.cloudflare.com/php-vulnerabilities-waf-protection/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports WAF rules live at 03:02 UTC on 2026-10-21 as a stopgap, payload mutation, response-side detection,
+        listed managed-rule ids and updated descriptions. Rule bodies not read. No coverage claim.
+    - id: 'REF-WIZ'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: AI uncovers critical RCE vulnerabilities affecting 70% of the Internet'
+      publisher: 'Wiz Research'
+      url: 'https://www.wiz.io/blog/php2shell-php-rce'
+      trust_tier: 'researcher'
+      verification: 'confirmed'
+      evidence_use: >-
+        Demonstration; advice to watch for unusual multipart requests followed by memory-limit errors or repeated HTTP
+        500s, and the upload-progress description. No oversized-body shape or User-Agent marker.
+    - id: 'REF-FASTLY'
+      type: 'incident-campaign-secondary-source'
+      title: 'Fastly’s Proactive Protection for PHP2Shell, Critical React RCE CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'Fastly'
+      url: 'https://www.fastly.com/blog/fastlys-proactive-protection-critical-php-rce-cve-2026-109618'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports the oversized-body and upload-progress shapes, the templated rule, and segfault bursts (dozens in
+        minutes, then one slow 200) as the brute-force phase. Does not state what the rule matches.
+    - id: 'REF-TANIUM'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Responding to CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'Tanium'
+      url: 'https://www.tanium.com/blog/php2shell-responding-to-cve-2026-109618-and-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports the several confirmed paths and that disabling upload-progress does not mitigate the others. Per
+        Tanium, the KEV catalog listed neither CVE at 14:04 UTC.
+    - id: 'REF-SANSEC'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Critical PHP RCE (CVE-2026-109618, CVE-2026-109619)'
+      publisher: 'Sansec'
+      url: 'https://sansec.io/research/php2shell'
+      trust_tier: 'researcher'
+      verification: 'confirmed-with-scope-caveat'
+      citation_caveat: 'contradicted-elsewhere'
+      citation_caveat_note: >-
+        Sansec's CVE mapping differs from the GHSAs. Cited only to record that; nothing here depends on it.
+      evidence_use: >-
+        Used only to state the CVE-mapping disagreement against the GHSAs; the object is CVE-agnostic.
+    - id: 'REF-PHPNET'
+      type: 'attack-surface-documentation'
+      title: 'PHP: News Archive - 2026'
+      publisher: 'php.net'
+      url: 'https://www.php.net/archive/2026.php#2026-10-21-5'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports the CVE mapping (109618 out-of-memory corruption, 109619 stale global state) and the fixed versions.
+        The GHSAs are the durable record.
+    - id: 'REF-CROWDSTRIKE'
+      type: 'incident-campaign-secondary-source'
+      title: 'CrowdStrike Protects Customers from Threats Delivered via PHP2Shell'
+      publisher: 'CrowdStrike'
+      url: 'https://www.crowdstrike.com/en-us/blog/crowdstrike-protects-customers-from-php-rce-zero-days/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Cited for campaign status: "CrowdStrike has verified end-to-end that a single anonymous POST request can cause
+        an Apache mod_php worker to launch a shell process". A lab demonstration, not an observed intrusion.
+    - id: 'REF-WATCHTOWR'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: PHP Remote Code Execution Exploited'
+      publisher: 'watchTowr'
+      url: 'https://watchtowr.com/intelligence/php-remote-code-execution-php2shell/'
+      trust_tier: 'researcher'
+      verification: 'confirmed'
+      evidence_use: >-
+        Cited for campaign status: "watchTowr is observing active exploitation attempts of both CVE-2026-109618 and
+        CVE-2026-109619", published 14:19 UTC. Attempts, not a documented compromise.
+    - id: 'REF-PATCHSTACK-PHP'
+      type: 'incident-campaign-secondary-source'
+      title: 'Major security alert: PHP vulnerable to critical RCE, attacks ongoing'
+      publisher: 'Patchstack'
+      url: 'https://patchstack.com/articles/php-major-vulnerability-alert-10-2026/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Cited for campaign status: the 07:34 UTC entry "Multiple active exploitation incidents reported to Patchstack by
+        hosting partners" and the 13:57 UTC "only probing attacks, with no hard evidence of breaches yet".
+    - id: 'REF-KASPERSKY'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: How to Protect Your Server'
+      publisher: 'Kaspersky'
+      url: 'https://www.kaspersky.com/blog/cve-2026-109618-109619-php-vulnerabilities/56583/'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Cited for campaign status: first attempts before the patches were published, undescribed, no confirmed
+        compromise. Also that its NDR module is said to detect exploitation; no rule content read.
+    - id: 'REF-RELIAQUEST'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Responding to Critical PHP Vulnerabilities | Threat Spotlight'
+      publisher: 'ReliaQuest'
+      url: 'https://reliaquest.com/blog/threat-spotlight-php2shell-responding-to-critical-php-vulnerabilities/'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Cited for campaign status: no successful exploitation in customer environments; in-the-wild reports early and
+        inconsistent, some only probing.
+    - id: 'REF-CALIF'
+      type: 'incident-campaign-secondary-source'
+      title: 'php2shell by Calif Research'
+      publisher: 'Calif'
+      url: 'https://calif.io/php2shell/'
+      trust_tier: 'researcher'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Supports the researchers' account of the mechanism and timeline only. No logging or detection guidance, no
+        compromise, no attempt share.
+    - id: 'REF-CORELIGHT-REPO'
+      type: 'detection-modeling-reference'
+      title: 'corelight/php2shell-detect: Zeek and Suricata Detections for "php2shell" CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'Corelight'
+      url: 'https://github.com/corelight/php2shell-detect'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Repo at commit 4d5131c: nine Zeek notices under PHP2SHELL:: and Suricata rules 3000650 (upload-progress field in
+        a POST body), 3000651 and 3000652 (PHP version). POST-only inspection; matches can be benign.
+    - id: 'REF-CORELIGHT-BLOG'
+      type: 'incident-campaign-secondary-source'
+      title: 'php2shell: Zeek and Suricata Detections for PHP RCE'
+      publisher: 'Corelight'
+      url: 'https://corelight.com/blog/php2shell-detection-before-disclosure'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      citation_caveat: 'headline-overstates-body'
+      citation_caveat_note: >-
+        The title suggests detection before disclosure, but the body claims no pre-disclosure sightings. The cited
+        claims survive discounting it.
+      evidence_use: >-
+        Supports that the Corelight detections are behavioural, the Suricata marker is rare in benign traffic, and both
+        sets need HTTP visibility.
+    - id: 'REF-AKAMAI'
+      type: 'incident-campaign-secondary-source'
+      title: 'Critical remote code execution vulnerabilities in PHP core'
+      publisher: 'Akamai'
+      url: 'https://www.akamai.com/blog/security-research/critical-remote-code-execution-vulnerabilities-php-core'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Supports Akamai's Adaptive Security Engine rule 3000991 version 1 and that command-injection rules mitigate
+        weaponised payloads. Does not state observed exploitation or what the rule matches.
+    - id: 'REF-HADRIAN'
+      type: 'incident-campaign-secondary-source'
+      title: 'php2shell: Leaked critical PHP RCEs (CVE-2026-109618, -109619)'
+      publisher: 'Hadrian'
+      url: 'https://hadrian.io/vulnerability-alerts/php2shell-leaked-critical-php-rce-cve-2026-109618-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      citation_caveat: 'contradicted-elsewhere'
+      citation_caveat_note: >-
+        CISA and ReliaQuest report no observed (successful) exploitation; Hadrian claims it at scale, no counts. Cited
+        as a vendor claim; the campaign survives dropping it (Cloudflare, watchTowr, Patchstack report attempts).
+      evidence_use: >-
+        Cited for campaign status: the 11:35 UTC update "We are now seeing php2shell exploited in the wild at scale",
+        mostly upload-progress; 14:35 UTC repeats the at-scale claim. No counts; a vendor claim.
+    - id: 'REF-CISA'
+      type: 'incident-campaign-secondary-source'
+      title: 'Critical Vulnerabilities in PHP Require Immediate Patching'
+      publisher: 'CISA'
+      url: 'https://www.cisa.gov/news-events/alerts/2026/10/21/critical-vulnerabilities-php-require-immediate-patching'
+      trust_tier: 'government'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Cited for campaign status: CISA "has not observed exploitation of these vulnerabilities as of the time of
+        publication" (2026-10-21). The alert does not mention KEV; that rests on Tanium. No compromise.
+    - id: 'REF-TALOS'
+      type: 'incident-campaign-secondary-source'
+      title: 'Two critical RCEs in PHP core'
+      publisher: 'Cisco Talos'
+      url: 'https://blog.talosintelligence.com/two-critical-rces-in-php-core/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports Snort SIDs 67359, 67360 and 67375 covering these flaws for subscribers, with free rules in the
+        Community Ruleset. Does not state what they match.
+    - id: 'REF-IMPERVA'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: When PHP Runs Out of Memory at the Wrong Moment'
+      publisher: 'Imperva'
+      url: 'https://www.imperva.com/blog/php2shell-vulnerability-updates/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Three of five demonstrated techniques use upload progress; no matching traffic before disclosure; leads: large multipart payloads, excessive field counts, anomalous session parameters.
+    - id: 'REF-REDHAT'
+      type: 'incident-campaign-secondary-source'
+      title: 'CVE-2026-109619'
+      publisher: 'Red Hat'
+      url: 'https://access.redhat.com/security/cve/cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Cited for campaign status: Red Hat CVSS v3.1 score 8.1 for CVE-2026-109619 with high attack complexity (NVD 9.8). No exploitation behavior.
+    - id: 'REF-ABSTRACT'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Critical PHP RCE Vulnerabilities CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'Abstract Security'
+      url: 'https://www.abstract.security/blog/php2shell-critical-php-rce-vulnerabilities-cve-2026-109618-and-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Abstract publishes ModSecurity and Suricata rule sets for body structure (form-field session id, part-metadata
+        markers, oversized names, folding, strict-parse failures, over-limit bodies); rule text not tested.
+    - id: 'REF-SCHMALBACH'
+      type: 'incident-campaign-secondary-source'
+      title: 'CVE-2026-109618 and CVE-2026-109619: What you should do now'
+      publisher: 'Vincent Schmalbach (personal blog)'
+      url: 'https://www.vincentschmalbach.com/cve-2026-109618-and-cve-2026-109619-what-you-should-do-now/'
+      trust_tier: 'researcher'
+      verification: 'confirmed-with-scope-caveat'
+      citation_caveat: 'partial-use'
+      citation_caveat_note: >-
+        A single personal blog; advisories and vendor writeups do not say non-POST requests trigger either flaw. Only
+        the blocking advice is used; carried as unverified; the HTTP method is not used as a filter.
+      evidence_use: >-
+        Cited only for refusing multipart requests for all HTTP methods, because PHP 8.4 added request_parse_body().
+        Supports that the advice exists, not that non-POST requests trigger either flaw.
+
+    - id: 'REF-PHP-MANUAL'
+      type: 'attack-surface-documentation'
+      title: 'PHP: Session Upload Progress - Manual'
+      publisher: 'PHP project (php.net manual)'
+      url: 'https://www.php.net/manual/en/session.upload-progress.php'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        States that upload progress information is written to the session before any scripts are executed.

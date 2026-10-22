@@ -1,0 +1,853 @@
+identity:
+  uuid: '99f4bf95-cc28-464f-88a0-f8742b297f75'
+  id: 'DT-P2S-HOST-006'
+  name: 'A web-serving PHP account or its descendant adds a local account, group member or SSH key'
+  incident: >-
+    PHP2Shell: two unauthenticated PHP engine remote-code-execution flaws disclosed and patched on
+    2026-10-21. Several parties report exploitation attempts against WAFs and honeypots; none
+    reports a confirmed compromise or post-exploitation. This object is inferred, generic PHP-worker
+    tradecraft, not PHP2Shell coverage.
+  first_observed: '2026-10'
+  last_reviewed: '2026-10-21'
+
+classification:
+  primary_attack_surface: 'host-os'
+  secondary_attack_surfaces:
+    - 'host-os-authorization-boundary'
+    - 'host-filesystem'
+  behavior_classes:
+    - 'persistence'
+  tags:
+    - 'php'
+    - 'php2shell'
+    - 'web-worker'
+    - 'account-creation'
+    - 'authorized-keys'
+    - 'inferred'
+    - 'generic-post-exploitation'
+
+behavior:
+  definition: >-
+    After gaining code execution as the web worker account, an adversary creates a local account,
+    adds an account to a privileged group or installs an SSH public key, so that access no longer
+    depends on the web foothold.
+  detailed_definition: >-
+    Changing identity state (account, group, password) normally needs privilege; writing an SSH key
+    into a writable home directory needs none. Either gives credentialed access that outlasts
+    patching and restarts. The attempt ends at the write or tool run; success begins at a login with
+    the new credential.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers a web-account actor writing an SSH key into a key location the SSH daemon accepts, or changing identity
+      state where it holds privilege or a misconfiguration allows it; not hosts with no writable
+      login directory and no path to privilege, nor any claim that PHP2Shell post-exploitation
+      produced it.
+    summary: >-
+      Possible when web-account code execution can write an accepted authorized-keys file for a
+      login account (its own, or a central key location) or run account tools with elevated rights.
+      A key in a home others can write is refused unless StrictModes is off. No source shows
+      PHP2Shell used this way.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Observable where process, file or kernel-audit telemetry with actor attribution exists on the
+      web tier, or where the host's authentication log records account changes; not observable from
+      web, WAF or network telemetry alone.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          Writes to identity stores and authorized-keys files show an actor only under deliberate
+          audit rules or an EDR sensor. The default Linux authentication log commonly records tool
+          use (account added, group changed) but not a direct file write or key write.
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          Many Linux web servers, shared-hosting platforms and container images run no endpoint
+          sensor and forward no authentication log.
+    summary: >-
+      Observable when a host sensor records an account-management tool run or a write to passwd,
+      shadow, group or an authorized-keys file, with acting user and process lineage. The
+      authentication log shows tool-made changes and later logins, not file writes bypassing the
+      tools. A periodic account diff names no actor.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Separable from benign activity once the observable gate's telemetry exists and the PHP account
+      is a service identity that does not legitimately edit its own identity stores or login keys;
+      says nothing about hosts without them. Does not hold on shared or panel hosting where the PHP
+      account is the site owner's login.
+    blocking_conditions:
+      - condition: 'environment-inventory-required'
+        note: >-
+          On hosts where the PHP worker runs as a site owner's login account (for example shared
+          or multi-tenant hosting), that account may legitimately edit its own authorized-keys
+          file. Separate by lineage (PHP worker or descendant versus panel daemon or sshd
+          session) and inventory such hosts.
+    summary: >-
+      Where the PHP account is a dedicated service identity, an identity change or key write by it
+      or by a PHP worker descendant has a small legitimate population. Where it is also a login
+      account, exclude panel and SSH writes by lineage. Account name and key content are
+      adversary-chosen, not discriminators.
+
+attack_surface_context:
+  surface: >-
+    Local identity stores and SSH login configuration on a host running PHP under a service account:
+    the account database, the group and shadow files, and per-account authorized-keys files.
+  how_the_surface_works: >-
+    Account, group and password stores are privileged files changed by admin tools. SSH grants
+    login to an account whose owner-writable authorized-keys file lists the key. A web worker
+    (for example php-fpm or php-cgi) may run as a dedicated service account or, on some hosts,
+    as a site owner's login account.
+  incident_processing_path: >-
+    GHSA advisories: unauthenticated code execution as the web worker. Huntress and watchTowr
+    list new accounts to check; Huntress saw no exploitation on partners. No source describes
+    PHP2Shell post-exploitation; an account or key change is this pack's inference.
+  processing_stages:
+    - 'code-execution-as-web-worker'
+    - 'identity-store-or-login-directory-discovery'
+    - 'account-tool-invocation-or-key-file-write'
+    - 'credential-material-registered'
+    - 'interactive-login-with-new-credential'
+  stage_evidence: >-
+    An account tool under a worker with change arguments proves an attempt; a status, help or
+    version call, discovery. An authentication log line proves tool success; a successful keys-file
+    write, a key write (failed, an attempt). Only a later login with the new credential proves
+    persistence; a periodic diff, end state.
+  trust_boundaries: >-
+    Request-bound web worker into credentialed host access. Reached: unverified for PHP2Shell. The
+    boundary to superuser is crossed by an identity-store change, not by a key for the web account
+    itself; a key in another account's group- or world-writable home is refused unless StrictModes
+    is off.
+  security_control_context: >-
+    File permissions, a nologin shell, SSH login and key-location settings, mandatory access control
+    or container policy denying account tools, and read-only root filesystems decide the outcome. A
+    key file written in-process with no tool run bypasses a rule keyed only on the account-management process.
+  special_context:
+    topic: 'in-process-versus-child-process-identity-change'
+    context: >-
+      PHP can write files in-process without a child process, so a lineage rule sees the tool path
+      and misses a key written by file write. File-event or kernel-audit coverage on identity stores
+      and authorized-keys locations, keyed on acting user, is the cross-check; the scheduler-persistence sibling has the same shape.
+  practitioner_implication: >-
+    Before writing a rule, discover which accounts run the web tier, where sshd reads keys and
+    whether StrictModes is on, whether the web account has a writable login directory, whether a sensor records file
+    and process events with actor and lineage, and which automation legitimately changes identity
+    state.
+
+threat_research:
+  why_it_matters: >-
+    A new account or planted key gives interactive, credentialed access that survives patching,
+    worker restarts and removal of a web-layer implant, turning a web-tier compromise into a
+    host-level one that can reach other systems.
+  threat_actor: >-
+    Unknown. No source attributes any PHP2Shell activity to a group, and none reports
+    post-exploitation.
+  actor_class: 'generic-php-rce-post-exploitation'
+  campaign: >-
+    PHP2Shell (CVE-2026-109618 and CVE-2026-109619), status as of 2026-10-21. Wiz and
+    CrowdStrike have demonstrated unauthenticated remote code execution in lab conditions,
+    CrowdStrike end to end on Apache mod_php, and the PHP advisory for CVE-2026-109619 validates
+    its session path against both mod_php and PHP-FPM. Exploitation attempts are reported by
+    Cloudflare, watchTowr, Patchstack (a 07:34 UTC entry relays active exploitation incidents
+    from hosting partners; a 13:57 UTC entry describes only probing), Kaspersky (attempts before
+    the patch), Hadrian (exploitation at scale, with no counts) and VulnCheck (canary scans and at least one session-path webshell attempt on 21 October, 17:22-17:24 UTC, whose ten follow-up reads
+    all returned 404). No source documents a confirmed compromise: CISA has not
+    observed exploitation, ReliaQuest has not seen successful exploitation in customer environments, and Tanium reported on 21 October that neither CVE was in the CISA KEV catalog. Red Hat rates CVE-2026-109619 CVSS 3.1
+    8.1 for high attack complexity, while Red Hat's page lists NVD's score as 9.8. VulnCheck reports that none of the public proofs of concept it reviewed independently bypasses ASLR on x86-64, and that exploitation works on ARM64 and
+    on x86 without ASLR.
+  victim: >-
+    None documented. Attempts are reported by WAF fleets and honeypots, and Patchstack relays
+    partner-reported incidents; no source documents a confirmed compromise of a production host.
+  capability: >-
+    Not demonstrated for PHP2Shell. Sources describe code execution as the web worker account and
+    list account changes among behaviors to hunt; no sample, intrusion report or post-exploitation
+    sequence is published.
+  target: >-
+    Local identity stores and SSH login directories on internet-facing PHP hosts; whether any were
+    reached is unreported.
+  victimology:
+    - 'Linux web servers and shared-hosting platforms running PHP under a service account.'
+    - >-
+        Hosts where the web account can write its own or a central key location, or where a
+        privilege-escalation path exists.
+    - 'Hosts exposing SSH to networks the adversary can reach.'
+  framework_mappings:
+    - framework: 'MITRE ATT&CK'
+      technique_mapping_status: 'mapped'
+      id: 'T1136.001'
+      name: 'Create Account: Local Account'
+      evidence: >-
+        The behavior includes creating a local account through the account tools. Mapped by
+        behavior; no source shows PHP2Shell used it.
+    - framework: 'MITRE ATT&CK'
+      technique_mapping_status: 'mapped'
+      id: 'T1098.004'
+      name: 'Account Manipulation: SSH Authorized Keys'
+      evidence: >-
+        The behavior includes adding a public key to an authorized-keys file. Mapped by behavior;
+        unobserved in any PHP2Shell source.
+
+visibility:
+  telemetry_sources:
+    - source: 'Endpoint detection and response process-creation with parent lineage'
+      purpose: >-
+        Show an account-management tool executed with the web account as actor or with a PHP worker
+        in the ancestry.
+      event_vocabulary: 'host-process-event'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'parent process image and command line'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+          note: >-
+            Field names differ per sensor; the source is believed to emit lineage but was not
+            checked here.
+        - name: 'child process image and command line (account and group add, password change)'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+        - name: 'acting user'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+      details: >-
+        Lets a rule say an account or group tool ran under a PHP worker class or with the web
+        account as actor. The command line shows the operation and, for an add, the
+        adversary-chosen account name.
+      limitations:
+        - 'Misses a key written by an in-process file write that launches no tool.'
+        - 'Many Linux web servers and shared-hosting platforms have no endpoint sensor.'
+        - 'Shows the attempt to run the tool, not whether the change succeeded.'
+    - source: 'Kernel audit or EDR file events on identity stores and authorized-keys files'
+      purpose: >-
+        Show writes to the account, group and shadow files and to authorized-keys files, with the
+        acting process or user.
+      event_vocabulary: 'kernel-audit'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'file path'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+        - name: 'acting process, real uid (audit field uid) and effective uid (euid)'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+        - name: 'operation and outcome (create, write, rename; success or failure)'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+      details: >-
+        Watches on identity stores catch changes by tool or direct write. Authorized-keys files are
+        scattered across home directories, so a watch must cover every directory the SSH daemon
+        reads, including any configured central key location.
+      limitations:
+        - 'Needs deliberately configured audit rules or file telemetry; absent by default.'
+        - >-
+            Per-account keys files in many home directories make full path coverage hard to
+            maintain.
+        - 'Polling file-integrity tools lose the actor and miss write-then-delete cycles.'
+    - source: 'Host authentication and account-management log'
+      purpose: >-
+        Record account additions, group changes and later logins, to separate an attempt from an
+        effective new credential.
+      event_vocabulary: 'application-record'
+      tier: 'metadata'
+      operational_viability: 'on-by-default'
+      details: >-
+        Commonly records, on general Linux behavior (expected behaviour; not sourced; varies by
+        distribution), account and group changes made through standard tools and SSH logins by account,
+        including a first login by a never-seen account or from a new source.
+      limitations:
+        - 'A direct file write or a key write produces no account-change record.'
+        - 'Names the tool and the caller poorly when sudo or an automation user is involved.'
+        - 'Log retention is often short and the log is lost on host rebuild.'
+    - source: 'Periodic account and authorized-keys inventory'
+      purpose: >-
+        Reveal accounts and keys that exist, as a late fallback when no actor-attributed telemetry
+        exists.
+      event_vocabulary: 'none'
+      tier: 'not-applicable'
+      operational_viability: 'first-party-build'
+      details: >-
+        A scheduled collection of local accounts, group members and keys files, diffed against the
+        previous run, shows additions. It carries no actor and is late by the interval.
+      limitations:
+        - 'No actor attribution; cannot separate an administrator change from an intruder.'
+        - 'Late by the collection interval; an account added and removed between runs is missed.'
+
+detection:
+  scope: >-
+    Covers an account-management tool process under the web account or a PHP worker lineage
+    (strategy one), and an identity-store or keys-file write, or an account-change record, with the
+    same attribution, in-process writes included (strategy two). Later logins are a pivot; an
+    inventory diff is not coverage.
+  outcome_guardrails: >-
+    A tool run with change arguments is an attempt; a read-only or indeterminate call, discovery
+    only. A successful mutating file event is a store or keys-file change, not a login; failed, an
+    attempt; unknown outcome, an observed operation. A web-account key needs a login path. None
+    shows PHP2Shell or a flaw was the entry.
+  shared_normalization_context: >-
+    Resolve the web account per host, canonicalise identity-store paths and the locations the SSH
+    daemon reads keys from (home directories and any configured central location), and resolve
+    process ancestry to a PHP worker class rather than an image name alone.
+  shared_enrichment_context: >-
+    Join provisioning and configuration-management activity to separate sanctioned changes, and join
+    later logins by the changed account. Where the web account is a dedicated service account, a
+    baseline is likely unneeded (this pack's inference).
+  strategies:
+    - id: 'STRAT-WEB-ACTOR-IDENTITY-TOOL'
+      name: 'account-management tool process with web account or PHP worker lineage'
+      objective: >-
+        Detect an account-management tool process (useradd, usermod, gpasswd,
+        passwd and similar) created with the web account as actor or a PHP worker in the lineage, from process
+        telemetry with lineage.
+      incident_relevance: >-
+        Detects a possible post-exploitation outcome of any PHP remote-code-execution flaw,
+        including these. No source reports the outcome for PHP2Shell, so this is a possible later
+        consequence, not the documented incident behavior.
+      detection_logic: >-
+        Alert on a process-creation of an account or group management tool when the acting user is
+        the host's web account or the ancestry contains a PHP worker class, and the arguments add,
+        modify, set a password or change group membership. Report status, list, help or version
+        calls (for example passwd -S) and calls whose operation cannot be read as account-tool
+        discovery at lower severity. Ignore the account name and key content: both are
+        attacker-chosen. This strategy reads process events only and reports an attempt; the tool
+        need not have changed any state. A change that took effect is the second strategy's claim.
+      minimum_evidence: >-
+        One process-creation record naming the web account or a PHP worker ancestor as actor on an
+        account-management tool run with change arguments; a read-only or indeterminate call
+        supports only discovery. Without actor or lineage, report an account-tool run of unknown
+        origin, not web-account persistence.
+      correlation_context: >-
+        Entity keys are host, acting user and ancestry. Pair a tool execution with the
+        authentication log line or the second strategy's successful file event on the same host within a short
+        window to promote an attempt to a change; a later login by the same account raises severity.
+      detectors:
+        - detector_class: 'endpoint-process-lineage-detection'
+          technologies:
+            - 'EDR with process creation and parent chain'
+            - 'Linux auditd with execve rules'
+            - 'Sysmon-style process events'
+            - 'Microsoft Defender for Endpoint'
+          contribution: 'Establishes actor, lineage and the attempted account or group change.'
+          limitations: >-
+            Sees only the tool process; an in-process key write is the second strategy's path.
+            Absent on hosts with no sensor.
+        - detector_class: 'siem-correlation'
+          technologies:
+            - 'Splunk'
+            - 'Elastic'
+            - 'Microsoft Sentinel'
+            - 'Google SecOps'
+          contribution: 'Joins process, file and authentication events on host and actor.'
+          limitations: 'Only as good as the web-account inventory and the ingested fields.'
+      benign_explanations:
+        - explanation: >-
+            Provisioning or a hosting-panel process that runs as, or elevates from, the web account
+            to create a site account or install a deployment key.
+          distinguishing_context: >-
+            The change is tied to a provisioning run, a known automation identity and a ticket; the
+            lineage contains the automation, not a PHP worker.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding the web account because a panel provisions through it would suppress the
+            behavior this object exists to find; exclude by the provisioning run, not the account.
+      forbidden_exclusions:
+        - field: 'account name or group name'
+          reason: >-
+            Adversary-chosen; the adversary picks names that imitate service or deploy accounts.
+        - field: 'excluding the web account from the rule'
+          reason: 'The web account is the actor this rule exists to catch.'
+        - field: 'CVE identifier, exploit name or campaign name in any field'
+          reason: 'Post-exploitation carries none of them; matching on them reads only a decoy.'
+      expected_volume:
+        band: 'rare'
+        basis: 'modelled'
+        note: >-
+          Mechanism reasoned, not tested: the web account has no routine reason to change identity
+          state. Magnitude is this pack's unmeasured estimate over hosts
+          with a sensor. Hosts that provision through the web account will exceed it.
+      blind_spots:
+        - description: >-
+            Evasion: a key file written by an in-process file write launches no tool process and is
+            invisible here; the second strategy covers that path.
+          routes_to: null
+        - description: >-
+            Missing telemetry: hosts with no endpoint sensor emit nothing, and this strategy has no
+            fallback on them.
+          routes_to: null
+        - description: >-
+            Missing telemetry: authorized-keys files in many home directories, or a central key
+            location, may fall outside the configured audit paths.
+          routes_to: null
+      analyst_response: >-
+        Identify the host, account, process chain and requested change. Read the new account or key
+        and where the SSH daemon accepts it. Check authentication logs for a login with it and
+        provisioning records for a sanctioned cause. Trace the foothold in web requests and file
+        writes. Decide on isolation and rotation.
+      safe_conclusion: >-
+        An account-management tool ran under the web account or a PHP worker lineage with change
+        arguments, an attempt to change identity; whether any change took effect and the entry
+        point are not established.
+    - id: 'STRAT-IDENTITY-FILE-ACTOR-ATTRIBUTION'
+      name: 'identity store or keys file write attributed to the web account by user or lineage'
+      objective: >-
+        Detect a write to an identity store or authorized-keys file, or an account-change record,
+        attributed to the web account by real or effective user or PHP worker lineage, including
+        in-process writes with no child process.
+      incident_relevance: >-
+        Covers the in-process write that the first strategy cannot see. A possible post-exploitation
+        outcome; not documented for PHP2Shell.
+      detection_logic: >-
+        Alert on a successful create, write or rename of a passwd, shadow, group or sudoers file,
+        or an authorized-keys file the SSH daemon reads, whose real uid (audit field uid) or effective uid
+        is the web account or whose writer has a PHP worker ancestor; or on an account-change
+        record with that caller or lineage. A root write with web-account real uid or lineage is
+        the stronger finding, privilege crossed (this pack's inference). Read outcome from the
+        audit success field or an EDR completed-write event: failed is an attempt, unknown an
+        observed operation. The login uid (auid) is separate, usually unset for daemon workers;
+        never use it as real uid. Only this strategy may conclude a change.
+      minimum_evidence: >-
+        A file or audit event with a path in an identity store or keys location, a successful
+        mutating outcome, and a real or effective user that is the web account or a PHP worker
+        descendant; or an account-change record so attributed. Failed: attempt; unknown outcome:
+        observed operation; no actor: unknown author.
+      correlation_context: >-
+        Host and path keys; compare to provisioning activity in the preceding and following minutes;
+        correlate a later login by the affected account.
+      detectors:
+        - detector_class: 'file-event-actor-attribution'
+          technologies:
+            - 'Linux auditd path watches'
+            - 'EDR file telemetry'
+            - 'File integrity monitoring with actor'
+            - 'Host authentication or audit log'
+          contribution: 'Records the acting user and path for identity store and keys-file writes.'
+          limitations: >-
+            Polling file-integrity tools lose actor and miss write-then-delete cycles; coverage must
+            include every keys location the SSH daemon reads.
+      benign_explanations:
+        - explanation: >-
+            Configuration management or an administrator writes a keys file or changes an account.
+          distinguishing_context: >-
+            The real user and lineage are the automation or administrator identity, not the web
+            account or a PHP worker.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding by path rather than by actor hides a web-account write to the same file.
+        - explanation: >-
+            A deployment pipeline that installs a deploy key for the web account during a release.
+          distinguishing_context: >-
+            The write coincides with a release by a known pipeline identity and the key fingerprint
+            matches the pipeline's key inventory.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding keys-file writes during release windows lets an intruder write during a
+            release; match the key to the pipeline inventory, not the time window.
+      forbidden_exclusions:
+        - field: 'excluding writes by file name or key comment'
+          reason: 'Adversary-chosen and imitable.'
+        - field: 'excluding the web account'
+          reason: 'It is the actor the rule exists to catch.'
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: >-
+          No source gives a rate and the pack did not model one; population depends on how many
+          hosts have audit rules on keys locations.
+      blind_spots:
+        - description: >-
+            Missing telemetry: file telemetry on keys locations is not collected by default and keys
+            locations vary by host.
+          routes_to: null
+        - description: >-
+            Evasion: a key written then deleted within one polling interval defeats polling file
+            integrity monitoring, but still permits a login during the window.
+          routes_to: null
+      analyst_response: >-
+        Read the written content and path, resolve the real and effective user, writing process and outcome, check
+        whether the SSH daemon accepts the keys location, check the authentication log for a login,
+        and examine nearby web-tier requests and file writes for the foothold.
+      safe_conclusion: >-
+        An identity store or keys file was successfully written, or an account change recorded, by the web
+        account or a PHP worker descendant (as real or effective user); the cause is not
+        established.
+  supporting_technologies_considered: >-
+    Configuration-management drift reports and periodic account audits show that an account or key
+    exists but carry no actor, so they corroborate rather than detect. Authentication monitoring for
+    a first login by a new account is a downstream pivot, not primary evidence.
+
+detector_requirements:
+  required: >-
+    Web accounts resolved per host; for strategy one, process creation with lineage and arguments;
+    for strategy two, file events with acting user and outcome on identity stores and keys
+    locations, or an authentication log naming the caller; sshd key locations per host; and alert
+    text separating attempt, change and login.
+  optional: >-
+    A provisioning and deployment feed speeds dismissal of sanctioned changes; a key inventory for
+    deploy pipelines removes the main benign class.
+  correlation:
+    capability: >-
+      Aligned host clocks across process, file and authentication streams, a stable host and user
+      key, and ancestry resolution to a PHP worker class; ingestion delay can reorder a tool
+      execution and its log line.
+    window: >-
+      A few minutes between a tool execution and its file or authentication record on one host.
+  product_support_caveat: >-
+    Support depends on sensors and logging; verify lineage and file-actor coverage. As of 2026-10-21 no vendor, Elastic, Splunk or
+    Sigma content was reviewed; Huntress says rules are pending. The Microsoft cookie-controlled
+    webshell article lists no account or authorized-keys alert.
+
+missing_context:
+  unverified:
+    - >-
+      The first-observed month 2026-10 is the month of public disclosure (GHSA published 2026-10-21T13:34Z),
+      not an observation of this behavior. Evidence class: inferred.
+    - >-
+        Whether any PHP2Shell exploitation has produced an account or key change; no source reports
+        post-exploitation.
+    - 'Whether the web account can write any login directory or reach privilege on a given host.'
+    - >-
+        The exact field names and lineage depth each endpoint sensor emits for account-tool
+        execution.
+    - 'Where the SSH daemon reads authorized keys on each host; central locations are configurable.'
+  assumptions:
+    - id: 'ASSUMPTION-GENERIC-POST-EXPLOITATION'
+      verdict_changing: true
+      statement: >-
+        A PHP2Shell foothold would be used for account or key persistence like other PHP footholds.
+        Huntress lists new accounts among behaviors to hunt; no source shows it. If wrong, the
+        object stays valid but generic, adding no PHP2Shell coverage. Resolve with a published
+        intrusion report or honeypot endpoint telemetry.
+    - id: 'ASSUMPTION-KEY-WRITE-NEEDS-LOGIN-PATH'
+      verdict_changing: false
+      statement: >-
+        A key written by the web account matters only if some account holding it can log in and
+        sshd accepts the file; StrictModes, on by default, refuses a key in a home others can
+        write. If wrong, non-login key hits are over-weighted; the detectable answer holds.
+        Resolve per host: login shells, allowed users, StrictModes.
+  standing_negatives:
+    - statement: >-
+        No source reviewed on 2026-10-21 reports PHP2Shell post-exploitation, including account or
+        key changes; checked were Huntress, watchTowr, Imperva, Check Point and status entries.
+        Bounded by
+        the Patchstack 07:34 UTC entry relaying partner-reported active exploitation, unreconciled
+        with its 13:57 UTC probing-only entry.
+      ref: 'REF-HUNTRESS'
+      valid_until: '2026-10-28'
+      recheck: >-
+        Check the CISA KEV catalog, the watchTowr PHP2Shell page and the Patchstack live timeline,
+        and search vendor and national CERT bulletins for a PHP2Shell intrusion report describing
+        new accounts, planted keys or dropped scripts.
+
+missing_states:
+  - id: 'MISSING_ENDPOINT_TELEMETRY_ON_WEB_TIER'
+    meaning: >-
+      Missing telemetry: the web host runs no endpoint sensor or audit rules and forwards no
+      authentication log.
+    coverage_claim: 'no-coverage'
+    response: >-
+      State that the behavior is not covered on this host; fall back to the inventory diff and
+      report an unattributed identity change, never web-account persistence.
+  - id: 'MISSING_KEYS_LOCATION_COVERAGE'
+    meaning: >-
+      Missing telemetry: authorized-keys locations the SSH daemon reads fall outside audit paths.
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report only changes in covered locations and state which locations are uncovered; absence of
+      an alert does not exclude a planted key.
+  - id: 'MISSING_ACTOR_ATTRIBUTION'
+    meaning: 'Missing telemetry: identity changes are visible without an acting user or lineage.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report an identity change of unknown author and gather web-tier request and file evidence
+      before attributing it to the web account.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'host_and_web_account'
+    - 'acting_user_and_process_lineage'
+    - 'identity_store_or_keys_file_path'
+    - 'operation_attempted_or_change_observed'
+    - 'new_account_or_key_fingerprint_when_available'
+    - 'timestamps_and_correlation_context'
+    - 'sanctioned_change_check_result'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'later_login_by_affected_account'
+      condition: >-
+        when the authentication log shows a login by the new or modified account after the change
+    - field: 'php_worker_ancestor_class'
+      condition: 'when the process ancestry resolves to a PHP worker class'
+  recommended_title: >-
+    Web server account identity or login-key activity (discovery, attempt or change stated)
+  unsupported_title: 'PHP2Shell attacker created a backdoor account on web server'
+
+evidence:
+  confirmed_incident_behavior: >-
+    GHSA advisories: unauthenticated code execution as the web worker. Huntress and watchTowr
+    list new accounts to check; Huntress reports no exploitation; watchTowr reports attempts
+    (14:19 UTC), no post-exploitation; Wiz and CrowdStrike showed lab execution. No source
+    reports an account or key change.
+  supported_conclusion: >-
+    Web-account code execution can write login keys where the account has a writable login
+    directory. Inferred, not sourced: such identity changes are rare and separable with endpoint
+    or audit telemetry. This supports a generic alert, not reporting it as PHP2Shell activity.
+  unsupported_conclusions: >-
+    The evidence does not establish that any PHP2Shell intrusion produced an account or key change,
+    that any compromise happened, that the web account can alter identity state on any particular
+    host, or that a planted key was used. A clean result does not show a host is safe.
+  procedure_boundary: >-
+    Creation of an account, group membership or login key by the web account or a worker descendant.
+    Siblings cover unusual child processes, script writes, configuration overrides, new outbound
+    destinations and scheduler persistence. The exploit request, worker crash, memory-leak variant
+    and later login are separate.
+  references:
+    - id: 'REF-HUNTRESS'
+      type: 'incident-campaign-secondary-source'
+      title: 'Rapid Response: php2shell, Leaked Critical PHP Vulnerabilities (CVE-2026-109618 & CVE-2026-109619)'
+      publisher: 'Huntress'
+      url: 'https://huntress.com/blog/php2shell-leaked-critical-php-vulnerabilities'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports fixed versions, detection expectations (child processes, webshells, scheduled jobs,
+        accounts) and no in-the-wild exploitation on partners (10am and 4:30pm ET; header says 4:40pm).
+        Documents no intrusion.
+    - id: 'REF-GHSA-109619'
+      type: 'attack-surface-documentation'
+      title: 'RCE via stale global state'
+      publisher: 'PHP project (php-src security advisories)'
+      url: 'https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports that several paths lead to code execution as the web worker and that no error in
+        logs does not show the application is unexposed. No post-exploitation.
+    - id: 'REF-IMPERVA'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: When PHP Runs Out of Memory at the Wrong Moment'
+      publisher: 'Imperva'
+      url: 'https://www.imperva.com/blog/php2shell-vulnerability-updates/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Lists persistence mechanisms, unexpected child processes, application-file changes and
+        unusual outbound connections among review items; names no accounts or keys. Single vendor.
+        Reports no intrusion.
+    - id: 'REF-WATCHTOWR'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: PHP Remote Code Execution Exploited'
+      publisher: 'watchTowr'
+      url: 'https://watchtowr.com/intelligence/php-remote-code-execution-php2shell/'
+      trust_tier: 'researcher'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports active exploitation attempts against both CVEs, in a post published 14:19 UTC on
+        2026-10-21, and lists new accounts to check; it describes no post-exploitation. No
+        compromise.
+    - id: 'REF-CHECKPOINT'
+      type: 'incident-campaign-secondary-source'
+      title: 'Patch Now: php2shell: What We Know About the Leaked Critical PHP Vulnerabilities (CVE-2026-109618 & CVE-2026-109619)'
+      publisher: 'Check Point Research'
+      url: 'https://blog.checkpoint.com/security/php2shell-what-we-know-about-the-leaked-critical-php-vulnerabilities-cve-2026-109618-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      citation_caveat: 'contradicted-elsewhere'
+      citation_caveat_note: >-
+        'None reported in the wild so far' conflicts with watchTowr and Cloudflare attempt reports;
+        page last updated 8:40 AM PT (15:40 UTC). Cited for Check Point's stated status only.
+      evidence_use: >-
+        Supports that exploit reproduction and screenshots circulated and that no in-the-wild
+        exploitation was reported at its writing. No compromise.
+    - id: 'REF-CROWDSTRIKE'
+      type: 'incident-campaign-secondary-source'
+      title: 'CrowdStrike Protects Customers from Threats Delivered via PHP2Shell'
+      publisher: 'CrowdStrike'
+      url: 'https://www.crowdstrike.com/en-us/blog/crowdstrike-protects-customers-from-php-rce-zero-days/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports that CrowdStrike verified an anonymous POST causing an Apache mod_php worker to
+        launch a shell and run a command. No account or key change.
+    - id: 'REF-WIZ'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: AI uncovers critical RCE vulnerabilities affecting 70% of the Internet'
+      publisher: 'Wiz Research'
+      url: 'https://www.wiz.io/blog/php2shell-php-rce'
+      trust_tier: 'researcher'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports researcher-demonstrated code execution in WordPress, Drupal and Joomla containers.
+        No account or key change.
+    - id: 'REF-GHSA-109618'
+      type: 'attack-surface-documentation'
+      title: 'RCE via OOM corruption'
+      publisher: 'PHP project (php-src security advisories)'
+      url: 'https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports the CVE mapping with the 109619 advisory (109618 is the out-of-memory corruption
+        flaw). No post-exploitation.
+    - id: 'REF-PHPNET'
+      type: 'attack-surface-documentation'
+      title: 'PHP: News Archive - 2026'
+      publisher: 'php.net'
+      url: 'https://www.php.net/archive/2026.php#2026-10-21-5'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports the CVE mapping (109618 out-of-memory corruption, 109619 stale global state) and
+        fixed versions. Read from the php.net news archive entry for the 21 Oct 2026 release; the GHSA
+        advisories are the durable record.
+    - id: 'REF-TANIUM'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Responding to CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'Tanium Guardian Research Team'
+      url: 'https://www.tanium.com/blog/php2shell-responding-to-cve-2026-109618-and-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Relays VulnCheck (no public proof of concept independently bypasses ASLR on x86-64), Red Hat
+        (hard on default PHP-FPM), watchTowr exploitation; neither CVE in CISA KEV; no public IOCs.
+    - id: 'REF-CLOUDFLARE'
+      type: 'incident-campaign-secondary-source'
+      title: 'Cloudflare deploys protections against php2shell vulnerability'
+      publisher: 'Cloudflare'
+      url: 'https://blog.cloudflare.com/php-vulnerabilities-waf-protection/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Cited for exploitation status in the campaign field: attack traffic targeting
+        Cloudflare customers, with payload mutation to bypass its WAF rules. Edge attempts,
+        not host compromise.
+    - id: 'REF-PATCHSTACK-PHP'
+      type: 'incident-campaign-secondary-source'
+      title: 'Major security alert: PHP vulnerable to critical RCE, attacks ongoing'
+      publisher: 'Patchstack'
+      url: 'https://patchstack.com/articles/php-major-vulnerability-alert-10-2026/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Exploitation status: 07:34 UTC entry 'Multiple active exploitation incidents reported to
+        Patchstack by hosting partners'; 13:57 UTC entry 'only probing attacks, with no hard
+        evidence of breaches yet'. Not reconciled.
+    - id: 'REF-KASPERSKY'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: How to Protect Your Server'
+      publisher: 'Kaspersky'
+      url: 'https://www.kaspersky.com/blog/cve-2026-109618-109619-php-vulnerabilities/56583/'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Exploitation status: first attempts seen before patches were published, undescribed; no
+        confirmed compromise. Quotes re-checked 2026-10-21.
+    - id: 'REF-RELIAQUEST'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Responding to Critical PHP Vulnerabilities | Threat Spotlight'
+      publisher: 'ReliaQuest'
+      url: 'https://reliaquest.com/blog/threat-spotlight-php2shell-responding-to-critical-php-vulnerabilities/'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Exploitation status: no successful exploitation observed in customer environments; calls in-the-wild reports early, inconsistent, some only probing. Quotes re-checked 2026-10-21.
+    - id: 'REF-HADRIAN'
+      type: 'incident-campaign-secondary-source'
+      title: 'php2shell: Leaked critical PHP RCEs (CVE-2026-109618, -109619)'
+      publisher: 'Hadrian'
+      url: 'https://hadrian.io/vulnerability-alerts/php2shell-leaked-critical-php-rce-cve-2026-109618-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      citation_caveat: 'contradicted-elsewhere'
+      citation_caveat_note: >-
+        CISA and ReliaQuest report no (successful) exploitation; Hadrian reports it at scale without
+        counts. Vendor claim only; the campaign statement survives without it via Cloudflare,
+        watchTowr and Patchstack.
+      evidence_use: >-
+        Exploitation status: 11:35 UTC update 'We are now seeing php2shell exploited in the wild at
+        scale' (repeated 14:35 UTC), mostly session upload-progress path. No counts or indicators,
+        so no compromise. Quotes re-checked.
+    - id: 'REF-CISA'
+      type: 'incident-campaign-secondary-source'
+      title: 'Critical Vulnerabilities in PHP Require Immediate Patching'
+      publisher: 'CISA'
+      url: 'https://www.cisa.gov/news-events/alerts/2026/10/21/critical-vulnerabilities-php-require-immediate-patching'
+      trust_tier: 'government'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Exploitation status: CISA 'has not observed exploitation of these vulnerabilities as of the
+        time of publication' (2026-10-21). No KEV mention (rests on Tanium).
+    - id: 'REF-VULNCHECK'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell Vulnerabilities: CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'VulnCheck'
+      url: 'https://www.vulncheck.com/blog/php2shell-vulnerabilities'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Canary telemetry 2026-10-21: probes and at least one session-path webshell attempt, 17:22-17:24 UTC, ten follow-up reads all 404; no reviewed public proof of concept bypasses ASLR on x86-64.
+    - id: 'REF-REDHAT'
+      type: 'attack-surface-documentation'
+      title: 'CVE-2026-109619'
+      publisher: 'Red Hat'
+      url: 'https://access.redhat.com/security/cve/cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        CVSS 3.1 base score 8.1 (network, high attack complexity); NVD 9.8 as shown here. Describes PHP-FPM as conditionally affected.
+    - id: 'REF-OPENSSH-SSHD'
+      type: 'attack-surface-documentation'
+      title: 'sshd(8) and sshd_config(5) manual pages'
+      publisher: 'OpenBSD (OpenSSH)'
+      url: 'https://man.openbsd.org/sshd.8'
+      trust_tier: 'primary'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports that sshd refuses an authorized-keys file when it, ~/.ssh or the home directory is
+        writable by other users unless StrictModes is no; sshd_config(5) gives the default as yes.
+    - id: 'REF-PASSWD-MAN'
+      type: 'attack-surface-documentation'
+      title: 'passwd(1) - Linux manual page'
+      publisher: 'man7.org (shadow-utils manual)'
+      url: 'https://man7.org/linux/man-pages/man1/passwd.1.html'
+      trust_tier: 'primary'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports that passwd -S (--status) displays account status information without changing it,
+        so an account-tool run can be read-only. Fetched 2026-10-21.
+    - id: 'REF-MICROSOFT'
+      type: 'attack-surface-documentation'
+      title: 'Cookie-controlled PHP webshells: A stealthy tradecraft in Linux hosting environments'
+      publisher: 'Microsoft Security'
+      url: 'https://www.microsoft.com/en-us/security/blog/2026/04/02/cookie-controlled-php-webshells-tradecraft-linux-hosting-environments/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Prior art on generic PHP webshell tradecraft, published before and unrelated to PHP2Shell.
+        Cited only for the product-support statement that it has no account or authorized-keys
+        alert.
+    - id: 'REF-RHEL-AUDIT-RECORDS'
+      type: 'attack-surface-documentation'
+      title: 'Understanding Audit Log Files (Red Hat Enterprise Linux 7 Security Guide)'
+      publisher: 'Red Hat'
+      url: 'https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/7/html/security_guide/sec-understanding_audit_log_files'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports that the audit success field records whether the system call succeeded or failed,
+        and that auid is the login uid, kept across identity changes. Fetched 2026-10-21.
+    - id: 'REF-AUDITCTL-MAN'
+      type: 'attack-surface-documentation'
+      title: 'auditctl(8) - Linux manual page'
+      publisher: 'man7.org (Linux audit manual)'
+      url: 'https://man7.org/linux/man-pages/man8/auditctl.8.html'
+      trust_tier: 'primary'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports that auid (the original login ID) and uid, euid are separate audit fields, so the
+        login uid is not the real uid. Fetched 2026-10-21.

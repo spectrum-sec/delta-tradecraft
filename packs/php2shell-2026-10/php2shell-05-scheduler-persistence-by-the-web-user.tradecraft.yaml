@@ -1,0 +1,865 @@
+identity:
+  uuid: 'cbb8f6eb-d750-4a5f-a387-d84e588b8980'
+  id: 'DT-P2S-HOST-005'
+  name: 'A web-serving PHP account or its descendant installs scheduler persistence'
+  incident: >-
+    PHP2Shell: two unauthenticated PHP engine RCE flaws, disclosed and patched 2026-10-21. Several
+    parties report exploitation attempts against WAFs and honeypots; none confirms a compromise
+    or post-exploitation. This object is inferred generic PHP-worker tradecraft, not
+    PHP2Shell-specific coverage.
+  first_observed: '2026-10'
+  last_reviewed: '2026-10-21'
+
+classification:
+  primary_attack_surface: 'host-os'
+  secondary_attack_surfaces:
+    - 'host-filesystem'
+  behavior_classes:
+    - 'persistence'
+  tags:
+    - 'php'
+    - 'php2shell'
+    - 'web-worker'
+    - 'scheduler-persistence'
+    - 'cron'
+    - 'systemd'
+    - 'inferred'
+    - 'generic-post-exploitation'
+
+
+behavior:
+  definition: >-
+    After gaining code execution as the web worker account, an adversary registers a recurring or
+    boot-time job (a cron entry, a systemd unit or timer, a scheduled task, a startup item) so that
+    access survives the loss of the original foothold.
+  detailed_definition: >-
+    A web worker has no routine reason to write scheduler stores. An adversary in that account can
+    make the host re-run something without a new request (user crontab, writable cron drop-in,
+    user-level systemd unit, Windows or macOS equivalents), surviving restarts and patching. Success
+    begins when the job runs.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers a web-worker-account actor writing or registering a scheduler entry on a host where
+      that account can reach a scheduler store; does not cover hosts where the account is denied
+      every scheduler interface, nor any claim that PHP2Shell post-exploitation produced it.
+    summary: >-
+      Possible whenever an adversary has code execution as the web worker account and that account,
+      or a child, can write a user crontab, cron drop-in, user-scope unit or task store. Hardened
+      hosts may deny the crontab, but a writable drop-in or in-process file write can still reach a
+      higher-privilege reader.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Observable where process, file or kernel-audit telemetry with process attribution exists on
+      the web tier; not observable from web logs, WAF logs or network telemetry alone.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          Crontab and unit-file writes, and scheduler client executions, appear only where an EDR
+          sensor or kernel audit rules cover them; a default Linux install records none with actor
+          attribution.
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          Many Linux web servers, shared-hosting platforms and container images run no endpoint
+          sensor at all, so the stream may not exist.
+    summary: >-
+      Observable when a host sensor records a scheduler client process-creation (crontab, at,
+      systemctl, schtasks) or a file create or modify in a scheduler store, with acting user and
+      lineage. A modification-time check, a periodic job-list audit or a cron daemon log does not
+      show who installed the entry.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Separable from benign activity once the observable-gate telemetry exists and the PHP account
+      does not also legitimately edit its own scheduler entries. Does not hold on shared or panel
+      hosting where the worker runs as the site owner's login account (per-user PHP pools, suPHP,
+      LSAPI).
+    blocking_conditions:
+      - condition: 'environment-inventory-required'
+        note: >-
+          On shared and panel hosting the worker account is the site owner's login account and
+          legitimately edits its own crontab. Separate panel and login-session writes by process
+          lineage (panel daemon, interactive login session), after inventorying which hosts run PHP
+          as a human or panel-managed account.
+    summary: >-
+      With a dedicated service account, a scheduler store write attributed to it or to a process
+      with a PHP worker in its lineage has a very small legitimate population. The discriminator is
+      actor and lineage, not job content, which the adversary controls. Where PHP runs as a login
+      account, lineage must carry it.
+
+attack_surface_context:
+  surface: >-
+    Host scheduler stores reachable by the web worker account: per-user crontabs, cron drop-in
+    directories, systemd system and user unit directories, at queues, Windows scheduled tasks and
+    macOS launch agents.
+  how_the_surface_works: >-
+    Unix hosts run a cron daemon reading per-user crontab spools and system cron directories, and a
+    service manager reading unit files. A user crontab is written by its owner through the crontab
+    client, gated by allow and deny lists. A web worker (php-fpm, php-cgi, mod_php, FrankenPHP,
+    lsphp) runs unprivileged.
+  incident_processing_path: >-
+    GHSA: unauthenticated code execution as the web worker. Huntress lists scheduled-job and account
+    changes to look for; no in-the-wild exploitation on partner systems (10am and 4:30pm ET,
+    2026-10-21). No source describes PHP2Shell post-exploitation. Wiz and CrowdStrike demonstrated
+    code execution only.
+  processing_stages:
+    - 'code-execution-as-web-worker'
+    - 'scheduler-store-discovery'
+    - 'scheduler-store-write-or-client-invocation'
+    - 'scheduler-daemon-pickup'
+    - 'job-execution-outside-request-context'
+  stage_evidence: >-
+    What an event proves depends on where it is seen: a crontab client under a PHP worker with
+    registration arguments, an attempt (read-only, discovery); a successful spool write, a store change;
+    the daemon's execution record, that the job ran, the only proof persistence took effect; a
+    periodic audit, the end state.
+  trust_boundaries: >-
+    Request-bound web worker into host-bound scheduled execution. Reached: unverified for PHP2Shell.
+    A per-user crontab entry does not cross the privilege boundary to the superuser; only an entry
+    in a store a privileged reader executes (a writable system drop-in) does, a separate and
+    stronger finding.
+  security_control_context: >-
+    Outcome-deciding controls: scheduler allow and deny lists, spool and unit directory permissions,
+    mandatory access control or container policy denying the client, read-only container root
+    filesystems. A bypass is an in-process file write to a path the privileged scheduler reads,
+    defeating a client-process rule.
+  special_context:
+    topic: 'in-process-versus-child-process-registration'
+    context: >-
+      PHP can write files from inside the worker without a child process, so a lineage-only rule
+      misses a plain file write. File-event or kernel-audit coverage on scheduler paths is the
+      cross-check. The sibling objects for unusual child processes and executable-script writes carry
+      the other two legs of this triangle.
+  practitioner_implication: >-
+    Before writing any rule, discover which accounts run the web tier on each host, which scheduler
+    stores they can reach, whether a sensor records file and process events with actor and lineage,
+    and which legitimate products schedule as the web account.
+
+threat_research:
+  why_it_matters: >-
+    Scheduler persistence turns a transient request-bound foothold into one that survives worker
+    restarts, application patching and sometimes engine patching. Patching alone does not evict an
+    intruder who registered a job before the fix.
+  threat_actor: >-
+    Unknown. No source attributes any PHP2Shell activity to a group, and none reports
+    post-exploitation.
+  actor_class: 'generic-php-rce-post-exploitation'
+  campaign: >-
+    PHP2Shell (CVE-2026-109618 and CVE-2026-109619), status as of 2026-10-21. Wiz and CrowdStrike have
+    demonstrated unauthenticated remote code execution in lab conditions, CrowdStrike end to end on
+    Apache mod_php, and the PHP advisory for CVE-2026-109619 validates its session path against both
+    mod_php and PHP-FPM. Exploitation attempts are reported by Cloudflare, watchTowr, Patchstack (a
+    07:34 UTC entry relays active exploitation incidents from hosting partners; a 13:57 UTC entry
+    describes only probing), Kaspersky (attempts before the patch), Hadrian (exploitation at scale,
+    with no counts) and VulnCheck (canary scans and at least one session-path webshell attempt on 21 October,
+    17:22-17:24 UTC, whose ten follow-up reads all returned 404). No source documents a confirmed compromise: CISA has not observed exploitation, ReliaQuest has not seen successful exploitation in customer environments, and Tanium reported on 21 October that neither CVE was in the CISA KEV catalog. Red Hat
+    rates CVE-2026-109619 CVSS 3.1 8.1 for high attack complexity, while Red Hat's page lists NVD's score as 9.8. VulnCheck reports that none of the public proofs of concept it reviewed independently bypasses ASLR on x86-64, and that
+    exploitation works on ARM64 and on x86 without ASLR.
+  victim: >-
+    None documented. WAF fleets and honeypots report attempts, and Patchstack relays
+    partner-reported incidents; no source documents a confirmed compromise of a production host.
+  capability: >-
+    Not demonstrated for PHP2Shell. Sources describe code execution as the web worker account and
+    list scheduler persistence among behaviors to hunt; no sample, intrusion report or
+    post-exploitation sequence is published.
+  target: >-
+    Internet-facing hosts running PHP as a web worker. The scheduler stores are the target of this
+    step; whether any were reached is unreported.
+  victimology:
+    - 'Linux web servers and shared-hosting platforms running PHP under a service account.'
+    - 'Hosts with writable per-user crontab or cron drop-in access for the web account.'
+    - >-
+        Containers and control-panel installations that bundle their own PHP and run workers as a
+        service user.
+  framework_mappings:
+    - framework: 'MITRE ATT&CK'
+      technique_mapping_status: 'mapped'
+      id: 'T1053'
+      name: 'Scheduled Task/Job'
+      evidence: >-
+        Registration of a recurring or boot-time job through cron, at or the task scheduler. Mapped
+        on the behavior definition; no source shows PHP2Shell used it.
+    - framework: 'MITRE ATT&CK'
+      technique_mapping_status: 'mapped'
+      id: 'T1543'
+      name: 'Create or Modify System Process'
+      evidence: >-
+        Covers the systemd unit, Windows service and launch-agent variants. Mapped by behavior;
+        unobserved in any PHP2Shell source.
+
+visibility:
+  telemetry_sources:
+    - source: 'Endpoint detection and response process-creation with parent lineage'
+      purpose: >-
+        Show a scheduler client tool executed with the web account as actor or a PHP worker in the
+        ancestry.
+      event_vocabulary: 'host-process-event'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'parent process image and command line'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+          note: >-
+            Field names differ per sensor; the source is believed to emit lineage but was not
+            checked here.
+        - name: 'child process image and command line (crontab, at, systemctl, schtasks)'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+        - name: 'acting user'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+        - name: 'host'
+          attestation: 'unattested-inferred'
+          load_bearing: false
+      details: >-
+        A parent chain lets a rule say a crontab or service-manager client ran under php-fpm,
+        php-cgi, the web server with an embedded interpreter, FrankenPHP or lsphp, or under any
+        process whose acting user is the web account. The command line shows the operation (edit,
+        list, enable) but not whether the write succeeded.
+      advantages:
+        - 'Attributes the action to an account and a lineage in one record.'
+      limitations:
+        - >-
+            Misses a scheduler entry written by an in-process file write that never launches a
+            client tool.
+        - 'Many Linux web servers and shared-hosting platforms have no endpoint sensor.'
+        - 'A successful registration is not shown; only the attempt to run the client.'
+    - source: 'Kernel audit or EDR file events on scheduler stores'
+      purpose: >-
+        Show creation or modification of crontab spool files, cron drop-in directories and unit
+        directories, with the acting process or user.
+      event_vocabulary: 'kernel-audit'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'file path'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+        - name: 'acting process and user'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+        - name: 'operation and outcome (create, write, rename, delete; success or failure)'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+      details: >-
+        A watch on the spool and unit directories reports writes, their outcome and the real and effective user, catching
+        the in-process write that lineage misses. Directory watches must be set deliberately; they
+        are not a default audit ruleset.
+      limitations:
+        - >-
+            Needs deliberately configured audit rules or an EDR with file telemetry; absent by
+            default.
+        - 'A write followed by an immediate delete may be lost to a polling file-integrity tool.'
+        - >-
+            Volume is low on scheduler paths, but rule scope must cover every drop-in directory in
+            use.
+    - source: 'Periodic scheduler inventory (crontab and unit listing collected by an agent)'
+      purpose: >-
+        Reveal entries that exist, as a late fallback when no actor-attributed telemetry exists.
+      event_vocabulary: 'none'
+      tier: 'not-applicable'
+      operational_viability: 'first-party-build'
+      details: >-
+        A scheduled collection of account crontabs and unit lists, diffed against the previous one,
+        shows added entries. It carries no actor or lineage and is late by the collection interval.
+      limitations:
+        - 'No actor attribution; cannot separate an administrator change from an intruder.'
+        - 'Late by the collection interval; an entry added and removed between runs is missed.'
+        - 'Needs a built inventory and a diff, which no vendor ships for this behavior.'
+
+detection:
+  scope: >-
+    Strategy one: a scheduler client or tool process under the web account or a PHP worker lineage
+    (process telemetry). Strategy two: a scheduler store write with the same attribution, by real
+    or effective user (file telemetry, incl. in-process writes). Hosts without a sensor fall
+    to a late inventory diff.
+  outcome_guardrails: >-
+    A client run with registration arguments is an attempt, not a written entry; a read-only or
+    indeterminate call, discovery only. A successful mutating file event is a store change, not that
+    the daemon ran it; failed, an attempt; unknown outcome, an observed operation. None shows
+    PHP2Shell, or any flaw, was the entry.
+  shared_normalization_context: >-
+    Resolve the web account per host (it differs by distribution and panel), canonicalise scheduler
+    paths including drop-ins and per-user spools, and resolve ancestry to a PHP worker class
+    (php-fpm, php-cgi, the web server with an embedded interpreter, FrankenPHP, lsphp), not an image
+    name alone.
+  shared_enrichment_context: >-
+    Join the host's deploy and configuration-management activity to separate sanctioned scheduler
+    edits, and the inventory of products that legitimately schedule as the web account. Where the
+    web account is a dedicated service account, a baseline is likely unneeded (this pack's
+    inference).
+  strategies:
+    - id: 'STRAT-WEB-ACTOR-SCHEDULER-CLIENT'
+      name: 'scheduler client or tool process with web account or PHP worker lineage'
+      objective: >-
+        Detect a scheduler client or tool process created with the web account as actor or a PHP
+        worker in the process lineage, from process telemetry with lineage.
+      incident_relevance: >-
+        Detects a possible post-exploitation outcome of any PHP RCE flaw, including these. No source
+        reports it for PHP2Shell, so it is a possible later consequence, not documented incident
+        behavior.
+      detection_logic: >-
+        Alert on a process-creation of a scheduler client or tool (crontab, at, systemctl,
+        systemd-run, task registration and similar) when the acting user is the host's web account
+        or the ancestry contains a PHP worker class, and the arguments create or change a job
+        (crontab install or edit, at with a job, enabling a unit, starting a timer unit, task
+        registration). Starting an ordinary service only activates an existing unit and registers
+        no job; it is not this behavior.
+        Report read-only calls (crontab -l, status) as scheduler discovery at lower severity. Ignore
+        the job content: it is attacker-controlled. A store change is the second strategy's claim.
+      minimum_evidence: >-
+        One process-creation record naming the web account or a PHP worker ancestor as actor on a
+        scheduler client or tool run with arguments that create or change a job (starting a
+        non-timer unit does not); a read-only call supports only discovery. Without lineage or
+        actor, report a scheduler client run of unknown origin.
+      correlation_context: >-
+        Keys: host, acting user, ancestry. Pair a client execution with a successful second-strategy
+        file event on the same host within a short window to promote an attempt to a store change;
+        join on real uid or lineage, since setuid cronie crontab writes the spool as root. Ingestion
+        delay can reorder the pair.
+      detectors:
+        - detector_class: 'endpoint-process-lineage-detection'
+          technologies:
+            - 'EDR with process creation and parent chain'
+            - 'Linux auditd with execve rules'
+            - 'Sysmon-style process events'
+            - 'Microsoft Defender for Endpoint'
+          contribution: 'Establishes actor, lineage and the attempted scheduler registration.'
+          limitations: >-
+            Sees only the client or tool process; an in-process file write is the second strategy's
+            path. Absent on hosts with no sensor.
+        - detector_class: 'siem-correlation'
+          technologies:
+            - 'Splunk'
+            - 'Elastic'
+            - 'Microsoft Sentinel'
+            - 'Google SecOps'
+          contribution: >-
+            Joins process and file events on host and actor and applies the web-account list.
+          limitations: 'Only as good as the web-account inventory and the ingested fields.'
+      benign_explanations:
+        - explanation: >-
+            A deployment, configuration-management or hosting-panel process that runs as, or sudoes
+            to, the web account and installs a sanctioned scheduled job.
+          distinguishing_context: >-
+            The change is tied to a deploy or configuration-management run, a known automation
+            identity, and a change ticket; the lineage includes the automation, not a PHP worker.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding the web account wholesale because a panel schedules as it would suppress the
+            behavior this object exists to find.
+        - explanation: >-
+            A CMS or application that registers its own periodic job through the operating system
+            scheduler from the web worker during setup.
+          distinguishing_context: >-
+            It occurs once at install or upgrade, with a known command, and is not repeated in
+            steady state; confirm against the product inventory.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            An exclusion for the product's job command is adversary-settable if the entry can
+            imitate that command; exclude by deploy event, not by command text.
+      forbidden_exclusions:
+        - field: 'job command text or script name'
+          reason: 'Adversary-settable; the adversary chooses a name that imitates a sanctioned job.'
+        - field: 'excluding the web account from the rule'
+          reason: >-
+            The web account is the actor this rule exists to catch; excluding it removes the
+            incident's own record.
+        - field: 'CVE identifier, exploit name or campaign name in any field'
+          reason: 'Post-exploitation carries none of them; matching on them reads only a decoy.'
+      expected_volume:
+        band: 'rare'
+        basis: 'modelled'
+        note: >-
+          Mechanism reasoned, not sourced: web accounts rarely write scheduler stores. Magnitude is this pack's unmeasured
+          estimate over hosts with a sensor and a resolved web-account list. Hosting platforms that
+          schedule through the web account will exceed it.
+      blind_spots:
+        - description: >-
+            Evasion: a scheduler entry written by an in-process file write launches no client or
+            tool process and is invisible here; the second strategy covers that path.
+          routes_to: null
+        - description: >-
+            Missing telemetry: hosts with no endpoint sensor emit nothing, and this strategy has no
+            fallback on them.
+          routes_to: null
+        - description: >-
+            Attribution limit: a worker lineage can be lost through double forks, so a descendant
+            may surface without a PHP ancestor; the acting user is the fallback key.
+          routes_to: null
+      analyst_response: >-
+        Identify the host, account, process chain and attempted entry. Read the job content and path
+        it runs. Check deploy and configuration-management records and web-tier logs. Look for other
+        web-account changes (scripts, configuration overrides, new accounts, outbound destinations).
+        Decide whether to isolate the web tier.
+      safe_conclusion: >-
+        A scheduler client ran under the web account or a PHP worker lineage with job-registration
+        arguments, an attempt to register a job; whether a store changed and the entry point are not
+        established.
+    - id: 'STRAT-SCHEDULER-FILE-ACTOR-ATTRIBUTION'
+      name: 'scheduler store write attributed to the web account by user or lineage'
+      objective: >-
+        Detect a create, write or rename in a scheduler store attributed to the web account by real
+        or effective user or PHP worker lineage, from kernel audit or EDR file events, including
+        in-process writes with no child process.
+      incident_relevance: >-
+        Covers the in-process write the first strategy cannot see. A possible post-exploitation
+        outcome; not documented for PHP2Shell.
+      detection_logic: >-
+        Alert on a successful create, write or rename in a per-user spool, cron drop-in, unit
+        directory or task store whose real uid (audit field uid) or effective uid is the web account or
+        whose writer has a PHP worker ancestor, whether or not a client tool ran. Setuid cronie
+        crontab writes the spool as root, so effective user alone misses it. A write with no client
+        process is the in-process shape. Read outcome from the audit success field or an EDR
+        completed-write event: failed is an attempt, unknown an observed operation. The login uid
+        (auid) is a separate field, usually unset for daemon workers (this pack's inference); never
+        use it as the real uid.
+      minimum_evidence: >-
+        A file or audit event with path in a scheduler store, a successful mutating outcome, and a
+        real or effective user that is the web account or a PHP worker descendant. A failed
+        operation supports only an attempt; unknown outcome, an observed operation. Without the
+        actor, report a change of unknown author.
+      correlation_context: >-
+        Host and path keys; compare to deploy or configuration-management activity in the preceding
+        and following minutes.
+      detectors:
+        - detector_class: 'file-event-actor-attribution'
+          technologies:
+            - 'Linux auditd path watches'
+            - 'EDR file telemetry'
+            - 'File integrity monitoring with actor'
+          contribution: 'Records the acting user and path for scheduler store writes.'
+          limitations: >-
+            Polling file-integrity tools lose actor and miss write-then-delete cycles; coverage must
+            include every drop-in directory in use.
+      benign_explanations:
+        - explanation: >-
+            A package manager or configuration-management agent writes a scheduler drop-in.
+          distinguishing_context: >-
+            The real user and lineage are the package manager or automation identity, not the web
+            account or a PHP worker.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding by directory rather than by actor hides a web-account write to the same place.
+      forbidden_exclusions:
+        - field: 'excluding writes by file name'
+          reason: 'File names are adversary-chosen and can imitate package drop-ins.'
+        - field: 'excluding the web account'
+          reason: 'It is the actor the rule exists to catch.'
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: >-
+          No source gives a rate and the pack did not model one; population depends on how many
+          hosts have directory-level audit rules.
+      blind_spots:
+        - description: >-
+            Missing telemetry: file telemetry on scheduler directories is not collected by default
+            and must be enabled per host.
+          routes_to: null
+        - description: >-
+            Evasion: writing then deleting the entry within one polling interval defeats polling
+            file integrity monitoring.
+          routes_to: null
+      analyst_response: >-
+        Read the entry content and path, and resolve the real and effective user, writing process and outcome. Examine
+        nearby web-tier requests and file writes for the foothold. Compare against
+        configuration-management activity. Remove the entry only after capturing it.
+      safe_conclusion: >-
+        A scheduler store was successfully written by the web account or a PHP worker descendant (as real or
+        effective user); the cause is not established.
+  supporting_technologies_considered: >-
+    File-integrity monitoring and configuration-management drift reports show an entry exists but
+    carry no actor, so they corroborate and are not primary evidence. Endpoint memory and disk
+    forensics help establish the writing process afterward but are not detectors.
+
+detector_requirements:
+  required: >-
+    A resolved list of web accounts per host; for strategy one, process creation with lineage and
+    arguments; for strategy two, file events with the acting user and outcome on scheduler paths; canonicalised
+    store paths including drop-ins; and alert text that separates an attempt, a store change and an
+    executed job.
+  optional: >-
+    A deploy and configuration-management activity feed speeds dismissal of sanctioned changes. A
+    product inventory of tools that schedule as the web account removes the main benign class.
+  correlation:
+    capability: >-
+      Aligned host clocks across process and file streams, a stable host and user key, and ancestry
+      resolution to a PHP worker class; ingestion delay can reorder a client execution and its file
+      event.
+    window: 'A few minutes between a client execution and the store write on one host.'
+  product_support_caveat: >-
+    Candidate products only; verify lineage and file-actor coverage. As of 2026-10-21: Defender for
+    Endpoint's "Suspicious cron job" alert covers a cron job created by a hosting control panel
+    process (vendor-stated; no web-account linkage).
+
+missing_context:
+  unverified:
+    - >-
+      first_observed '2026-10' is the month of the public disclosure (GHSA published
+      2026-10-21T13:34Z). It is not an observation: no source reports this behavior in any PHP2Shell
+      intrusion. Evidence class: inferred.
+    - 'Whether any PHP2Shell exploitation has produced scheduler persistence.'
+    - >-
+      Which scheduler stores the web account can reach on a given host; depends on shell, allow
+      lists and mandatory access control.
+    - >-
+      The exact field names and lineage depth each endpoint sensor emits for scheduler client
+      execution.
+  assumptions:
+    - id: 'ASSUMPTION-GENERIC-POST-EXPLOITATION'
+      verdict_changing: true
+      statement: >-
+        A PHP2Shell foothold would be used for scheduler persistence like other PHP footholds;
+        Huntress lists scheduled-job changes to hunt, and no source shows it. If wrong, the object
+        stays valid but generic. Resolve with a published intrusion report or honeypot endpoint
+        telemetry.
+    - id: 'ASSUMPTION-WEB-ACCOUNT-LEGITIMATE-POPULATION-SMALL'
+      verdict_changing: false
+      statement: >-
+        Dedicated web service accounts almost never write scheduler stores legitimately; inferred,
+        and it fails where PHP runs as the site owner's login account. If wrong, rules get noisy
+        where a panel schedules as the web account. Resolve by listing processes that
+        wrote scheduler stores as the web account over 30 days.
+  standing_negatives:
+    - statement: >-
+        No source reviewed on 2026-10-21 reports PHP2Shell post-exploitation, including scheduler
+        persistence; checked were Huntress, watchTowr, Imperva, Check Point and the status entries.
+        Bounded by the Patchstack 07:34 UTC entry (partner-reported incidents), unreconciled with
+        its 13:57 UTC probing-only entry.
+      ref: 'REF-HUNTRESS'
+      valid_until: '2026-10-28'
+      recheck: >-
+        Check the CISA KEV catalog, the watchTowr PHP2Shell page and the Patchstack live timeline,
+        and search vendor and national CERT bulletins for a PHP2Shell intrusion report describing
+        scheduled jobs, new accounts or dropped scripts.
+
+missing_states:
+  - id: 'MISSING_ENDPOINT_TELEMETRY_ON_WEB_TIER'
+    meaning: 'Missing telemetry: the web host runs no endpoint sensor or audit rules.'
+    coverage_claim: 'no-coverage'
+    response: >-
+      State that the behavior is not covered on this host; fall back to the periodic inventory diff
+      and report an unattributed scheduler change, never web-account persistence.
+  - id: 'MISSING_ACTOR_ATTRIBUTION'
+    meaning: 'Missing telemetry: scheduler changes are visible without an acting user or lineage.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report a scheduler change of unknown author and gather the web-tier request and file evidence
+      before attributing it to the web account.
+  - id: 'MISSING_IN_PROCESS_WRITE_VISIBILITY'
+    meaning: >-
+      Missing telemetry: only process-creation is collected, so an in-process file write is
+      invisible.
+    coverage_claim: 'coverage-limited'
+    response: >-
+      State that a lineage-only rule cannot see a file written by the worker itself and that absence
+      of an alert does not exclude persistence.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'host_and_web_account'
+    - 'acting_user_and_process_lineage'
+    - 'scheduler_store_and_entry_path'
+    - 'operation_attempted_or_store_changed_or_job_ran'
+    - 'entry_content_or_command_when_available'
+    - 'timestamps_and_correlation_context'
+    - 'sanctioned_change_check_result'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'php_worker_ancestor_class'
+      condition: 'when the process ancestry resolves to a PHP worker class'
+  recommended_title: >-
+    Web server account scheduler activity (discovery, attempt or store change stated)
+  unsupported_title: 'PHP2Shell attacker established persistence on web server'
+
+evidence:
+  confirmed_incident_behavior: >-
+    Huntress lists scheduled jobs among behaviors to hunt and saw no in-the-wild exploitation on
+    partner systems (4:30pm ET, 2026-10-21). watchTowr reports attempts, no post-exploitation. Wiz
+    and CrowdStrike showed code execution only. No source reports scheduler persistence.
+  supported_conclusion: >-
+    Web-account code execution can write a scheduler store. Inferred, not sourced: attributed
+    scheduler changes by the web account are rare and separable where endpoint or audit telemetry
+    exists. This supports
+    a generic alert on that behavior, not reporting the alert as PHP2Shell activity.
+  unsupported_conclusions: >-
+    The evidence does not establish that any PHP2Shell intrusion produced scheduler persistence,
+    that any compromise happened, that persistence survives patching on any specific host, or that
+    the web account can reach any particular scheduler store. A clean result does not show a host is
+    safe.
+  procedure_boundary: >-
+    Registration of a scheduler entry by the web account or a worker descendant. Siblings cover
+    unusual child processes, executable-script writes, configuration overrides, new outbound
+    destinations and account or key changes. The exploit request, crash, memory-leak variant and
+    later job use are separate.
+  references:
+    - id: 'REF-HUNTRESS'
+      type: 'incident-campaign-secondary-source'
+      title: 'Rapid Response: php2shell, Leaked Critical PHP Vulnerabilities (CVE-2026-109618 & CVE-2026-109619)'
+      publisher: 'Huntress'
+      url: 'https://huntress.com/blog/php2shell-leaked-critical-php-vulnerabilities'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports fixed versions, detection expectations (child processes, webshells, scheduled jobs,
+        accounts, download tools, reverse shells) and no in-the-wild exploitation on partner systems
+        (10am, 4:30pm ET, 2026-10-21).
+    - id: 'REF-GHSA-109619'
+      type: 'attack-surface-documentation'
+      title: 'RCE via stale global state'
+      publisher: 'PHP Group (php-src security advisories)'
+      url: 'https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports that several paths lead to code execution as the web worker account and that no
+        error in logs does not prove the application is unexposed. Describes no post-exploitation.
+    - id: 'REF-IMPERVA'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: When PHP Runs Out of Memory at the Wrong Moment'
+      publisher: 'Imperva'
+      url: 'https://www.imperva.com/blog/php2shell-vulnerability-updates/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Lists persistence mechanisms among post-exposure review items, with unexpected child
+        processes, file changes, outbound connections and credential exposure; single-vendor. No
+        intrusion.
+    - id: 'REF-WATCHTOWR'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: PHP Remote Code Execution Exploited'
+      publisher: 'watchTowr'
+      url: 'https://watchtowr.com/intelligence/php-remote-code-execution-php2shell/'
+      trust_tier: 'researcher'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports active exploitation attempts against both CVEs (post published 14:19 UTC on
+        2026-10-21) and no described post-exploitation. Does not support any compromise.
+    - id: 'REF-PHP-FOUNDATION'
+      type: 'attack-surface-documentation'
+      title: 'Today''s PHP Security Release, and How We''re Strengthening PHP Security'
+      publisher: 'The PHP Foundation'
+      url: 'https://thephp.foundation/blog/2026/10/21/todays-php-security-release-and-how-were-strengthening-php-security/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports that the PHP security team identified no functional exploit at release and that FPM
+        remote-code-execution depends on how the application operates. Supports no post-exploitation
+        claim.
+    - id: 'REF-CROWDSTRIKE'
+      type: 'incident-campaign-secondary-source'
+      title: 'CrowdStrike Protects Customers from Threats Delivered via PHP2Shell'
+      publisher: 'CrowdStrike'
+      url: 'https://www.crowdstrike.com/en-us/blog/crowdstrike-protects-customers-from-php-rce-zero-days/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports researcher-demonstrated anonymous request yielding a shell as the worker on
+        mod_php, and vendor-stated generic IOA coverage of web-server child processes. Reports no
+        scheduler persistence.
+    - id: 'REF-WIZ'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: AI uncovers critical RCE vulnerabilities affecting 70% of the Internet'
+      publisher: 'Wiz'
+      url: 'https://www.wiz.io/blog/php2shell-php-rce'
+      trust_tier: 'researcher'
+      verification: 'confirmed-with-scope-caveat'
+      citation_caveat: 'contradicted-elsewhere'
+      citation_caveat_note: >-
+        Wiz labels the upload-progress flaw as CVE-2026-109618, while the PHP advisories place the
+        session upload-progress path under CVE-2026-109619. This pack follows the advisories.
+      evidence_use: >-
+        Supports researcher-demonstrated code execution in WordPress, Drupal and Joomla.
+        Reports no post-exploitation sequence.
+    - id: 'REF-GHSA-109618'
+      type: 'attack-surface-documentation'
+      title: 'RCE via OOM corruption'
+      publisher: 'PHP Group (php-src security advisories)'
+      url: 'https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports the CVE mapping with the 109619 advisory (109618 is the out-of-memory corruption
+        flaw). Describes no post-exploitation.
+    - id: 'REF-PHPNET'
+      type: 'attack-surface-documentation'
+      title: 'PHP: News Archive - 2026'
+      publisher: 'PHP Group (php.net)'
+      url: 'https://www.php.net/archive/2026.php#2026-10-21-5'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports the CVE mapping (109618 out-of-memory corruption, 109619 stale global state) and
+        the fixed versions. Read from the php.net news archive on 2026-10-21; the GHSA advisories are the
+        durable record.
+    - id: 'REF-TANIUM'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Responding to CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'Tanium'
+      url: 'https://www.tanium.com/blog/php2shell-responding-to-cve-2026-109618-and-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Campaign status: relays watchTowr honeypot exploitation;
+        neither CVE in CISA KEV; no public IOCs at writing (VulnCheck has since published canary
+        indicators).
+    - id: 'REF-CLOUDFLARE'
+      type: 'incident-campaign-secondary-source'
+      title: 'Cloudflare deploys protections against php2shell vulnerability'
+      publisher: 'Cloudflare'
+      url: 'https://blog.cloudflare.com/php-vulnerabilities-waf-protection/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Campaign status: Cloudflare observed attack traffic targeting its
+        customers; attempts at an edge, no host compromise reported.
+    - id: 'REF-PATCHSTACK-PHP'
+      type: 'incident-campaign-secondary-source'
+      title: 'Major security alert: PHP vulnerable to critical RCE, attacks ongoing'
+      publisher: 'Patchstack'
+      url: 'https://patchstack.com/articles/php-major-vulnerability-alert-10-2026/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Campaign status: 07:34 UTC "Multiple active exploitation
+        incidents reported to Patchstack by hosting partners"; 13:57 UTC "only probing attacks, with
+        no hard evidence of breaches yet". Not reconciled.
+    - id: 'REF-KASPERSKY'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: How to Protect Your Server'
+      publisher: 'Kaspersky'
+      url: 'https://www.kaspersky.com/blog/cve-2026-109618-109619-php-vulnerabilities/56583/'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Campaign status: attempts seen before patches, undescribed.
+    - id: 'REF-RELIAQUEST'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell: Responding to Critical PHP Vulnerabilities | Threat Spotlight'
+      publisher: 'ReliaQuest'
+      url: 'https://reliaquest.com/blog/threat-spotlight-php2shell-responding-to-critical-php-vulnerabilities/'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Campaign status: no successful exploitation seen in customer
+        environments; early, inconsistent reports.
+    - id: 'REF-HADRIAN'
+      type: 'incident-campaign-secondary-source'
+      title: 'php2shell: Leaked critical PHP RCEs (CVE-2026-109618, -109619)'
+      publisher: 'Hadrian'
+      url: 'https://hadrian.io/vulnerability-alerts/php2shell-leaked-critical-php-rce-cve-2026-109618-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      citation_caveat: 'contradicted-elsewhere'
+      citation_caveat_note: >-
+        CISA and ReliaQuest state no (successful) exploitation observed; Hadrian reports it at scale
+        without counts. Vendor claim only. Survives discounting Hadrian: Cloudflare, watchTowr and
+        Patchstack report attempts.
+      evidence_use: >-
+        Campaign status: 11:35 UTC "We are now seeing php2shell
+        exploited in the wild at scale"; 14:35 UTC repeats. No counts or indicators; vendor claim.
+    - id: 'REF-CISA'
+      type: 'incident-campaign-secondary-source'
+      title: 'Critical Vulnerabilities in PHP Require Immediate Patching'
+      publisher: 'CISA'
+      url: 'https://www.cisa.gov/news-events/alerts/2026/10/21/critical-vulnerabilities-php-require-immediate-patching'
+      trust_tier: 'government'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Campaign status: CISA "has not observed exploitation of
+        these vulnerabilities as of the time of publication" (2026-10-21). No KEV mention (rests on
+        Tanium).
+    - id: 'REF-CHECKPOINT'
+      type: 'incident-campaign-secondary-source'
+      title: 'Patch Now: php2shell: What We Know About the Leaked Critical PHP Vulnerabilities (CVE-2026-109618 & CVE-2026-109619)'
+      publisher: 'Check Point Research'
+      url: 'https://blog.checkpoint.com/security/php2shell-what-we-know-about-the-leaked-critical-php-vulnerabilities-cve-2026-109618-cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      citation_caveat: 'contradicted-elsewhere'
+      citation_caveat_note: >-
+        'None reported in the wild so far' conflicts with watchTowr and Cloudflare attempt reports;
+        page last updated 8:40 AM PT (15:40 UTC). Cited for Check Point's stated status only.
+      evidence_use: >-
+        Check Point's dated exploitation status only; supplies no scheduler-persistence evidence.
+    - id: 'REF-VULNCHECK'
+      type: 'incident-campaign-secondary-source'
+      title: 'PHP2Shell Vulnerabilities: CVE-2026-109618 and CVE-2026-109619'
+      publisher: 'VulnCheck'
+      url: 'https://www.vulncheck.com/blog/php2shell-vulnerabilities'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Campaign status: canary telemetry 2026-10-21 (probes, multipart POSTs, one
+        session-path webshell attempt, follow-up reads 404); none of the PoCs reviewed bypass ASLR on x86-64.
+    - id: 'REF-REDHAT'
+      type: 'incident-campaign-secondary-source'
+      title: 'CVE-2026-109619'
+      publisher: 'Red Hat'
+      url: 'https://access.redhat.com/security/cve/cve-2026-109619'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Campaign status: Red Hat CVSS v3.1 score of
+        8.1 for CVE-2026-109619 with high attack complexity (NVD lists 9.8). Read on 2026-10-21; wording outside quotation marks is
+        paraphrase.
+    - id: 'REF-CRONIE-SPEC'
+      type: 'attack-surface-documentation'
+      title: 'cronie.spec (Fedora package source)'
+      publisher: 'Fedora Project'
+      url: 'https://src.fedoraproject.org/rpms/cronie/raw/rawhide/f/cronie.spec'
+      trust_tier: 'primary'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports that the cronie crontab client is installed setuid root (mode 4755, owner root), so
+        its spool write runs with root as effective user. Fetched 2026-10-21.
+    - id: 'REF-MICROSOFT-COOKIE-WEBSHELLS'
+      type: 'attack-surface-documentation'
+      title: 'Cookie-controlled PHP webshells: A stealthy tradecraft in Linux hosting environments'
+      publisher: 'Microsoft Security'
+      url: 'https://www.microsoft.com/en-us/security/blog/2026/04/02/cookie-controlled-php-webshells-tradecraft-linux-hosting-environments/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports the product-support note that Microsoft's generic "Suspicious cron job" alert
+        covers a new cron job created by a hosting control panel process. Generic PHP webshell
+        tradecraft, unrelated to PHP2Shell.
+    - id: 'REF-RHEL-AUDIT-RECORDS'
+      type: 'attack-surface-documentation'
+      title: 'Understanding Audit Log Files (Red Hat Enterprise Linux 7 Security Guide)'
+      publisher: 'Red Hat'
+      url: 'https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/7/html/security_guide/sec-understanding_audit_log_files'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports that the audit success field records whether the system call succeeded or failed,
+        and that auid is the login uid, kept across identity changes. Fetched 2026-10-21.
+    - id: 'REF-AUDITCTL-MAN'
+      type: 'attack-surface-documentation'
+      title: 'auditctl(8) - Linux manual page'
+      publisher: 'man7.org (Linux audit manual)'
+      url: 'https://man7.org/linux/man-pages/man8/auditctl.8.html'
+      trust_tier: 'primary'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports that auid (the original login ID) and uid, euid are separate audit fields, so the
+        login uid is not the real uid. Fetched 2026-10-21.
+    - id: 'REF-SYSTEMCTL-MAN'
+      type: 'attack-surface-documentation'
+      title: 'systemctl(1) manual page'
+      publisher: 'freedesktop.org (systemd)'
+      url: 'https://www.freedesktop.org/software/systemd/man/latest/systemctl.html'
+      trust_tier: 'primary'
+      verification: 'confirmed'
+      evidence_use: >-
+        Supports that systemctl start activates the named units; it creates no job and enables no
+        boot start, unlike enable. Fetched 2026-10-21.
