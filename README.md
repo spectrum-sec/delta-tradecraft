@@ -57,7 +57,7 @@ Find threats that matter to you in [`packs/`](packs/).
   strategies. [TIMELINE.md](packs/openai-huggingface-2026-07/TIMELINE.md) is the fastest way in.
 
 - [**sshole-2026-11**](packs/sshole-2026-11/README.md) — OpenSSH password authentication bypass on
-  musl hosts without PAM (CVE-2026-123158), November 2026. 9 objects, 24 detection strategies.
+  musl hosts without PAM (CVE-2026-123158), November 2026. 6 objects, 15 detection strategies.
 
 ## Start here
 
