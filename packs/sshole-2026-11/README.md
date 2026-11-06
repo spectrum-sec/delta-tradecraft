@@ -1,0 +1,79 @@
+# sshole pack
+
+A password authentication bypass in OpenSSH's sshd on Linux builds that use musl libc without PAM, fixed 5 Nov 2026.
+
+**6 objects, 15 detection strategies**, built by the Delta research team on disclosure day. No atomic indicators appear in the objects.
+
+## Evidence tiers
+
+Each object models a behavior that is part of this attack or is reported for it, never a post-exploitation step we only imagined. Tiers follow §0 of our detonation report (v1.2):
+
+| Tier | Objects |
+|:--|:--|
+| **Demonstrated attack:** the bypass, its preconditions and the patch traps, reproduced in our lab | 001, 002, 005 |
+| **Vendor-documented consequence:** the Alpine advisory says the bypassed `alpine` user can become root through `doas` | 003 |
+| **Single-source in-the-wild report, unconfirmed:** one researcher reports spraying for `root` and `alpine` and a coin miner as the first honeypot payload | 008 (spraying), 007 (miner; its root, temp-path shape is our emulation) |
+
+Account, key, cron and sshd config changes, reading `/etc/shadow` and log wiping were emulated in our lab only to exercise telemetry. No source reports them for sshole, so the pack has no objects for them. That is why object numbers 004, 006 and 009 are unused.
+
+## Lab reproduction: how we built these detections
+
+On 5–6 Nov 2026 we reproduced the bypass in an isolated lab we own, to build and check detections from real telemetry rather than from the advisory text. This section reflects version 1.2 of our detonation report.
+
+- **Target:** the official vulnerable Alpine 3.24.3 tiny-cloud image (openssh-server 10.3_p1-r1, musl 1.2.6), instrumented with the free host and network sensors we found that run on musl.
+- **Result:** the bypass succeeded 12 of 12 times with 257–1,024-byte passwords, against the cloud image's `alpine` account and a key-only account. Two more interactive logins with a stock OpenSSH client (enter the long password twice) also succeeded, so no exploit tooling is needed. A full repeat on a fresh host with a wider set of collectors gave the same result.
+- **Controls:** 256- and 1,025-byte passwords, a `!`-locked account, `PermitRootLogin no`, a glibc host (Ubuntu 24.04, PAM on and off), a musl host with PAM in effect (`openssh-server-pam`, `UsePAM yes`; only the patched PAM build was still obtainable, but the denial comes from PAM, not the fix) and the patched, restarted package all failed. Legitimate password and key logins set the benign baseline.
+- **Spraying, and `doas` to root and a CPU-bound process after a reproduced bypass,** were emulated by us on our lab hosts, so each of those detections has real records behind it; none of it is taken from a real intrusion.
+- **How the strategies use it:** the strategies were built from the telemetry this reproduction produced. All 15 carry a `lab-telemetry-verified` block recording what was captured and checked by hand; the few parts not exercised (some baselines and policy lists) are noted in each object. Log formats and defaults were also checked on every Alpine branch from 3.16 to edge.
+
+### What the research found (not in the public sources we reviewed, as of 5 Nov 2026)
+
+- **A log signature for the bypass itself.** Others describe a failed first attempt; we measured the exact shape. On the stock package the bypass lands on the second attempt in one connection: `Failed password` then `Accepted password` for the same user, process and source port, 2–7 ms apart for scripted clients. Object 001 detects it with no account inventory.
+- **The pair survives evasion; the timing does not.** We attacked our own rules. sshd refuses a username change within a connection, so the pair is always one user; a 16-byte wrong password works as the primer, and a failed key attempt before it doesn't break the pair, but with five decoy failures first `MaxAuthTries` cut the connection before the payload. A 10-second pause between the two attempts still succeeded (the limit is `LoginGraceTime`, 120 s by default), so object 001 pairs on process and source port and uses the gap only for ranking, never as a gate.
+- **A network signal through encryption.** The over-long password shows up as auth-phase client packets of about 400 bytes for a 300-byte password (roughly the password length plus 100 bytes), against 48–80 for normal password logins. Ed25519 key logins send about 256 bytes and RSA key logins overlap the 350–500-byte range, so the size is only corroborating on listeners that also accept keys; packets of 1,100 bytes or more (a 1,024-byte password) are unambiguous. Object 001 carries it as a hunt.
+- **Two patching traps.** `apk upgrade openssh` updates only the meta-package and leaves `openssh-server` vulnerable; a correctly upgraded host keeps running the old sshd until restarted. Object 005 checks both.
+- **A thin agent landscape.** Sysmon for Linux, Filebeat and Elastic Agent don't run on Alpine/musl (glibc-linked), and osquery has no official musl build. The Wazuh agent runs from Wazuh's own Alpine repository (not Alpine's default repos). We installed it after the attack run, so its coverage is assessed from configuration: its default logcollector reads the file where the bypass pair lands (delivery to the manager was not tested),. Falco publishes a static build that starts on musl, but its eBPF engine didn't initialize on our kernel, so it ran only as a container. We found no musl-native Fluent Bit build (only glibc packages and Docker images), so we also ran it as a container. auditd, rsyslog, bpftrace, acct, sysstat, tcpdump, node_exporter and Tetragon run natively. Commercial EDR support for musl was not tested — check your vendor.
+- **Attribution needs lineage.** auditd's login uid is unset on non-PAM Alpine, so the post-login objects (003, 007) correlate by process lineage and time.
+
+## The vulnerability
+
+- **CVE-2026-123158** ("sshole"): musl `crypt()` returns `*` on error, and sshd compared that with an account whose stored password field is exactly `*` ([OpenSSH 10.6p2 announcement](https://lists.mindrot.org/pipermail/openssh-unix-announce/2026-November/000170.html), [release notes](https://www.openssh.org/releasenotes.html#10.6p2): "a critical security workaround", [fix commit](https://github.com/openssh/openssh-portable/commit/4353fdc43ef646c43a8dda7025cc1a898caf1482), [CVE record](https://www.cve.org/CVERecord?id=CVE-2026-123158)).
+- **Impact:** remote login as that account without its password. CVSS 3.1 8.1 (AC:H) per the CVE record.
+- **Exploitable host** ([Alpine advisory](https://www.alpinelinux.org/posts/2026-11-05-openssh-password-authentication-bypass/)): musl sshd without PAM, or `openssh-server-pam` with `UsePAM no`; below its branch's fixed release, `PasswordAuthentication` on (the default), a login-capable account with a `*` field (root only with `PermitRootLogin yes`), and a `$5$`/`$6$` hash on the host. sshd borrows its salt from the first `$`-format hash in account order ([`pick_salt`](https://github.com/openssh/openssh-portable/blob/V_10_6_P1/openbsd-compat/xcrypt.c)). A `$5$`/`$6$` first hash means exposed; any other first hash type is unknown, not cleared ([IONIX](https://www.ionix.io/blog/sshhole-cve-2026-123158-and-how-ionix-is-helping-you-respond/) reports bcrypt also qualifies); no `$`-format hash at all is not exposed.
+- **Fixed in:** OpenSSH 10.6p2, and Alpine edge 10.6_p2-r0, 3.24 10.3_p1-r2, 3.23 10.2_p1-r1, 3.22 10.0_p1-r11, 3.21 9.9_p2-r1 ([commit](https://gitlab.alpinelinux.org/alpine/aports/-/commit/bbdd8314c8fb57b71e9d29366b7b7820245d1ce7)), 3.20 9.7_p1-r6 ([commit](https://gitlab.alpinelinux.org/alpine/aports/-/commit/162aaa7b43125253e457f3c2fb7903e508519da0)), 3.19 9.6_p1-r3, 3.18 9.3_p2-r4, 3.17 9.1_p1-r7, 3.16 9.0_p1-r6. Releases before 3.16 get no fix ([Cycode](https://cycode.com/blog/sshole-cve-2026-123158-openssh-alpine-linux-vulnerability/)).
+- **OpenWrt:** the optional `openssh-server` package is built without PAM; the default Dropbear is not affected. Fixed in master ([commit](https://github.com/openwrt/packages/commit/92643a05ce1b97891f376151bca6a2467370f507)) and 25.12 ([commit](https://github.com/openwrt/packages/commit/f1accc83d2a0cfd21d2ae1c14778096afb423d12)) as 10.6_p2-1 and in 24.10 as a backport that keeps 9.9_p2 with PKG_RELEASE 2 ([commit](https://github.com/openwrt/packages/commit/4d71f2824715a090f7e9dfe8da73f5a40ade8bad)). 23.05 and 22.03 have no fix.
+
+## Status (5 Nov 2026)
+
+- **Attempts reported:** one researcher reports that "people are already spraying the Internet" for `root` and `alpine` with very long passwords, and a coin miner as the first payload seen in a honeypot ([Kevin Beaumont, 14:21 UTC](https://cyberplace.social/@GossiTheDog/117564277295417498)). No other source corroborates it yet.
+- **No source documents a compromise of a production host**, including [Detectify](https://blog.detectify.com/product-updates/critical-vulnerability-openssh-authentication-bypass-on-alpine-linux/) (15:30 CET) and [Orca](https://orca.security/resources/research/sshole-openssh-authentication-bypass-gives-attackers-root-on-alpine-linux/) (18:09 UTC).
+- **Public PoC:** CISA's ADP enrichment on the [CVE record](https://www.cve.org/CVERecord?id=CVE-2026-123158) marks exploitation as `poc`.
+- **Scanner content:** Google's [goonami-scanner PR #277](https://github.com/google/goonami-scanner/pull/277) (merged) adds this CVE to its OpenSSH auth-bypass detector; a [Nuclei template PR](https://github.com/projectdiscovery/nuclei-templates/pull/17702) is open. No rule for this CVE was found in the SigmaHQ, Elastic, Splunk, Falco or ET Open (Suricata) repositories.
+- **KEV:** not in the [CISA KEV catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) release of 4 Nov 2026, which predates disclosure.
+- **CERT-FR:** [CERTFR-2026-ALE-015](https://www.cert.ssi.gouv.fr/alerte/CERTFR-2026-ALE-015/) publishes a hunt that joins `*` accounts in `/etc/shadow` with `Accepted password for` lines. [CSIRT Italia](https://www.acn.gov.it/portale/w/openssh-potenziale-bypass-dell-autenticazione-su-sistemi-linux-basati-su-musl-libc) also issued an alert. Neither names a CVE.
+- **Expiry:** this status expires 2026-11-12.
+
+## Scope
+
+- **Modeled:** what sshd, `doas`/`sudo`, process and package-inventory telemetry can record on musl hosts running sshd without PAM.
+- **Generic behavior:** objects 002, 003, 007 and 008 detect generic behavior that also covers this threat (008 is pre-login spraying; 003 and 007 follow a login). Don't report them as sshole-specific coverage.
+- **Not in logs:** sshd never logs password content or length. A hunt-only network strategy in 001 looks for oversized client-to-server packets in the SSH auth phase (lab captures; the threshold depends on which key types the listener accepts).
+- **Attempt count:** on the stock Alpine package the bypass succeeds on the second password attempt in one connection, so the log shows `Failed password` then `Accepted password` for the same user, process and source port, milliseconds apart in our lab (an attacker can pause up to `LoginGraceTime`). The [researcher](https://sshhole.com/), CERT-FR and [IONIX](https://www.ionix.io/blog/sshhole-cve-2026-123158-and-how-ionix-is-helping-you-respond/) describe this, and our lab reproduced it 12/12; Alpine says one connection with no retries. No strategy requires the pair.
+- **Length range:** the CVE record says 256–1024 characters; Alpine says 257–1024 bytes. This pack follows Alpine.
+- **Restart:** upgrade `openssh-server` (Alpine's `apk upgrade -U -a`), then restart sshd. The pack treats an unrestarted host as exposed: the [Alpine advisory](https://www.alpinelinux.org/posts/2026-11-05-openssh-password-authentication-bypass/) says to restart after upgrading, and our lab saw the old binary keep running until restart (see Lab reproduction). Config edits also apply only after a reload ([sshd.c](https://github.com/openssh/openssh-portable/blob/V_10_6_P1/sshd.c)).
+- **Log program name:** `Accepted`/`Failed` lines carry `sshd` before OpenSSH 9.8 and `sshd-session` from 9.8 ([release notes](https://www.openssh.com/txt/release-9.8)); from 10.0, `sshd-auth` may tag other pre-auth messages ([release notes](https://www.openssh.com/txt/release-10.0)). `doas` lines carry no program name on musl, because OpenDoas never calls `openlog()` ([doas.c](https://github.com/Duncaen/OpenDoas/blob/master/doas.c)).
+
+## Objects
+
+`Detectable` is `manifestation.detectable.answer`. `yes-conditional` means the object's `blocking_conditions` must be met.
+
+| Id | Behavior | Detectable |
+|:--|:--|:--|
+| [DT-SSHH-HOST-001](sshole-01-password-login-accepted-for-star-password-account.tradecraft.yaml) | Password login accepted for an account whose password field is `*` | yes-conditional |
+| [DT-SSHH-HOST-002](sshole-02-password-login-for-key-only-account.tradecraft.yaml) | Password login for an account that otherwise uses only keys | yes-conditional |
+| [DT-SSHH-HOST-003](sshole-03-privilege-escalation-after-password-login.tradecraft.yaml) | `doas`, `sudo` or `su` to root shortly after an SSH password login | yes-conditional |
+| [DT-SSHH-ESTATE-005](sshole-05-exposed-musl-sshd-with-star-account-and-password-hash.tradecraft.yaml) | Exposed no-PAM musl sshd with a `*` account and a password hash (control) | yes-conditional |
+| [DT-SSHH-HOST-007](sshole-07-high-cpu-process-from-temp-after-password-login.tradecraft.yaml) | Root process from a temp path at sustained high CPU after an SSH password login | yes-conditional |
+| [DT-SSHH-HOST-008](sshole-08-password-login-from-penalized-or-spraying-source.tradecraft.yaml) | Password login accepted from a source that sprayed or was penalized by sshd | yes-conditional |
+
+To use an object, read `manifestation`, then `detection.strategies[]`. Fields are defined in [`SCHEMA.md`](../../SCHEMA.md).
