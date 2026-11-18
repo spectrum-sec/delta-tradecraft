@@ -1,0 +1,1767 @@
+identity:
+  uuid: '84621582-2be2-47a6-8af2-1945bcbd1f31'
+  id: 'DT-J4SH-HOST-002'
+  name: 'A network-exposed Java process dies on a fatal JVM error and is restarted (generic crash signal; possible attempt only on an exposed affected build with no benign cause)'
+  incident: 'Java4Shell (CVE-2026-114938)'
+  first_observed: '2026-11'
+  last_reviewed: '2026-11-18'
+
+classification:
+  primary_attack_surface: 'application-runtime'
+  secondary_attack_surfaces:
+    - 'host-os'
+    - 'container-workload'
+  behavior_classes:
+    - 'other'
+  behavior_classes_note: >-
+    Denial-shaped runtime failure of an exposed service (ATT&CK T1190 attempt, resembles T1499):
+    no member names a crash of the attacked process.
+  tags:
+    - 'java4shell'
+    - 'openjdk'
+    - 'jvm-crash'
+    - 'hs-err'
+    - 'crash-loop'
+    - 'generic'
+    - 'risk-signal'
+    - 'attempt-only'
+    - 'must-have'
+    - 'denial-of-service'
+    - 'lab-checked-artifacts'
+
+behavior:
+  definition: >-
+    A network-exposed JVM aborts on a fatal VM error and its supervisor restarts it, possibly in a
+    loop. Generic: detects generic behavior that also covers this threat; don't report as
+    Java4Shell-specific coverage.
+  detailed_definition: >-
+    On a fatal error the JVM prints a banner, writes a report and exits before its supervisor
+    restarts it. A crash is at most a possible attempt, never a cause or compromise and only when
+    DT-J4SH-ESTATE-001 reads the process affected, the service is exposed and no benign cause is
+    found; others are kept and down-ranked.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      A fatal JVM error on a network-reachable service; whether the build is affected is the verdict
+      of DT-J4SH-ESTATE-001, not a property of the crash.
+    summary: >-
+      Needs a JVM serving a network path and a supervisor or operator that restarts it. Datadog
+      rates denial of service the more readily achievable impact (REF-DATADOG-JAVA4SHELL) and other
+      labs reproduced JVM crashes (REF-THN-JAVA4SHELL, REF-UPWIND-JAVA4SHELL).
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Observable where container status, stdout logs, file-create records or service-manager
+      records are collected; the error report file is lost where the container is ephemeral.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          EDR sensors record file creates by default but some filter by type or path; Sysmon and
+          audit rules on the path must be enabled; container stdout stays on the node until shipped.
+      - condition: 'stream-existence-varies-by-estate'
+        note: >-
+          Container exit status sits in the container's terminated state and reaches a SIEM only via
+          a status collector or runtime die events; journal records only where forwarded, core-dump records only where a handler runs.
+      - condition: 'action-emits-no-record'
+        note: >-
+          The report file written inside an ephemeral container (working or temp directory) is
+          deleted with it, so only the banner and the exit status survive.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      A fatal JVM error is separable from deploys and external kills; its cause is not, and on a
+      process 001 does not read affected it is an ordinary down-ranked crash.
+    blocking_conditions:
+      - condition: 'cross-source-join-required'
+        note: >-
+          Linking a crash to an affected verdict needs the build line from the banner or report and
+          the per-process verdict of DT-J4SH-ESTATE-001, which reads the CPU from the host.
+      - condition: 'below-alerting-signal-strength'
+        note: >-
+          A crash alone matches native-library, JIT and memory-pressure failures; it is a lead, not
+          an alert, unless the build has an affected verdict, the service is exposed and no benign
+          cause is identified.
+    summary: >-
+      A fatal JVM error is separable by the banner or a read report; exit status, signal or a core
+      alone gives a crash candidate, with kills, OOM and deploys down-ranked, and a crash alone does
+      not separate one crash cause from another.
+
+attack_surface_context:
+  surface: >-
+    The JVM fatal-error path and the workload supervisors (container runtime, orchestrator,
+    service manager) around a network-exposed Java service.
+  how_the_surface_works: >-
+    On a fatal error HotSpot opens the -XX:ErrorFile path if set, then hs_err_pid<pid>.log in the
+    working directory, then the OS temp directory (/tmp; %TMP% or %TEMP%), taking the
+    first that opens (REF-JDK17U-VMERROR); the header also goes to stdout
+    (REF-ORACLE-FATAL-ERROR-LOG) and a supervisor then restarts the process.
+  incident_processing_path: >-
+    Other labs report crashes, memory corruption and a memory disclosure (REF-THN-JAVA4SHELL,
+    REF-BLACKPOINT-JAVA4SHELL, REF-UPWIND-JAVA4SHELL); Datadog's test JVM crashed later in garbage
+    collection, so a crash can lag its input (REF-DATADOG-JAVA4SHELL). No source read names a frame
+    or stub.
+  processing_stages:
+    - 'jvm-process-serving-network-requests'
+    - 'fatal-error-detected'
+    - 'banner-written-to-stdout'
+    - 'error-report-file-written'
+    - 'process-ends-on-abort-or-fault-signal'
+    - 'supervisor-restarts-workload'
+  stage_evidence: >-
+    The banner proves a fatal VM error and carries the build line while exit status alone does not:
+    an external SIGSEGV also exited 134 in the lab and java as PID 1 is unmeasured; Hadrian saw 134
+    with a fatal error log on Temurin 17 (REF-HADRIAN-JAVA4SHELL, supporting only).
+  trust_boundaries: >-
+    Attacker-controlled Base64 reaches the JDK decoder, often before authentication
+    (REF-REDHAT-RHSB-2026-018); a crash shows at most that something went wrong inside the process,
+    never which input reached it.
+  security_control_context: >-
+    -XX:-CreateCoredumpOnCrash exits 1, not an abort
+    (REF-JDK17U-OS-POSIX). A memory-limit kill leaves no banner; heap out-of-memory aborts only if
+    set to crash on it and exits 3 if set to exit on it (REF-JDK17U-DEBUG); a failed native malloc
+    or mmap prints the insufficient-memory header and exits 1 (REF-JDK17U-VMERROR).
+  special_context:
+    topic: 'jvm-fatal-error-artifacts'
+    context: >-
+      The lab saw the banner on stdout, exit 134 with the out-of-memory flag false under an init
+      process, a report at the default or ErrorFile path and "(sent by kill)" on an external signal,
+      where Java 8 shows si_code 0 instead; not every fatal error is SIGSEGV.
+  practitioner_implication: >-
+    Discover which workloads run a JVM and are exposed, whether JVM output and container exit
+    status reach the SIEM, whether -XX:ErrorFile is set to a durable path, and the live build, host
+    CPU features and flags per process (DT-J4SH-ESTATE-001).
+
+threat_research:
+  why_it_matters: >-
+    Must-have: crashes are the outcome most public lab reports describe and Datadog rates denial of
+    service the more readily achievable impact (REF-BLACKPOINT-JAVA4SHELL, REF-HADRIAN-JAVA4SHELL,
+    REF-DATADOG-JAVA4SHELL), so on an affected build a crash is the likeliest trace of an attempt
+    though it cannot show harm.
+  threat_actor: 'Unknown. No source attributes any Java4Shell activity to anyone.'
+  campaign: >-
+    CVE published 2026-11-17 (REF-CVE-API); vendor fixes out for most distributors. Not in CISA
+    KEV at 2026-11-18 12:05 PT (REF-CISA-KEV); attempts observed and no successful compromise
+    reported as of 11:18 PT (REF-GREYNOISE-JAVA4SHELL).
+  victim: 'None documented.'
+  capability: >-
+    Calif (public proof of concept) and Wiz state code execution on named products, chains
+    unpublished (REF-CALIF-JAVA4SHELL, REF-WIZ-JAVA4SHELL) and Hadrian in its lab
+    (REF-HADRIAN-JAVA4SHELL); others report crashes, corruption and a memory disclosure
+    (REF-THN-JAVA4SHELL, REF-BLACKPOINT-JAVA4SHELL, REF-UPWIND-JAVA4SHELL).
+  target: >-
+    Network-exposed Java services on HotSpot x86-64 builds below the vendor fix: branch 17 from
+    17.0.6, and 21, 25 and 27 (REF-OPENJDK-ADVISORY-2026-11-17); runtime identity (Azul Prime
+    included), CPU and flags decide per process (DT-J4SH-ESTATE-001). An unknown verdict is
+    neither affected nor cleared.
+  victimology:
+    - 'Internet or untrusted-network facing Java services in containers or on hosts.'
+    - 'Fleets of one JVM build behind a restarting supervisor, where a crash wave would be visible.'
+  framework_mappings:
+    - framework: 'MITRE ATT&CK'
+      technique_mapping_status: 'mapped'
+      id: 'T1190'
+      name: 'Exploit Public-Facing Application'
+      evidence: >-
+        Targeted but unachieved: a crash would be at most a failed or noisy attempt on an exposed
+        service. GreyNoise counts attempt-shaped requests and no successful intrusion
+        (REF-GREYNOISE-JAVA4SHELL) and no source ties one to a crash; the mapping is this pack's
+        reading of the behavior.
+
+visibility:
+  telemetry_sources:
+    - source: 'Kubernetes container status (state, lastState and restartCount)'
+      purpose: >-
+        Show how a JVM workload ended (exit code, signal, reason) and its restarts: signal 6 or 11,
+        exit 134 or 139 is a crash candidate; any other signal, 128+n code or OOMKilled is kept and
+        down-ranked.
+      event_vocabulary: 'none'
+      tier: 'not-applicable'
+      operational_viability: 'on-by-default'
+      operational_viability_note: >-
+        The API object exists with no setup (REF-K8S-POD-LIFECYCLE) but is a snapshot and not an
+        event stream: it holds the current state and one lastState and restartCount can reset
+        (REF-K8S-API-TYPES). A restart history exists only where a watch or poller stores each
+        transition, which is opt-in.
+      fields:
+        - name: 'state.terminated.exitCode and lastState.terminated.exitCode'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-K8S-API-TYPES'
+          load_bearing: true
+          note: >-
+            Lab: a JVM abort and an external SIGSEGV both gave 134 under an init. A flat code loses
+            exit versus signal (REF-WAITPID), so System.exit(134) looks the same, and exit 1
+            (REF-JDK17U-OS-POSIX) counts only with a banner or report.
+        - name: 'state.terminated.signal and lastState.terminated.signal'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-K8S-API-TYPES'
+          load_bearing: true
+          note: >-
+            int32 signal number (6 = SIGABRT, 11 = SIGSEGV), not a name; optional and often unset
+            when the runtime reports only 128+n in exitCode, so keep it apart from exitCode; not
+            lab-checked.
+        - name: 'state.terminated.reason and lastState.terminated.reason'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-K8S-API-TYPES'
+          load_bearing: true
+          note: 'Free text; the OOMKilled value is not in the cited type file. Docker shows State.OOMKilled (lab: false on a JVM abort).'
+        - name: 'restartCount'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-K8S-API-TYPES'
+          load_bearing: true
+          note: 'Cumulative; may reset to 0 on node restart; a replacement pod starts a new count.'
+        - name: 'state.terminated.containerID and finishedAt (and lastState.terminated)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-K8S-API-TYPES'
+          load_bearing: true
+          note: 'Dedupe key. Image and entrypoint come from separate status and spec fields; other platforms not sourced.'
+      details: >-
+        Kubernetes status holds only the current state and lastState (REF-K8S-API-TYPES), so retain
+        each transition. Default back-off doubles from 10s to a 300s cap, subject to version,
+        feature gates and kubelet settings (REF-K8S-POD-LIFECYCLE).
+      advantages:
+        - 'Survives the loss of the report file; needs no sensor on the host.'
+      limitations:
+        - 'Exit 134 or 139 is a crash candidate, not a fatal VM error: System.exit, a wrapper, an external signal or a native abort gives it too.'
+        - 'HotSpot handles SIGSEGV itself and ends through abort, so 134 is the usual fatal-error exit (REF-JDK17U-VMERROR); 139 means a fault the VM did not handle, so a VM fatal error is not its expected cause, yet both stay candidates.'
+        - 'Java as PID 1 without an init (the Kubernetes default) was not measured; the exit may not be 134, or a hang may end in a probe kill (137).'
+        - 'A feed of cluster events or audit logs may not carry the exit code; check the fields.'
+        - 'No cause: the same status follows native-library crashes and deliberate aborts.'
+        - 'Polling status loses crashes between polls.'
+        - 'Exit 1 is a JVM fatal error only with a matching banner or report (core dumps off in the JVM, or a native-memory failure, which never dumps core); most exit 1s are not crashes.'
+    - source: 'kube-state-metrics container waiting-reason gauge'
+      purpose: 'Mark a JVM workload stuck in CrashLoopBackOff.'
+      event_vocabulary: 'other'
+      event_vocabulary_note: 'A scraped metric series from a cluster add-on; none of the listed families covers it.'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'kube_pod_container_status_waiting_reason (reason="CrashLoopBackOff")'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-KSM-POD-METRICS'
+          load_bearing: false
+          note: 'kube-state-metrics gauge labelled container, pod, namespace and reason; a scraped state, not an event, so restartCount deltas carry the escalation.'
+      details: >-
+        Present only where the estate installs kube-state-metrics and scrapes it.
+      limitations:
+        - 'No exit code or signal; it says a loop exists, not why the JVM died.'
+        - 'A scrape interval can miss a short loop.'
+    - source: 'Docker Engine container die and oom events'
+      purpose: 'Show a JVM container ending, with its exit code, on hosts that run Docker Engine.'
+      event_vocabulary: 'other'
+      event_vocabulary_note: 'Container runtime lifecycle events; none of the listed families covers them.'
+      tier: 'no-tier-model'
+      operational_viability: 'on-by-default'
+      operational_viability_note: >-
+        Docker reports die and oom container events with no setup and die examples carry exitCode
+        (REF-DOCKER-EVENTS); replay is bounded to the last 256 events so a history needs a live
+        subscriber that stores them.
+      fields:
+        - name: 'die event attribute exitCode'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-DOCKER-EVENTS'
+          load_bearing: true
+          note: 'A flat 128+n code, so exit versus signal is lost (REF-WAITPID); one die example on the page has no exitCode.'
+      details: >-
+        One die event per container exit with image and name; an oom event marks a kill to
+        down-rank.
+      limitations:
+        - 'Only the last 256 events are returned on query (REF-DOCKER-EVENTS), so a collector must subscribe to keep them.'
+        - 'containerd and CRI-O nodes were not sourced here; use Kubernetes status there.'
+        - 'Same crash-versus-kill limits as Kubernetes status; no cause.'
+    - source: 'Container stdout and stderr as kept by the runtime on the node'
+      purpose: 'Hold the fatal-error banner on the node, readable with kubectl logs --previous or docker logs.'
+      event_vocabulary: 'application-record'
+      tier: 'no-tier-model'
+      operational_viability: 'on-by-default'
+      operational_viability_note: >-
+        The runtime captures container stdout and stderr with no setup: Docker's default
+        json-file driver (REF-DOCKER-LOGGING) and the kubelet's log files (REF-K8S-LOGGING).
+      details: >-
+        The same banner lines as the forwarded entry below, kept on the node.
+      limitations:
+        - 'Local to the node and not in a SIEM; lost when the pod is deleted or the node replaced.'
+        - 'Kubelet rotates at 10Mi with 5 files by default (REF-K8S-LOGGING); a busy JVM can rotate the banner away.'
+        - 'The kubelet keeps only one terminated container with its logs by default (REF-K8S-LOGGING), so earlier crashes in a loop are gone.'
+    - source: 'JVM output forwarded to the SIEM (container log shipper or service log forwarder)'
+      purpose: 'Carry the fatal-error banner, its signal or reason line, and the JVM build line.'
+      event_vocabulary: 'application-record'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'banner: A fatal error has been detected by the Java Runtime Environment'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-ORACLE-FATAL-ERROR-LOG'
+          load_bearing: true
+          note: 'Oracle: the header goes to stdout and may show in the output log. Lab: on stdout; stderr held only the shell abort line.'
+        - name: 'header: There is insufficient memory for the Java Runtime Environment to continue.'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-JDK17U-VMERROR'
+          load_bearing: true
+          note: >-
+            Printed instead of the fatal-error line when a native malloc or mmap fails; a resource
+            failure with exit 1 and no core, not lab-checked.
+        - name: 'signal or reason line, with "(sent by kill)"'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+          note: >-
+            Lab: "(sent by kill)" marked an external signal on 17+; Java 8 shows siginfo si_code 0.
+        - name: 'JRE version line'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-ORACLE-FATAL-ERROR-LOG'
+          load_bearing: true
+          note: 'The header shows signal, pid and JRE and VM version and build.'
+      details: >-
+        In the lab the banner listed the signal or internal-error line, the JRE and VM build and the
+        report path.
+      advantages:
+        - 'Works when the container and its report file are gone; carries the build for the inventory join.'
+      limitations:
+        - 'Kubernetes has no native log storage; cluster-level logging needs a separate backend (REF-K8S-LOGGING).'
+        - 'Needs the JVM output collected; streams can be redirected or merged, so match any stream.'
+        - 'Multi-line banner can be split or truncated by the shipper.'
+        - 'The fatal-error banner alone does not separate an abort on Java heap out-of-memory from a memory fault; read the reason line.'
+    - source: 'EDR file-create events'
+      purpose: 'Show a java process creating a file named as the JVM error report in its working or temp directory or at the ErrorFile path: a candidate report.'
+      event_vocabulary: 'host-process-event'
+      tier: 'no-tier-model'
+      operational_viability: 'on-by-default'
+      operational_viability_note: >-
+        Inferred, not attested per event: the cited pages show a file-event table and
+        default collection in general (REF-MDE-DEVICEFILEEVENTS, REF-ELASTIC-DEFEND-POLICY), not
+        this create on each OS and policy. Verify that a .log create at the report path is recorded
+        before relying on it; hosts without a sensor have none.
+      fields:
+        - name: 'FileName, FolderPath and InitiatingProcessFileName (DeviceFileEvents)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-MDE-DEVICEFILEEVENTS'
+          load_bearing: true
+          note: 'Microsoft Defender for Endpoint; the page defers ActionType values such as FileCreated to the portal schema reference, so that value is not attested here.'
+        - name: 'report path: hs_err_pid<pid>.log in the working or temp directory, or the -XX:ErrorFile value'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-ORACLE-FATAL-ERROR-LOG'
+          load_bearing: true
+          note: >-
+            Oracle documents the name, both directories and ErrorFile with %p as the pid. HotSpot
+            tries ErrorFile first and falls back to both defaults if it cannot open it
+            (REF-JDK17U-VMERROR) so the defaults stay eligible. The pid is the JVM's own, a
+            namespace pid in a container (REF-PID-NAMESPACES).
+      details: >-
+        Such a create is a candidate error-report file until its header or a matched banner shows a
+        fatal error; a real report holds a CPU line and build.
+      advantages:
+        - 'Independent of log shipping; unaffected by banner truncation.'
+      limitations:
+        - 'Some EDR products record file creates selectively by file type or path, so a .log create in a temp or working directory may be dropped; not checked per product.'
+        - 'Lost with an ephemeral container unless the path is a mounted volume.'
+        - 'ErrorFile can be set to a path the rule does not know from an options variable or file that a captured command line omits and -XX:+ErrorFileToStdout or ErrorFileToStderr writes no file at all (REF-JDK17U-GLOBALS).'
+        - 'HotSpot opens the report with create and truncate (REF-JDK17U-VMERROR) so a report at a reused pid and path is overwritten and may be recorded as a modify and not a create.'
+        - 'Default report paths and streams are as Oracle documents them; other HotSpot builds and settings may differ, so learn the path per estate.'
+    - source: 'Sysmon Event ID 11 file create'
+      purpose: 'Show the same report-file create on Windows hosts that run Sysmon instead of an EDR.'
+      event_vocabulary: 'host-process-event'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'TargetFilename (Sysmon event 11)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-SYSMON-MANIFEST'
+          load_bearing: true
+          note: >-
+            Listed on event 11 (FileCreate) in the Sysmon manifest. The event records create and
+            overwrite alike (REF-SYSMON) so it cannot tell a new report from a replaced one.
+        - name: 'Image (Sysmon event 11)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-SYSMON-MANIFEST'
+          load_bearing: true
+          note: 'Creating process, listed on event 11 in the Sysmon manifest. Content is not recorded.'
+      details: >-
+        Matches the report path rule of the EDR entry above against the created file and its
+        creating image.
+      limitations:
+        - 'Sysmon must be installed and its configuration must keep creates on the working and temp paths; many configurations filter them out.'
+        - 'Lost with an ephemeral container unless the path is a mounted volume.'
+    - source: 'Linux auditd path watch'
+      purpose: 'Show a write to the working, temp or ErrorFile path by a java process on a Linux host.'
+      event_vocabulary: 'kernel-audit'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'PATH record name and nametype; SYSCALL record exe'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-LINUX-AUDIT-FIELDS'
+          load_bearing: true
+          note: >-
+            The dictionary gives nametype as the kind of file operation referenced and lists no
+            values so verify on the estate which value marks a create. Not lab-checked.
+      details: >-
+        A watch rule on the path records the writing process and file; the estate must know the
+        path in advance. A write hit is a generic write to the report path and proves no new
+        report until a create record or the file content confirms one.
+      limitations:
+        - 'No rule is loaded by default; a watch on a busy temp directory is noisy.'
+        - 'Lost with an ephemeral container unless the path is a mounted volume.'
+    - source: 'systemd journal records for a Java service unit'
+      purpose: 'Show a java service unit failing on a signal or abort, and hold its stdout banner when not redirected.'
+      event_vocabulary: 'other'
+      event_vocabulary_note: >-
+        Service-manager journal records; none of the listed families fits.
+      tier: 'no-tier-model'
+      operational_viability: 'on-by-default'
+      operational_viability_note: >-
+        On by default for records kept locally at standard priority: journald collects service
+        stdout and stderr (REF-SYSTEMD-JOURNALD, REF-SYSTEMD-EXEC) and the service manager logs
+        unit exits (REF-SYSTEMD-UNIT-C); shipping them needs a forwarder.
+      fields:
+        - name: 'journal process-exit record (MESSAGE_ID 98e322203f7a4ed290d09fe03c09fe15): EXIT_CODE, EXIT_STATUS, MESSAGE, INVOCATION_ID or USER_INVOCATION_ID'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-SYSTEMD-UNIT-C'
+          load_bearing: true
+          note: >-
+            systemd source: EXIT_CODE is exited, killed or dumped; EXIT_STATUS is always a number,
+            the exit status with exited or the signal (6 ABRT, 11 SEGV) with killed or dumped, named
+            only in MESSAGE, so read them together. A clean exit, even one SuccessExitStatus
+            declares, is logged at debug level.
+        - name: 'journal unit-failure record (MESSAGE_ID d9b373ed55a64feb8242e02dbe79a49c): UNIT_RESULT, INVOCATION_ID or USER_INVOCATION_ID'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-SYSTEMD-UNIT-C'
+          load_bearing: true
+          note: >-
+            A separate "Failed with result" record carries UNIT_RESULT (signal, core-dump,
+            oom-kill, exit-code); join on UNIT and INVOCATION_ID, or USER_UNIT and
+            USER_INVOCATION_ID from a user manager (REF-SYSTEMD-UNIT-C). REF-SYSTEMD-EXEC's
+            SERVICE_RESULT, EXIT_CODE and EXIT_STATUS are ExecStopPost environment only.
+      details: >-
+        On a host service a failed unit gives the crash and its signal even where the banner goes
+        to a log file nobody collects.
+      limitations:
+        - 'On the host only; a SIEM copy needs a journal forwarder.'
+        - 'Journal storage is volatile and lost at reboot where /var/log/journal is absent (REF-SYSTEMD-JOURNALD).'
+        - 'A unit that redirects stdout to a file keeps the banner out of the journal.'
+        - 'Not checked in the lab; only the systemd source and man pages are read.'
+        - 'Container workloads usually have no service manager.'
+        - 'Windows services have no systemd record; a Windows crash path is not sourced here.'
+    - source: 'Core-dump handler records'
+      purpose: 'Show a core dump recorded for a java process, with its signal.'
+      event_vocabulary: 'other'
+      event_vocabulary_note: 'Core-dump handler records; none of the listed families fits.'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      operational_viability_note: >-
+        Whether a handler records the dump depends on the distribution's core_pattern and the
+        process core limit; no vendor default was sourced, so the cautious rating stands.
+      fields:
+        - name: 'core-dump record: executable, signal, pid'
+          attestation: 'unattested-inferred'
+          load_bearing: false
+          note: 'Lab: an abort left a core file of about 450 MB in the working directory where ulimit allowed.'
+      details: >-
+        A core-dump record names the crashed executable and signal, joined to the unit failure
+        above.
+      limitations:
+        - 'Core dumps are often disabled, size-limited or routed away.'
+        - 'Not checked in the lab.'
+    - source: 'Runtime build inventory per process'
+      purpose: 'Show which hosts run the same build, for the wave branch of the hunt in strategy five.'
+      event_vocabulary: 'none'
+      tier: 'not-applicable'
+      operational_viability: 'first-party-build'
+      fields:
+        - name: 'live JVM build and effective flags per process (jcmd VM.version, VM.flags -all)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-ORACLE-JCMD'
+          load_bearing: true
+          note: >-
+            jcmd gives the live build and effective flags (REF-ORACLE-JCMD). The CPU condition is
+            the host or guest read (/proc/cpuinfo or hypervisor inventory), as CERT Polska checks
+            it (REF-CERT-POLSKA-216-2026); the JVM's CPU line drops AVX-512 when UseAVX is below
+            3, so it only cross-checks. Use 001's verdict as is.
+      details: >-
+        The build inventory from DT-J4SH-ESTATE-001 or the banner's build line groups crashes by
+        build.
+      limitations:
+        - 'Inventory is a first-party build and goes stale after a restart on a new build.'
+    - source: 'Inbound request access logs per exposed service'
+      purpose: 'Give request context around a crash that only ranks findings.'
+      event_vocabulary: 'application-record'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      operational_viability_note: >-
+        Default access logging differs by server and embedding and no vendor default was sourced,
+        so the cautious rating stands.
+      fields:
+        - name: 'request time, status and connection outcome per exposed service'
+          attestation: 'unattested-inferred'
+          load_bearing: false
+          note: >-
+            Used only as time context; the pack names no request shape and no source ties one to a
+            crash.
+      details: >-
+        Access logs give time, client, status and aborted connections around a crash.
+      limitations:
+        - 'Request logs show no crash and no cause; a clustering in time can be chance or a deploy.'
+
+detection:
+  scope: >-
+    Five strategies: exit status, report file, banner, service and core-dump records, and a hunt
+    for a crash wave on one build or a non-hook child of a crash. Generic JVM-crash detection as
+    CISA ("unexpected JVM crashes") and Sysdig ("bursts of worker restarts") word it
+    (REF-CISA-ALERT-2026-11-17, REF-SYSDIG-JAVA4SHELL).
+  outcome_guardrails: >-
+    ABRT, SEGV, 134, 139 or a core is a crash candidate; a fatal error needs the banner or a read
+    report. Promotion gate, three checks: 001 reads affected, the service is exposed and no kill,
+    out-of-memory, external signal or planned stop is found. Only a crash passing all three is a
+    possible attempt, never a report file.
+  shared_normalization_context: >-
+    Key a crash by container ID or host, pid and time, keep exit status apart from signal
+    (REF-WAITPID) and admit, then rank. Classes: fatal error, crash candidate (ABRT, SEGV, 134,
+    139, core), down-ranked kill (other signal or 128+n, OOM kill), down-ranked
+    out-of-memory exit (3 or 1 with its JVM line), candidate report.
+  shared_enrichment_context: >-
+    Join each record to three checks kept separate: live DT-J4SH-ESTATE-001 verdict, reachability
+    (exposed, not exposed or unknown) and benign cause (deploy, drain, stop, kill, external signal,
+    out-of-memory). Results down-rank and never drop; an unknown verdict or reachability is
+    unscoped and never a possible attempt.
+  strategies:
+    - id: 'STRAT-WORKLOAD-ABORT-OR-FAULT-EXIT'
+      name: 'JVM workload ends on an abort or fault exit (crash candidate), kills down-ranked'
+      objective: >-
+        Detect a java workload ending on ABRT or SEGV or with exit 134 or 139 as a crash candidate
+        and call it a fatal JVM error only with its banner or report. Rank kills and OOM below it
+        and escalate on a crash loop.
+      incident_relevance: >-
+        Generic: detects generic behavior that also covers this threat; don't report as
+        Java4Shell-specific coverage. Matches CISA "unexpected JVM crashes" and Sysdig "bursts of
+        worker restarts" (REF-CISA-ALERT-2026-11-17, REF-SYSDIG-JAVA4SHELL).
+      detection_logic: |
+        Admit every java workload termination (state or lastState) with any emitted signal,
+        exitCode 129 to 192 (128 plus a signal), reason OOMKilled, exitCode 1 with a banner or
+        report, or exitCode 3 with the JVM's out-of-memory termination line (REF-JDK17U-DEBUG).
+        Dedupe by containerID and finishedAt. Rank: fatal JVM error with a banner or report; crash
+        candidate for 6, 11, 134 or 139 alone; down-ranked, never dropped: any other signal or
+        code, OOMKilled, exit 3, eviction, "(sent by kill)", an out-of-memory reason, or a
+        rollout, drain or stop in 15 minutes. Raise on 3+ restart deltas in 60 minutes or
+        CrashLoopBackOff. Possible attempt only through the shared promotion gate; all else
+        down-ranks.
+      minimum_evidence: >-
+        A java workload termination with exitCode, signal and reason as emitted: fatal JVM error
+        only with a banner or report; 6, 11, 134 or 139 alone a crash candidate; any other signal,
+        OOMKilled or corroborated exit 3 down-ranked. A possible attempt also needs the affected
+        verdict, exposure and benign-cause checks passed.
+      correlation_context: >-
+        Keys are container ID and termination time; the 15-minute change window (down-rank only) and
+        3-in-60 escalation are this pack's choices. Count restart deltas, not delays, since back-off
+        varies (REF-K8S-POD-LIFECYCLE, REF-K8S-API-TYPES) and events can arrive late.
+      detectors:
+        - detector_class: 'container-lifecycle-detection'
+          technologies:
+            - 'Kubernetes pod and container status'
+            - 'Docker or containerd events'
+            - 'Cloud container platform status'
+          contribution: 'Gives exit code, kill reason, restart count and workload identity.'
+          limitations: 'Cannot tell a fatal VM error from an external signal; blind where no collector ships the terminated state.'
+        - detector_class: 'siem-correlation'
+          technologies:
+            - 'Splunk'
+            - 'Elastic'
+            - 'Microsoft Sentinel'
+            - 'Google SecOps'
+          contribution: 'Joins terminations to deploy events and the exposure inventory.'
+          limitations: 'Only as good as ingested status fields and clock alignment.'
+      benign_explanations:
+        - explanation: 'The JVM aborts on out-of-memory or exits 3 because the operator set it to crash or exit on out-of-memory.'
+          distinguishing_context: >-
+            Only the banner reason line, or the "Terminating due to java.lang.OutOfMemoryError" line
+            before an exit 3 (REF-JDK17U-DEBUG), names out-of-memory; from exit status alone it
+            cannot be told apart and stays a lead.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            An abort on out-of-memory is a resource fault; down-rank by the reason line only, never
+            drop, since exit status alone matches a fault crash, and keep other Internal Error banners.
+        - explanation: 'A native malloc or mmap fails and the JVM exits 1 with the insufficient-memory header.'
+          distinguishing_context: >-
+            Exit 1 with no core and the header "There is insufficient memory for the Java Runtime
+            Environment to continue." for that pid (REF-JDK17U-VMERROR).
+          overlaps_incident_instance: false
+          tuning_hazard: 'A resource failure; down-rank by the header, never drop, and do not infer a cause from it.'
+        - explanation: >-
+            System.exit(134 or 139), a wrapper returning that status, an external signal or a native
+            abort() ends the JVM without HotSpot fatal-error handling (REF-WAITPID).
+          distinguishing_context: >-
+            No fatal-error banner or report for that pid; a sending process, wrapper or application
+            exit message instead.
+          overlaps_incident_instance: false
+          tuning_hazard: 'Keep it a crash candidate without the banner or report; do not exclude exit 134 as a class, nor admit exit 1 without it.'
+        - explanation: 'A native library, agent or JIT bug crashes the JVM.'
+          distinguishing_context: >-
+            Same workload crashes at the same call site across versions and hosts; no change after
+            patching; the fault frame names the library.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            The fault frame of a real memory-corruption crash is unsourced and may sit anywhere;
+            excluding by frame or library also removes the incident.
+        - explanation: 'A deploy, scale-in, node drain, or operator kill ends the workload.'
+          distinguishing_context: >-
+            A rollout or drain event exists for it, or the banner shows "(sent by kill)"; exit 137
+            is the usual signature for kills.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Suppress only a termination positively matched to a planned stop by estate policy;
+            excluding all restarts in a change window hides a crash in it.
+        - explanation: 'The process runs a build, CPU or flag set that 001 rates not affected or mitigated-not-patched.'
+          distinguishing_context: >-
+            The live verdict on the crashed process, not its host or image tag, reads not affected or
+            mitigated-not-patched, so the crash has another cause.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Down-rank by the verdict only, never drop: it is a point-in-time read and goes stale
+            after a restart or a flag change.
+      forbidden_exclusions:
+        - field: 'processes that 001 rates not affected or mitigated-not-patched'
+          reason: 'Down-rank only: the verdict is point-in-time, and the crash is still worth ranking.'
+        - field: 'workloads that restart often (known flappy)'
+          reason: 'A crash loop is the signal; exempting the flappy services removes the one that matters.'
+        - field: 'JVM vendor or image tag, other than the version string'
+          reason: 'Scope is by build per DT-J4SH-ESTATE-001; a tag is adversary-settable and drifts.'
+      validation:
+        status: 'lab-telemetry-verified'
+        evidence: >-
+          In a telemetry-only lab (ordinary JVM runs, flag dumps and benign crashes; the
+          vulnerability was not triggered), an out-of-memory abort under an init process exited 134
+          with the flag false, as did an external SIGSEGV, on emulated x86; PID 1 and restarts were
+          not observed.
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: >-
+          No source gives a rate and none was measured; crash candidates should be few on a stable
+          fleet, while admitted kill, stop and rollout records scale with deploy activity and stay
+          down-ranked.
+      blind_spots:
+        - description: >-
+            Missing telemetry: no container status shipped; java as PID 1 without an init is
+            unmeasured: a namespace init gets only handled signals (REF-PID-NAMESPACES), so the abort
+            may hang until a probe kill (137), which this strategy only down-ranks.
+          routes_to: null
+        - description: >-
+            Coverage limit: a JVM that ends with an exit code outside the admitted set, or a workload
+            under restartPolicy Never, leaves no crash loop for this strategy to escalate.
+          routes_to: null
+        - description: >-
+            Missing telemetry: a status poller sees only state and lastState, so crashes between polls
+            are lost; exit 1 (core dumps off in the JVM, or a native-memory failure) is silent
+            without the banner.
+          routes_to: null
+        - description: >-
+            Missing telemetry: Windows Java services; this logic is Linux and container only and was
+            not lab-checked on Windows.
+          routes_to: null
+        - description: >-
+            Scope: build, CPU or flags unknown; this strategy cannot say the process is affected.
+          routes_to: 'DT-J4SH-ESTATE-001'
+        - description: >-
+            Scope: CERT Polska says successful exploitation may leave no log traces
+            (REF-CERT-POLSKA-216-2026) and Sysdig says almost nothing at the application layer
+            (REF-SYSDIG-JAVA4SHELL); a missing crash clears no host.
+          routes_to: 'DT-J4SH-HOST-003'
+      analyst_response: >-
+        Read the last log lines for the banner, reason and build line, deploy and drain events and
+        restart count. Check the 001 verdict on the live process (REF-ORACLE-JCMD), other replicas
+        on the build and exposure.
+      safe_conclusion: >-
+        A Java workload ended abnormally: a crash candidate, a down-ranked kill or out-of-memory
+        exit, or a fatal JVM error only where its banner or report matches. It is a possible attempt
+        only where the verdict, exposure and benign-cause checks all pass; the cause, any trigger
+        and any compromise are not established.
+    - id: 'STRAT-ERROR-REPORT-FILE-CREATE'
+      name: 'java process creates a file named as a JVM error report (candidate report)'
+      objective: >-
+        Detect a java process creating a file named hs_err_pid<pid>.log, or at its -XX:ErrorFile
+        path, from file-create telemetry, as a candidate error-report file.
+      incident_relevance: >-
+        Generic: detects generic behavior that also covers this threat; don't report as
+        Java4Shell-specific coverage. Matches Sysdig "hs_err_pid*.log files" (REF-SYSDIG-JAVA4SHELL)
+        and survives banner loss but not an ephemeral container.
+      detection_logic: >-
+        Alert on a file create or overwrite by java, java.exe or javaw.exe (or the service's
+        launcher such as procrun) named hs_err_pid<digits>.log in its working or OS temp directory
+        (/tmp; %TMP% or %TEMP%), or at its effective -XX:ErrorFile path with %p as the pid. Keep
+        the defaults eligible with ErrorFile set since HotSpot falls back to them
+        (REF-JDK17U-VMERROR). Label the record create, overwrite or generic write. Exclude copy,
+        archive or read tools. A candidate report: relevant for investigation with an affected 001
+        verdict, never an attempt; other verdicts down-rank. It is a fatal-error report only once
+        its header is read or a banner matches. Raise on an exposed service or 3+ in 60 minutes.
+      minimum_evidence: >-
+        A create or overwrite record (a generic write is weaker) by a java image at a
+        path matching the report name or the effective ErrorFile value: a candidate report, at
+        most relevant for investigation. A fatal-error report needs its header read or
+        a matched banner; another process's matching name is a stray file.
+      correlation_context: >-
+        Keys are host, path and process instance. The name holds the JVM's own pid, in a
+        container its namespace pid while EDR may log the node pid (REF-PID-NAMESPACES): translate
+        it or match container and start time.
+        Join to the banner in strategy three and the restart in strategy one when available.
+      detectors:
+        - detector_class: 'file-creation-telemetry-detection'
+          technologies:
+            - 'EDR file-create events'
+            - 'Sysmon (Windows)'
+            - 'Linux auditd path watch'
+            - 'File integrity monitoring'
+          contribution: 'Gives creating process, path and time of the report.'
+          limitations: 'Needs a sensor or watch on the path; Linux field names vary by product.'
+      benign_explanations:
+        - explanation: 'A native-library, agent or JIT bug crashes the JVM and writes a report.'
+          distinguishing_context: >-
+            Report header names a library frame and recurs across versions; compare with the build
+            line and crash history of that service.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding reports with a native-library frame also removes a crash whose frame is not
+            sourced; the incident's frame is unknown.
+        - explanation: 'The JVM aborts on Java heap out-of-memory by operator setting, or a native malloc or mmap fails.'
+          distinguishing_context: 'Report reason names out-of-memory, or the header is the insufficient-memory one.'
+          overlaps_incident_instance: false
+          tuning_hazard: 'An abort on out-of-memory is a resource fault; down-rank by the reason, never drop, and keep every other reason.'
+        - explanation: 'A test or build host forces a crash.'
+          distinguishing_context: 'The host runs a known test or build job.'
+          overlaps_incident_instance: false
+          tuning_hazard: 'Excluding test hosts by name hides an exposed test host.'
+        - explanation: 'An administrator copies, restores or archives an old report file.'
+          distinguishing_context: 'Creating process is a copy, archive or shell tool, not java.'
+          overlaps_incident_instance: false
+          tuning_hazard: 'Requiring java as creator is correct; do not widen to any process.'
+        - explanation: 'Java application code creates, copies or archives a file with a report-like name.'
+          distinguishing_context: >-
+            The file lacks the fatal-error header, and no banner, abnormal exit or restart matches
+            that pid.
+          overlaps_incident_instance: false
+          tuning_hazard: 'Confirm by reading the content; excluding report paths or names hides real reports.'
+        - explanation: 'The process runs a build, CPU or flag set that 001 rates not affected or mitigated-not-patched.'
+          distinguishing_context: >-
+            The live verdict on the crashed process, not its host or image tag, reads not affected or
+            mitigated-not-patched, so the crash has another cause.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Down-rank by the verdict only, never drop: it is a point-in-time read and goes stale
+            after a restart or a flag change.
+      forbidden_exclusions:
+        - field: 'processes that 001 rates not affected or mitigated-not-patched'
+          reason: 'Down-rank only: the verdict is point-in-time, and the crash is still worth ranking.'
+        - field: 'ErrorFile paths or report directories as noise'
+          reason: 'The operator-set path is where real reports land; excluding it removes the signal.'
+        - field: 'paths under /tmp, %TMP% or the working directory'
+          reason: 'Oracle documents the working directory as default and the OS temp directory as fallback and HotSpot uses both when ErrorFile cannot be opened; excluding either hides real reports.'
+      validation:
+        status: 'lab-telemetry-verified'
+        evidence: >-
+          In a telemetry-only lab (ordinary JVM runs, flag dumps and benign crashes; the
+          vulnerability was not triggered), an out-of-memory abort left a report in the working
+          directory and an -XX:ErrorFile JVM wrote to that path after an external signal, both read
+          from the files on emulated x86.
+      expected_volume:
+        band: 'rare'
+        basis: 'modelled'
+        note: >-
+          Reasoned, not measured: reports are rare on a healthy fleet and a service with a known
+          native crash will exceed that.
+      blind_spots:
+        - description: >-
+            Missing telemetry: the report file is lost with an ephemeral container unless the path
+            is a mounted volume; strategy three covers it from the banner.
+          routes_to: null
+        - description: >-
+            Missing telemetry: hosts with no file-create sensor or path watch emit nothing.
+          routes_to: null
+        - description: >-
+            Coverage limit: an ErrorFile value the rule has not learned, or a device path, leaves no
+            create record the rule matches; read the effective value from the live process (jcmd
+            VM.flags) since an options variable or file can set it.
+          routes_to: null
+        - description: >-
+            Configuration limit: -XX:+ErrorFileToStdout or ErrorFileToStderr prints the report to a
+            stream and writes no file (REF-JDK17U-GLOBALS); strategy three covers it where output is collected.
+          routes_to: null
+        - description: >-
+            Missing telemetry: Windows report creates were not lab-checked; the temp-directory path
+            rests on the vendor page only.
+          routes_to: null
+      analyst_response: >-
+        Read the report header: signal or reason, pid, JRE build, command line, host and time. Check
+        the creating process, the service's exposure, earlier reports, and whether the service
+        restarted. Compare the build to DT-J4SH-ESTATE-001.
+      safe_conclusion: >-
+        A java process created a candidate JVM error-report file on this host, relevant for
+        investigation and never an attempt; a fatal error is established only once its content or a
+        matched banner confirms it, and the cause, any trigger and any compromise are not established.
+    - id: 'STRAT-FATAL-ERROR-BANNER-IN-LOGS'
+      name: 'Fatal-error banner in container stdout or service logs'
+      objective: >-
+        Detect the JVM fatal-error banner, or the native insufficient-memory header, in collected
+        stdout or service logs and recover the build line.
+      incident_relevance: >-
+        Generic: detects generic behavior that also covers this threat; don't report as
+        Java4Shell-specific coverage. Keeps the crash and build once the container is gone.
+      detection_logic: >-
+        Alert on a log record from a java workload containing "A fatal error has been detected by
+        the Java Runtime Environment" or "There is insufficient memory for the Java Runtime
+        Environment to continue." (a native malloc or mmap failure, REF-JDK17U-VMERROR) on any
+        collected stream. Do not require SIGSEGV or a "Problematic frame" line. Extract the reason
+        and "JRE version" lines. Down-rank, never drop, "(sent by kill)" on 17+, si_code 0 on 8,
+        an out-of-memory reason and the insufficient-memory header. Reassemble the banner by
+        workload and time. Raise on 2+ banners in 60 minutes. Possible attempt only through the
+        shared promotion gate; all else down-ranks.
+      minimum_evidence: >-
+        The banner line from a java workload with its reason and build lines. No build line means
+        an unscoped fatal error; with an external-signal marker, an out-of-memory reason or the
+        insufficient-memory header down-rank it. A possible attempt also needs the affected
+        verdict, exposure and benign-cause checks each passed.
+      correlation_context: >-
+        Keys are workload, pid and time; the reason and build lines sit within the same banner, so
+        group by workload and a 60-second window. Join to strategy one for the restart.
+      detectors:
+        - detector_class: 'log-content-match-detection'
+          technologies:
+            - 'Container log shipper to a SIEM'
+            - 'Cloud log service'
+            - 'Service log collector'
+          contribution: 'Gives the reason, build and path lines of the crash, durable past the container.'
+          limitations: 'Needs the JVM output collected and a multi-line grouping; match any stream.'
+      benign_explanations:
+        - explanation: 'The JVM aborts on out-of-memory because the operator set it to crash on out-of-memory.'
+          distinguishing_context: >-
+            Reason line names out-of-memory and an abort line precedes the banner; this is a resource
+            fault, not a memory fault.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Down-rank by the out-of-memory reason only, never drop, and keep other Internal Error
+            lines, which a memory fault can also print.
+        - explanation: 'A native malloc or mmap fails on a host or container short of memory.'
+          distinguishing_context: >-
+            The header reads "There is insufficient memory for the Java Runtime Environment to
+            continue." and the process exits 1 with no core (REF-JDK17U-VMERROR).
+          overlaps_incident_instance: false
+          tuning_hazard: 'A resource failure; down-rank by the header, never drop, and keep every fatal-error banner.'
+        - explanation: 'A native-library, agent or JIT bug crashes the JVM.'
+          distinguishing_context: >-
+            The same frame recurs across restarts and versions and predates this disclosure.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding by problematic frame or library also removes the incident, whose frame is
+            unsourced; use recurrence and build, not frame.
+        - explanation: 'An operator or tool sends a signal to the JVM, for a test or a stuck process.'
+          distinguishing_context: >-
+            "(sent by kill)" appears on 17+; Java 8 shows si_code 0 with a sender pid.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Down-rank by the marker only, which the lab saw only for kill-sent signals; do not exclude
+            the sending user, which an adversary with host access could also use.
+        - explanation: 'The process runs a build, CPU or flag set that 001 rates not affected or mitigated-not-patched.'
+          distinguishing_context: >-
+            The live verdict on the crashed process, not its host or image tag, reads not affected or
+            mitigated-not-patched, so the crash has another cause.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Down-rank by the verdict only, never drop: it is a point-in-time read and goes stale
+            after a restart or a flag change.
+      forbidden_exclusions:
+        - field: 'processes that 001 rates not affected or mitigated-not-patched'
+          reason: 'Down-rank only: the verdict is point-in-time, and the crash is still worth ranking.'
+        - field: 'requiring SIGSEGV or a Problematic frame line'
+          reason: 'Aborts and internal errors carry neither and are fatal errors too.'
+        - field: 'filtering the log stream to stdout only'
+          reason: 'Oracle says the header goes to stdout and may show in the output log; wrappers redirect or merge streams.'
+      validation:
+        status: 'lab-telemetry-verified'
+        evidence: >-
+          In a telemetry-only lab (ordinary JVM runs, flag dumps and benign crashes; the
+          vulnerability was not triggered), the banner, reason and JRE build lines of an
+          out-of-memory abort were read from a container's stdout on emulated x86; an external
+          SIGSEGV showed "(sent by kill)".
+      expected_volume:
+        band: 'rare'
+        basis: 'modelled'
+        note: >-
+          Reasoned, not measured: banners are rare per service on a stable fleet; known native
+          crashes raise it.
+      blind_spots:
+        - description: >-
+            Missing telemetry: stdout is not collected, or the shipper splits the multi-line banner.
+          routes_to: null
+        - description: >-
+            Missing telemetry: JVM output written to a file nobody collects, or a VM killed before it
+            prints (for example by an external kill), leaves no banner to read.
+          routes_to: null
+        - description: >-
+            Attribution limit: banner proves a fatal VM error, not its trigger.
+          routes_to: null
+      analyst_response: >-
+        Read the reason and build lines, the report path, and earlier banners from the same
+        workload. Check deploy and drain events, other replicas on the same build, and request logs
+        at that time. Compare the build to DT-J4SH-ESTATE-001.
+      safe_conclusion: >-
+        A Java workload printed a fatal-error banner of the stated type on the stated build. It is a
+        possible attempt only where the verdict, exposure and benign-cause checks all pass; the
+        trigger, any attack and any compromise are not established.
+    - id: 'STRAT-HOST-SERVICE-CRASH-AND-CORE-DUMP'
+      name: 'Java service unit ends abnormally or dumps core (crash candidate), kills down-ranked'
+      objective: >-
+        Detect a java service on a Linux host ending on an abort or fault signal or dumping core as a
+        crash candidate, with kills and OOM down-ranked, where neither JVM output nor file events are
+        collected.
+      incident_relevance: >-
+        Generic: detects generic behavior that also covers this threat; don't report as
+        Java4Shell-specific coverage. Fallback on service-managed hosts.
+      detection_logic: >-
+        Admit each java unit exit with EXIT_CODE killed or dumped at any EXIT_STATUS, exited 134 or
+        139, exited 1 with a banner or report, exited 3 with the JVM's out-of-memory termination
+        line (REF-JDK17U-DEBUG), UNIT_RESULT oom-kill or core-dump (joined on unit and invocation
+        id, REF-SYSTEMD-UNIT-C) or a java core-dump record; admit a clean-declared exit where its
+        debug record is kept. Rank: fatal error with a banner or report; crash candidate for
+        dumped, killed 6 or 11, 134, 139 or a core; down-ranked, never dropped: any other killed
+        signal, oom-kill, exit 3, or a stop or deploy in 15 minutes. Raise on 3+ in 60 minutes.
+        Possible attempt only through the shared promotion gate; all else down-ranks.
+      minimum_evidence: >-
+        A java unit exit or core-dump record with code, status and result: fatal error
+        only with a banner or report; dumped, killed 6 or 11, 134, 139 or a core alone a crash
+        candidate; other kills, oom-kill or exit 3 down-ranked. A possible attempt also needs the
+        affected verdict, exposure and benign-cause checks passed.
+      correlation_context: >-
+        Keys are host, unit and pid. The 15-minute change window (down-rank only) and 3-in-60
+        escalation are this pack's choices. Core-dump handlers can log later than the failure.
+      detectors:
+        - detector_class: 'host-service-crash-detection'
+          technologies:
+            - 'systemd journal'
+            - 'Core-dump handler logs'
+            - 'EDR service and crash telemetry'
+          contribution: 'Gives unit, signal, executable and time of a crash without the banner.'
+          limitations: 'Not lab-checked; field names rest on systemd source; core dumps often off.'
+      benign_explanations:
+        - explanation: 'An administrator or deploy tool stops, kills or restarts the unit.'
+          distinguishing_context: >-
+            A stop or restart job exists for the unit, or the exit was clean (SuccessExitStatus can
+            make a signal or status clean, and a clean exit is logged only at debug level).
+          overlaps_incident_instance: false
+          tuning_hazard: 'Suppress only a stop positively matched by estate policy; excluding unit restarts in a window hides a crash in it.'
+        - explanation: 'A native-library, agent or JIT bug crashes the service.'
+          distinguishing_context: >-
+            Same signal and crash history on that service across versions and before this disclosure.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding by signal or library removes the incident's own record; use recurrence and
+            build.
+        - explanation: 'The kernel out-of-memory killer or a memory limit ends the service.'
+          distinguishing_context: 'UNIT_RESULT oom-kill, or EXIT_CODE killed with EXIT_STATUS 9 or 15 and no core; no 6 or 11.'
+          overlaps_incident_instance: false
+          tuning_hazard: 'Down-rank by result, not by unit, never drop; a kernel kill ends the process before any VM fault shows.'
+        - explanation: 'The process runs a build, CPU or flag set that 001 rates not affected or mitigated-not-patched.'
+          distinguishing_context: >-
+            The live verdict on the crashed process, not its host or image tag, reads not affected or
+            mitigated-not-patched, so the crash has another cause.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Down-rank by the verdict only, never drop: it is a point-in-time read and goes stale
+            after a restart or a flag change.
+      forbidden_exclusions:
+        - field: 'processes that 001 rates not affected or mitigated-not-patched'
+          reason: 'Down-rank only: the verdict is point-in-time, and the crash is still worth ranking.'
+        - field: 'units known to crash'
+          reason: 'A new crash on a noisy unit is still the signal; use recurrence and build.'
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: 'No source or measurement; not exercised in the lab.'
+      blind_spots:
+        - description: >-
+            Missing telemetry: containers and hosts without a service manager or with core dumps
+            disabled emit nothing; with -XX:-CreateCoredumpOnCrash, or on a native-memory failure,
+            the unit shows only exit 1.
+          routes_to: null
+        - description: >-
+            Attribution limit: a signal result names no cause and no build without a join.
+          routes_to: 'DT-J4SH-ESTATE-001'
+        - description: >-
+            Scope: strategy three or one covers container workloads.
+          routes_to: null
+        - description: >-
+            Missing telemetry: Windows Java services (with procrun the service exe hosts the JVM) have
+            no systemd record; a Windows crash path is not sourced or lab-checked here.
+          routes_to: null
+      analyst_response: >-
+        Read the unit's journal around the failure, core-dump metadata (signal, executable, time),
+        and any report file. Check deploy or stop events, other hosts on the same build and the
+        service's exposure.
+      safe_conclusion: >-
+        A Java service ended abnormally: a crash candidate, a down-ranked kill or
+        out-of-memory exit, or a fatal JVM error only where its banner or report matches. It is a
+        possible attempt only where the verdict, exposure and benign-cause checks all pass; the
+        cause, any trigger and any compromise are not established.
+    - id: 'STRAT-CRASH-WAVE-AND-EXPOSURE-HUNT'
+      name: 'Hunt: a crash wave on one build, or a non-hook child of a crashed process'
+      objective: >-
+        Hunt for a wave of crashes across hosts or workloads on one exact build, or a crash whose own
+        process spawned a child that is not its expected error hook, and hand the child branch to
+        DT-J4SH-HOST-003; requests only rank, and one crash with request anomalies is no finding.
+      incident_relevance: >-
+        Generic hunt, never Java4Shell-specific coverage; no source says a trigger leaves a wave. A
+        crash can lag its input, as Datadog's test JVM crashed later in garbage collection
+        (REF-DATADOG-JAVA4SHELL). VulnCheck saw a burst of requests and not one take a service down
+        (REF-VULNCHECK-JAVA4SHELL) so requests only rank.
+      detection_logic: >-
+        Hunt, never alert, over fatal errors and crash candidates from strategies one to four,
+        rollout-matched included; kills and out-of-memory exits stay as context only. Wave branch: one exact build with such crashes on 3+ distinct hosts in 24 hours or
+        3+ distinct workloads in one rollout. Child branch: a crash whose process is verified by
+        host, pid and start time and spawned a child before or during error handling
+        (REF-JDK17U-VMERROR); state the hook check as expected, non-hook or unknown and keep an
+        unverified lineage as a lead, never a child of the crashed JVM; hand to
+        DT-J4SH-HOST-003. Requests from process start or 60 minutes before only rank, a burst
+        higher (REF-VULNCHECK-JAVA4SHELL).
+      minimum_evidence: >-
+        Wave: one build crashing (fatal error or crash candidate) on 3+ distinct hosts in 24 hours or
+        3+ distinct workloads in one rollout, with count, build and window. Child: one
+        crash of a verified process and a child from before or during error handling,
+        hook check stated. Requests alone or with one crash are no finding.
+      correlation_context: >-
+        Keys are host, pid with start time, build and time; windows are this pack's choices.
+        Analyst correlation, not stated by CISA or Sysdig (separate signals only): a crash loop
+        then a shell child of the same service joins on host and service and goes to DT-J4SH-HOST-003
+        (REF-CISA-ALERT-2026-11-17, REF-SYSDIG-JAVA4SHELL).
+      detectors:
+        - detector_class: 'siem-correlation'
+          technologies:
+            - 'Splunk'
+            - 'Elastic'
+            - 'Microsoft Sentinel'
+            - 'Google SecOps'
+          contribution: 'Groups crashes by build and host and joins them to request and deploy context.'
+          limitations: 'Only as good as ingested fields, clock alignment and the build join.'
+        - detector_class: 'web-and-network-request-log-analysis'
+          technologies:
+            - 'Web server and load-balancer access logs'
+            - 'Reverse proxy or WAF logs'
+          contribution: 'Give request time, client, status and aborted connections near a crash.'
+          limitations: 'Show no crash and no cause; payload content is not retained or read.'
+      benign_explanations:
+        - explanation: 'A bad rollout, config change or shared dependency crashes many hosts on one build.'
+          distinguishing_context: >-
+            Crashes start at the rollout or change time, and every replica fails the same way
+            independent of requests.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            A systematic trigger also looks like a rollout; check the request side before excluding
+            a wave as a deploy.
+        - explanation: 'A load spike, scan or health check coincides with a crash for another reason.'
+          distinguishing_context: >-
+            Same request volume occurs without crashes at other times; time order alone does not
+            separate it, since a crash can lag its trigger.
+          overlaps_incident_instance: false
+          tuning_hazard: 'Excluding known scanner sources hides a scanner-sourced attempt.'
+        - explanation: >-
+            CI jobs, deploys or a service wrapper restart the service repeatedly and look like a
+            crash loop (analyst reasoning).
+          distinguishing_context: >-
+            Restarts line up with a pipeline run, deploy event or wrapper action and show a stop
+            request or clean exit, with no fatal error banner or report.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            A real crash can land inside a deploy window or be restarted by the wrapper; exclude only
+            restarts with no fatal error evidence, never the whole window or wrapper.
+        - explanation: 'Memory pressure on a busy service causes crashes at peak.'
+          distinguishing_context: >-
+            Crashes track load and memory, and the reason line names resource exhaustion.
+          overlaps_incident_instance: true
+          tuning_hazard: 'Excluding peak hours hides a trigger sent at peak; rank by the reason line, never by time of day.'
+        - explanation: 'A native-library, agent or JIT bug crashes a busy service, including in a GC or compiler thread.'
+          distinguishing_context: >-
+            Recurs across versions and predates this disclosure; a GC or compiler-thread frame does
+            not separate it from a delayed memory-corruption crash (REF-DATADOG-JAVA4SHELL).
+          overlaps_incident_instance: true
+          tuning_hazard: 'Excluding by frame, thread or library also removes the incident, whose frame is unsourced.'
+        - explanation: >-
+            A JVM -XX:OnError or -XX:OnOutOfMemoryError hook runs its configured command at the fatal
+            error or first OutOfMemoryError (REF-ORACLE-JAVA-MAN): the error-hook twin in DT-J4SH-HOST-003.
+          distinguishing_context: >-
+            Read the hook from the live process (jcmd VM.flags), since an options variable can set
+            it. HotSpot splits it on ';', expands %p and runs each part as
+            /bin/sh -c (cmd /C on Windows) after the report (REF-JDK17U-VMERROR,
+            REF-JDK17U-OS-POSIX, REF-JDK17U-OS-WINDOWS); expect those shells and their descendants.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            A real crash also runs the hook; allow only those expected shells and their descendants
+            from the crashed process at error time, keep every other child visible, and label the
+            check unknown where the hook or lineage is unresolved.
+      forbidden_exclusions:
+        - field: 'request content, size, path or client as a discriminator'
+          reason: 'No source describes a request shape; filtering on one adds an unsupported claim.'
+        - field: 'requiring a burst of requests before the crash'
+          reason: >-
+            A burst only ranks (REF-VULNCHECK-JAVA4SHELL); request logs can miss aborted connections
+            and a crash can lag its input (REF-DATADOG-JAVA4SHELL).
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: 'A hunt run on demand over a window; no rate is available.'
+      blind_spots:
+        - description: >-
+            Missing telemetry: request logs that omit aborted connections, TLS-terminated
+            traffic seen only by the proxy, or no request logs on the host.
+          routes_to: null
+        - description: >-
+            Coverage limit: activity that does not crash the process shows no wave, and the wave
+            branch finds only waves at or above its host or workload bar; the child branch and DT-J4SH-HOST-003
+            still apply.
+          routes_to: 'DT-J4SH-HOST-003'
+        - description: >-
+            Scope: build unknown for crashes without a banner or inventory.
+          routes_to: 'DT-J4SH-ESTATE-001'
+      analyst_response: >-
+        Pull crashes by build with deploy and request context. Check DT-J4SH-HOST-003 for a child of
+        the crashed process or a later instance of its service, setting aside only expected hook
+        shells and their descendants, and the 001 verdict. A logged decoder exception near a crash is supporting
+        only (REF-SYSDIG-JAVA4SHELL).
+      safe_conclusion: >-
+        A wave of crashes on one build, or a crashed process's child that is not its expected hook
+        (or whose hook check is unknown), is a lead for review; one crash near unusual requests, even
+        a burst, is no finding, and no trigger, attack or compromise is established.
+  supporting_technologies_considered: >-
+    Core-file forensics would give the faulting frame but is not event telemetry. Elastic's PR 7200
+    "Java HotSpot Fatal Error Log Created" is an open proposal, never shipped (REF-ELASTIC-DR-7200).
+    Scanners reveal build and exposure, not crashes; runtime protection was not assessed.
+
+detector_requirements:
+  required: >-
+    A way to identify java workloads and their exposure, at least one of: container exit status
+    (via a status collector that keeps transitions), JVM output logs, file-create events or
+    service-manager records, and a deploy or drain feed to down-rank planned restarts. For scope, the live build, CPU and flags per process.
+  optional: >-
+    Report path set to a mounted volume with -XX:ErrorFile keeps the file past the container;
+    a stable build inventory narrows alerts to in-scope builds; request logs add context for the hunt.
+  correlation:
+    capability: >-
+      Aligned clocks, a stable workload key across status, logs and file events, deploy events,
+      and a join from the banner or inventory build line to DT-J4SH-ESTATE-001.
+    window: '15 minutes before for a change (down-rank only), 60 minutes for restart deltas; no fixed restart window (back-off defaults to a 300s cap and varies by version and kubelet settings)'
+  product_support_caveat: >-
+    A named product is only a candidate; support depends on sensors, logging, fields and parsing,
+    so verify first. Check where the JVM's stdout goes, whether container exit status is shipped
+    and that the sensor records a create at the report path on that OS and policy.
+
+missing_context:
+  unverified:
+    - >-
+      identity.first_observed 2026-11: month of disclosure. Sysdig names SIGSEGV and hs_err files
+      and Hadrian exit 134 as generic crash signs, not a CVE signature (REF-SYSDIG-JAVA4SHELL,
+      REF-HADRIAN-JAVA4SHELL); no frame or stub is sourced (standing_negatives).
+    - >-
+      Branches 18 to 20, 22 to 24 and 26: no vendor lists them, so 001 reads unknown for them
+      (REF-OPENJDK-ADVISORY-2026-11-17).
+    - >-
+      Orchestrator and Linux file-event field names, any Windows crash path and java-as-PID-1 exit
+      status are unchecked; the lab saw only container exit status and the kill flag, under an
+      init on emulated x86. Exit 1 (core dumps off, or a native-memory failure) rests on source
+      (REF-JDK17U-OS-POSIX, REF-JDK17U-VMERROR).
+    - >-
+      Azul Prime's fatal-error banner, report name and exit status were not read; the banner and
+      report strings here are HotSpot's.
+    - >-
+      Whether a crash from a real trigger shows a fault signal, an abort or another reason line, and
+      whether "(sent by kill)" marks signals sent other than by kill; the lab used an out-of-memory
+      abort and a kill-sent signal only.
+  assumptions:
+    - id: 'ASSUMPTION-CRASH-IS-A-TRIGGER-OUTCOME'
+      verdict_changing: true
+      statement: >-
+        A field attempt crashes the JVM as the labs' crash tests did (REF-BLACKPOINT-JAVA4SHELL,
+        REF-HADRIAN-JAVA4SHELL). If wrong, these strategies reduce to generic JVM-crash
+        detection. Resolve it by a vendor or discoverer note naming a crash outcome in the field.
+    - id: 'ASSUMPTION-BANNER-AND-EXIT-DO-NOT-DEPEND-ON-TRIGGER'
+      verdict_changing: false
+      statement: >-
+        The banner, exit status and report file seen for an out-of-memory abort and an external
+        signal match those of a fault-driven crash. If wrong, the banner strategy misses it. Resolve it
+        from a vendor or discoverer report that shows the banner of a fault-driven crash.
+    - id: 'ASSUMPTION-RESTART-FOLLOWS-CRASH'
+      verdict_changing: false
+      statement: >-
+        The exposed service is supervised and restarts. If wrong (for example restartPolicy Never),
+        strategies one and four lose crash-loop escalation and still fire per crash. Resolve it by
+        checking each workload's restart policy.
+  standing_negatives:
+    - statement: >-
+        Not in the CISA KEV catalog 2026.11.18, checked 2026-11-18 12:05 PT.
+      ref: 'REF-CISA-KEV'
+      valid_until: '2026-11-25'
+      recheck: 'Re-read the KEV JSON feed for the CVE id on the expiry date.'
+    - statement: >-
+        Attempts observed, no successful compromise reported. GreyNoise: 69 attempt-shaped
+        requests, four sources, no successful intrusions at 2026-11-18 11:18 PT; CCCS and
+        JPCERT/CC reported none at publication; CISA's ADP entry of 2026-11-17 rates Exploitation "none" (REF-CCCS-AL26-029, REF-JPCERT-2026111801, REF-CVE-API).
+      ref: 'REF-GREYNOISE-JAVA4SHELL'
+      valid_until: '2026-11-25'
+      recheck: 'Re-read the GreyNoise page (counts only), the CVE ADP entry, CCCS and JPCERT/CC.'
+    - statement: >-
+        No source read as of 2026-11-18, primary or secondary, names a frame or stub for this CVE; checked were
+        Calif, Datadog, Red Hat and Upwind (REF-CALIF-JAVA4SHELL, REF-REDHAT-RHSB-2026-018). Upwind
+        lists unexplained hs_err_pid files and bursts of restarts only as crash signs
+        (REF-UPWIND-JAVA4SHELL).
+      ref: 'REF-DATADOG-JAVA4SHELL'
+      valid_until: '2026-11-25'
+      recheck: 'Re-read the four pages for frame, stub, signal or hs_err wording.'
+    - statement: >-
+        Calif had not published its per-product chains as of 2026-11-18 ~06:00 PT
+        (REF-CALIF-JAVA4SHELL); VulnCheck states a full exploit is available to its Initial Access Intelligence customers,
+        existence only.
+      ref: 'REF-VULNCHECK-JAVA4SHELL'
+      valid_until: '2026-11-25'
+      recheck: 'Re-read the Calif and VulnCheck pages for published chains; never link or describe any exploit.'
+    - statement: >-
+        No agreed severity as of 2026-11-18: Oracle as CNA gives CVSS 3.1 8.1, Calif CVSS 4.0 9.2,
+        Red Hat a preliminary 9.8 and Amazon CVSS 3.1 8.8 (REF-CALIF-JAVA4SHELL, REF-REDHAT-CVE,
+        REF-ALAS-CVE); CISA calls it critical (REF-CISA-ALERT-2026-11-17). Recorded, not picked.
+      ref: 'REF-CVE-API'
+      valid_until: '2026-11-25'
+      recheck: 'Re-read the CVE record and the Red Hat and Amazon CVE pages for changed scores.'
+
+missing_states:
+  - id: 'MISSING_CRASH_ARTIFACT_EPHEMERAL_CONTAINER'
+    meaning: >-
+      Missing telemetry: the container is gone and its report file with it, and stdout was not collected.
+    coverage_claim: 'no-coverage'
+    response: >-
+      State that no banner or file evidence exists; use exit status and restart count only, as an
+      unexplained abnormal exit.
+  - id: 'MISSING_BUILD_FOR_CRASHED_PROCESS'
+    meaning: >-
+      Missing context: the crashed process's build, CPU or flags are unknown (no banner, report or
+      live inventory), so 001 reads unknown.
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report an unscoped JVM crash, never as affected or as Java4Shell activity.
+  - id: 'MISSING_DEPLOY_AND_DRAIN_FEED'
+    meaning: >-
+      Missing context: no deploy, scale or drain events to separate planned restarts.
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report restarts as unexplained and the planned-stop check as not run so no possible attempt;
+      the banner marker "(sent by kill)" is the only external-kill test.
+  - id: 'MISSING_REQUEST_LOGS_FOR_EXPOSED_SERVICE'
+    meaning: >-
+      Missing context: no request logs for the exposed service in the crash window.
+    coverage_claim: 'coverage-limited'
+    response: >-
+      State the hunt in strategy five cannot rank crashes by requests; its wave and child branches still run.
+  - id: 'MISSING_EXIT_STATUS_NOT_SHIPPED'
+    meaning: >-
+      Missing telemetry: restarts or crash-loop events reach the SIEM but the container's terminated
+      exit code and reason do not.
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report a restarting java workload with exit status unknown; confirm a fatal error from the
+      banner or the report file's content.
+  - id: 'MISSING_CRASH_AFTER_SUCCESSFUL_EXPLOITATION'
+    meaning: >-
+      Missing telemetry by design: CERT Polska says successful exploitation may leave no log traces
+      (REF-CERT-POLSKA-216-2026), so no crash is seen.
+    coverage_claim: 'no-coverage'
+    response: >-
+      State that an absent crash clears no host; build status comes from DT-J4SH-ESTATE-001 alone.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'workload_or_host_identity'
+    - 'reachability_check_result_exposed_not_exposed_or_unknown'
+    - 'benign_cause_check_result_kill_oom_external_signal_planned_stop_none_found_or_not_run'
+    - 'promotion_gate_result_possible_attempt_only_if_affected_exposed_and_no_benign_cause'
+    - 'exit_status_signal_and_reason_kept_apart_or_missing_state'
+    - 'outcome_class_fatal_error_with_banner_or_report_crash_candidate_down_ranked_kill_or_oom_exit_or_unconfirmed_report_file'
+    - 'jvm_build_line_and_001_host_cpu_and_flags_or_explicit_unknown'
+    - 'estate_001_verdict_affected_mitigated_not_patched_not_affected_or_unknown'
+    - 'restart_and_deploy_event_check_result'
+    - 'outcome_statement_generic_crash_possible_attempt_or_report_file_relevant_for_investigation'
+    - 'change_correlation_attached_not_excluded'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'report_file_path_record_type_create_overwrite_or_write_creating_process_and_content_check_state'
+      condition: 'when the alert rests on a file-create record'
+    - field: 'crash_wave_distinct_host_or_workload_count_build_and_time_window_or_rollout'
+      condition: 'when the strategy five wave branch fires'
+    - field: 'crashed_process_identity_verified_or_unverified_child_and_hook_check_expected_non_hook_or_unknown'
+      condition: 'when the strategy five child branch fires'
+    - field: 'crash_loop_service_identity_and_later_child_handed_to_host_003'
+      condition: 'when a crash loop is joined to a later shell child of the same service'
+  recommended_title: >-
+    Network-exposed JVM crash candidate, fatal error or candidate error-report file (generic; fatal
+    only with banner or read report; a candidate file is at most relevant for investigation; possible
+    attempt only for a crash on an exposed service rated affected with no benign cause found)
+  unsupported_title: 'Java4Shell exploitation crashed this server'
+
+evidence:
+  confirmed_incident_behavior: >-
+    Other labs report crashes, memory corruption and a memory disclosure (REF-THN-JAVA4SHELL,
+    REF-BLACKPOINT-JAVA4SHELL, REF-UPWIND-JAVA4SHELL) and Datadog's test JVM later crashed in
+    garbage collection (REF-DATADOG-JAVA4SHELL). No source read names a frame or stub and none
+    ties an observed attempt to a crash.
+  supported_conclusion: >-
+    A crash candidate or fatal JVM error on an exposed service that 001 reads affected, with no
+    benign cause, is at most a possible attempt and a candidate report file at most relevant for
+    investigation. Not affected or mitigated-not-patched is an ordinary crash and unknown
+    unscoped; all are down-ranked, never dropped.
+  unsupported_conclusions: >-
+    The evidence does not establish that any crash was triggered by Java4Shell, that any host was
+    compromised, or that no crash means safe (REF-CERT-POLSKA-216-2026). A logged decoder exception
+    is supporting only (REF-SYSDIG-JAVA4SHELL).
+  procedure_boundary: >-
+    The crash and restart of the process. Build exposure belongs to DT-J4SH-ESTATE-001 and a
+    child process of a Java server to DT-J4SH-HOST-003; neither is shown by a crash.
+  references:
+    - id: 'REF-ORACLE-FATAL-ERROR-LOG'
+      type: 'telemetry-documentation'
+      title: 'Fatal Error Log (Java SE 17 Troubleshooting Guide)'
+      publisher: 'Oracle'
+      url: 'https://docs.oracle.com/en/java/javase/17/troubleshoot/fatal-error-log.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      citation_caveat: 'partial-use'
+      citation_caveat_note: >-
+        The page gives no exit code, which rests on the lab.
+      evidence_use: >-
+        Default hs_err_pid<pid>.log in the working directory, else /tmp or %TMP%/%TEMP%;
+        -XX:ErrorFile with %p as pid; header on stdout with signal, pid, JRE and VM build.
+    - id: 'REF-ORACLE-JCMD'
+      type: 'telemetry-documentation'
+      title: 'The jcmd Command (Java SE 17)'
+      publisher: 'Oracle'
+      url: 'https://docs.oracle.com/en/java/javase/17/docs/specs/man/jcmd.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'jcmd VM.version, VM.system_properties, VM.flags and VM.command_line are documented; used for the live build.'
+    - id: 'REF-SYSMON'
+      type: 'telemetry-documentation'
+      title: 'Sysmon'
+      publisher: 'Microsoft Sysinternals'
+      url: 'https://learn.microsoft.com/en-us/sysinternals/downloads/sysmon'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Event 11 records file create and overwrite; event 1 records process creation.'
+    - id: 'REF-SYSMON-MANIFEST'
+      type: 'telemetry-documentation'
+      title: 'SysmonCommon manifest.xml'
+      publisher: 'Microsoft'
+      url: 'https://github.com/microsoft/SysmonCommon/blob/main/manifest.xml'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Event 11 SYSMONEVENT_FILE_CREATE (version 2) lists ProcessGuid, ProcessId, Image, TargetFilename, CreationUtcTime and User.'
+    - id: 'REF-LINUX-AUDIT-FIELDS'
+      type: 'telemetry-documentation'
+      title: 'Linux Audit field dictionary'
+      publisher: 'Linux Audit project'
+      url: 'https://github.com/linux-audit/audit-documentation/blob/main/specs/fields/field-dictionary.csv'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Field names only: name (file name), nametype (kind of file operation being referenced), exe (executable name); no value list.'
+    - id: 'REF-K8S-POD-LIFECYCLE'
+      type: 'telemetry-documentation'
+      title: 'Pod Lifecycle'
+      publisher: 'Kubernetes'
+      url: 'https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Default back-off 10s doubling to a 300s cap, reset after 10 minutes, and gates may change
+        it; Kubernetes tracks each container's state, a Terminated one with reason and exit code.
+    - id: 'REF-SYSTEMD-EXEC'
+      type: 'telemetry-documentation'
+      title: 'systemd.exec'
+      publisher: 'systemd project'
+      url: 'https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        ExecStopPost environment SERVICE_RESULT, EXIT_CODE and EXIT_STATUS; SuccessExitStatus;
+        StandardOutput defaults to journal via DefaultStandardOutput. Rates the journal on-by-default.
+    - id: 'REF-SYSTEMD-UNIT-C'
+      type: 'telemetry-documentation'
+      title: 'systemd src/core/unit.c'
+      publisher: 'systemd project'
+      url: 'https://github.com/systemd/systemd/blob/main/src/core/unit.c'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Process-exit record: EXIT_CODE exited, killed or dumped, numeric EXIT_STATUS, signal name
+        only in MESSAGE, debug level on success; UNIT_RESULT in a separate failure record; both
+        carry the invocation id.
+    - id: 'REF-ORACLE-JAVA-MAN'
+      type: 'attack-surface-documentation'
+      title: 'The java Command (Java SE 17)'
+      publisher: 'Oracle'
+      url: 'https://docs.oracle.com/en/java/javase/17/docs/specs/man/java.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        -XX:OnError runs a command when an irrecoverable error occurs; -XX:OnOutOfMemoryError when
+        an OutOfMemoryError is first thrown. Used for the error-hook benign twin in the hunt.
+    - id: 'REF-PID-NAMESPACES'
+      type: 'attack-surface-documentation'
+      title: 'pid_namespaces(7)'
+      publisher: 'Linux man-pages project'
+      url: 'https://man7.org/linux/man-pages/man7/pid_namespaces.7.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        A namespace init gets only signals it has a handler for, except SIGKILL or SIGSTOP from an
+        ancestor; basis for leaving java-as-PID-1 exit status unsettled. Not a lab result.
+    - id: 'REF-JDK17U-OS-POSIX'
+      type: 'attack-surface-documentation'
+      title: 'jdk17u os_posix.cpp'
+      publisher: 'OpenJDK project'
+      url: 'https://raw.githubusercontent.com/openjdk/jdk17u/master/src/hotspot/os/posix/os_posix.cpp'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        os::abort calls ::abort() to dump core, else _exit(1); the exit 1 path behind
+        -XX:-CreateCoredumpOnCrash. os::fork_and_exec runs each hook command as /bin/sh -c.
+    - id: 'REF-JDK17U-OS-WINDOWS'
+      type: 'attack-surface-documentation'
+      title: 'jdk17u os_windows.cpp'
+      publisher: 'OpenJDK project'
+      url: 'https://raw.githubusercontent.com/openjdk/jdk17u/master/src/hotspot/os/windows/os_windows.cpp'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        On Windows os::fork_and_exec prefixes each hook command with "cmd /C " and starts it with
+        CreateProcess as a child of the JVM.
+    - id: 'REF-JDK17U-VMERROR'
+      type: 'attack-surface-documentation'
+      title: 'jdk17u vmError.cpp'
+      publisher: 'OpenJDK project'
+      url: 'https://raw.githubusercontent.com/openjdk/jdk17u/master/src/hotspot/share/utilities/vmError.cpp'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Report opens ErrorFile first, then the working and temp directory defaults, with create
+        and truncate; then OnError (split on ';', %p expanded) and os::abort. Native allocation
+        failures print the insufficient-memory line.
+    - id: 'REF-JDK17U-DEBUG'
+      type: 'attack-surface-documentation'
+      title: 'jdk17u debug.cpp'
+      publisher: 'OpenJDK project'
+      url: 'https://raw.githubusercontent.com/openjdk/jdk17u/master/src/hotspot/share/utilities/debug.cpp'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        report_java_out_of_memory: CrashOnOutOfMemoryError raises a fatal error; ExitOnOutOfMemoryError
+        prints "Terminating due to java.lang.OutOfMemoryError" and calls os::exit(3).
+    - id: 'REF-JDK17U-GLOBALS'
+      type: 'attack-surface-documentation'
+      title: 'jdk17u globals.hpp'
+      publisher: 'OpenJDK project'
+      url: 'https://raw.githubusercontent.com/openjdk/jdk17u/master/src/hotspot/share/runtime/globals.hpp'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Product flags ErrorFileToStdout and ErrorFileToStderr print error data to the stream instead
+        of a file.
+    - id: 'REF-K8S-API-TYPES'
+      type: 'telemetry-documentation'
+      title: 'Kubernetes core/v1 types.go'
+      publisher: 'Kubernetes'
+      url: 'https://raw.githubusercontent.com/kubernetes/api/master/core/v1/types.go'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        ContainerStatus holds state and lastState only; restartCount may reset to 0 after node
+        restarts; terminated state carries exit code, signal, reason, times and container ID.
+    - id: 'REF-WAITPID'
+      type: 'telemetry-documentation'
+      title: 'waitpid(2)'
+      publisher: 'Linux man-pages project'
+      url: 'https://man7.org/linux/man-pages/man2/waitpid.2.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        WIFEXITED/WEXITSTATUS and WIFSIGNALED/WTERMSIG separate a normal exit status from a signal
+        death; a flattened exit code such as 134 loses that, so it is a crash candidate only.
+    - id: 'REF-CVE-API'
+      type: 'framework'
+      title: 'CVE Program record API for CVE-2026-114938'
+      publisher: 'CVE Program (MITRE)'
+      url: 'https://cveawg.mitre.org/api/cve/CVE-2026-114938'
+      trust_tier: 'registry'
+      verification: 'confirmed'
+      evidence_use: >-
+        Published 2026-11-17 by Oracle as CNA with CVSS 3.1 8.1; the CISA ADP entry rates Exploitation none.
+    - id: 'REF-GREYNOISE-JAVA4SHELL'
+      type: 'incident-campaign-secondary-source'
+      title: 'Java4Shell (CVE-2026-114938) Activity 2026'
+      publisher: 'GreyNoise'
+      url: 'https://java4shell.events.greynoise.io/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used (counts only, snapshot 2026-11-18 11:18 PT): 69 attempt-shaped requests, four sources, zero successful intrusions.'
+    - id: 'REF-CISA-KEV'
+      type: 'framework'
+      title: 'Known Exploited Vulnerabilities Catalog (JSON feed)'
+      publisher: 'CISA'
+      url: 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json'
+      trust_tier: 'government'
+      verification: 'confirmed'
+      evidence_use: >-
+        The id is absent from catalog 2026.11.18, checked 2026-11-18 12:05 PT; recheck at expiry.
+    - id: 'REF-CALIF-JAVA4SHELL'
+      type: 'attack-surface-documentation'
+      title: 'Java4Shell: Write once, RCE everywhere'
+      publisher: 'Calif'
+      url: 'https://calif.io/java4shell'
+      trust_tier: 'researcher'
+      verification: 'confirmed'
+      evidence_use: >-
+        Discoverer states RCE against named products with chains withheld; a public PoC exists; flaw in the x86-64 AVX-512 Base64 decode intrinsic. Whole page; contents not described.
+    - id: 'REF-OPENJDK-ADVISORY-2026-11-17'
+      type: 'attack-surface-documentation'
+      title: 'OpenJDK Vulnerability Advisory: 2026/11/17'
+      publisher: 'OpenJDK Vulnerability Group'
+      url: 'https://openjdk.org/groups/vulnerability/advisories/2026-11-17'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      citation_caveat: 'partial-use'
+      citation_caveat_note: >-
+        The header version list covers every CVE on the page; only this CVE's branch marks are used.
+      evidence_use: >-
+        Branches 17, 21, 25 and 27 are marked affected for this CVE; 8 and 11 are not.
+    - id: 'REF-REDHAT-RHSB-2026-018'
+      type: 'attack-surface-documentation'
+      title: 'RHSB-2026-018 Remote Code Execution via memory corruption on x86-64 systems - OpenJDK (CVE-2026-114938) - "java4shell"'
+      publisher: 'Red Hat'
+      url: 'https://access.redhat.com/security/vulnerabilities/RHSB-2026-018'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Attacker-controlled Base64 reaches the JDK decoder, often before authentication; the input can take control of the application or crash the service.
+    - id: 'REF-REDHAT-CVE'
+      type: 'attack-surface-documentation'
+      title: 'CVE-2026-114938'
+      publisher: 'Red Hat'
+      url: 'https://access.redhat.com/security/cve/CVE-2026-114938'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Preliminary CVSS 3.0 9.8; fix pending.
+    - id: 'REF-ALAS-CVE'
+      type: 'attack-surface-documentation'
+      title: 'CVE-2026-114938'
+      publisher: 'Amazon Linux Security Center'
+      url: 'https://explore.alas.aws.amazon.com/CVE-2026-114938.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Amazon rates the CVE CVSS 3.1 8.8.
+    - id: 'REF-DATADOG-JAVA4SHELL'
+      type: 'incident-campaign-secondary-source'
+      title: 'Java4Shell: Remote Code Execution in OpenJDK (CVE-2026-114938)'
+      publisher: 'Datadog Security Labs'
+      url: 'https://securitylabs.datadoghq.com/articles/java4shell-remote-code-execution-in-openjdk-cve-2026-114938/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Denial of service rated the more readily achievable impact; the test JVM later crashed during garbage collection; no signal, frame or hs_err text named.
+    - id: 'REF-CISA-ALERT-2026-11-17'
+      type: 'incident-campaign-secondary-source'
+      title: 'Critical Java Vulnerability Requires Immediate Patching'
+      publisher: 'CISA'
+      url: 'https://www.cisa.gov/news-events/alerts/2026/11/17/critical-java-vulnerability-requires-immediate-patching'
+      trust_tier: 'government'
+      verification: 'confirmed'
+      evidence_use: >-
+        Calls the flaw critical; says monitor for rogue runtimes, unexpected JVM crashes and suspicious Java processes.
+    - id: 'REF-CCCS-AL26-029'
+      type: 'attack-surface-documentation'
+      title: 'AL26-029 - Critical vulnerability impacting Oracle Java - CVE-2026-114938'
+      publisher: 'Canadian Centre for Cyber Security'
+      url: 'https://www.cyber.gc.ca/en/alerts-advisories/al26-029-critical-vulnerability-impacting-oracle-java-cve-2026-114938'
+      trust_tier: 'government'
+      verification: 'confirmed'
+      evidence_use: >-
+        Reported no exploitation at publication; historical, before the GreyNoise attempt counts.
+    - id: 'REF-JPCERT-2026111801'
+      type: 'incident-campaign-secondary-source'
+      title: 'OpenJDKにおけるリモートコード実行につながる脆弱性（CVE-2026-114938）について'
+      publisher: 'JPCERT/CC'
+      url: 'https://www.jpcert.or.jp/newsflash/2026111801.html'
+      trust_tier: 'government'
+      verification: 'confirmed'
+      evidence_use: >-
+        Reported no exploitation at publication; historical, before the GreyNoise attempt counts.
+    - id: 'REF-CERT-POLSKA-216-2026'
+      type: 'attack-surface-documentation'
+      title: 'Krytyczna podatność w środowisku Java umożliwiająca zdalne wykonanie kodu (Java4Shell)'
+      publisher: 'CERT Polska'
+      url: 'https://moje.cert.pl/komunikaty/2026/216/krytyczna-podatnosc-w-srodowisku-java-umozliwiajaca-zdalne-wykonanie-kodu-java4shell/'
+      trust_tier: 'government'
+      verification: 'confirmed'
+      evidence_use: >-
+        Says successful exploitation may leave no traces in logs; the CPU needs avx512f, avx512bw, avx512vbmi and bmi2.
+    - id: 'REF-SYSDIG-JAVA4SHELL'
+      type: 'incident-campaign-secondary-source'
+      title: 'Java4Shell (CVE-2026-114938): Pre-auth RCE in OpenJDK, and the challenge of image and feature bloat'
+      publisher: 'Sysdig'
+      url: 'https://www.sysdig.com/blog/java4shell-cve-2026-114938-pre-auth-rce-in-openjdk'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Crash signs "SIGSEGV, hs_err_pid*.log files, and bursts of worker restarts"; the exploit "leaves almost nothing at the application layer".
+    - id: 'REF-HADRIAN-JAVA4SHELL'
+      type: 'incident-campaign-secondary-source'
+      title: 'Java4Shell (CVE-2026-114938): pre-auth memory corruption in OpenJDK'
+      publisher: 'Hadrian'
+      url: 'https://hadrian.io/vulnerability-alerts/oracle-critical-security-patch-update-java-17-rce-claims'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      citation_caveat: 'partial-use'
+      citation_caveat_note: >-
+        Its crash test is supporting evidence only and an exit code is never a CVE signature; the page
+        also claims code execution in its own lab, cited only as one lab's claim.
+      evidence_use: >-
+        Own test on Temurin 17.0.21+9: services exited 134 and wrote a fatal error log; separately
+        states code execution before login on a lab service.
+    - id: 'REF-WIZ-JAVA4SHELL'
+      type: 'incident-campaign-secondary-source'
+      title: 'CVE-2026-114938 OpenJDK RCE (Java4Shell): Everything You Need to Know'
+      publisher: 'Wiz'
+      url: 'https://wiz.io/blog/cve-2026-114938-rce-java4shell-openjdk'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      citation_caveat: 'partial-use'
+      citation_caveat_note: >-
+        Used only for the sentence that Wiz states it achieved remote code execution without published chains.
+      evidence_use: >-
+        States remote exploitation was proved against named applications; shows no artifacts.
+    - id: 'REF-THN-JAVA4SHELL'
+      type: 'incident-campaign-secondary-source'
+      title: 'Java4Shell Flaw (CVE-2026-114938) Enables Pre-Auth RCE in Jira, Jenkins, Keycloak and More'
+      publisher: 'The Hacker News'
+      url: 'https://thehackernews.com/2026/11/java4shell-cve-2026-114938-enables-pre.html'
+      trust_tier: 'news'
+      verification: 'confirmed'
+      citation_caveat: 'partial-use'
+      citation_caveat_note: >-
+        Quoted only here: "other labs have so far reproduced crashes and a memory leak but not the
+        code execution". The leak is unspecified and is not read as a resource leak.
+      evidence_use: >-
+        Other labs report crashes and a leak without code execution; Upwind reproduced the memory corruption.
+    - id: 'REF-BLACKPOINT-JAVA4SHELL'
+      type: 'incident-campaign-secondary-source'
+      title: 'Java4Shell (CVE-2026-114938): Inside a Critical Flaw in Java’s Base64 Decoder'
+      publisher: 'Blackpoint Cyber'
+      url: 'https://blackpointcyber.com/blog/java4shell-cve-2026-114938-java-base64-decoder-flaw/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Reproduced JVM crashes and recovered an adjacent secret in all 30 local runs (a memory
+        disclosure); did not independently reproduce remote code execution.
+    - id: 'REF-UPWIND-JAVA4SHELL'
+      type: 'incident-campaign-secondary-source'
+      title: 'Java4Shell: What We Know Now and What Comes Next'
+      publisher: 'Upwind'
+      url: 'https://www.upwind.io/blog/java4shell-what-we-know-now-and-what-comes-next'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Reproduced heap corruption and a JVM crash in its lab; lists hs_err_pid
+        files and bursts of restarts as crash signs. Names no signal, frame or GC routine.
+    - id: 'REF-VULNCHECK-JAVA4SHELL'
+      type: 'incident-campaign-secondary-source'
+      title: 'Java4Shell CVE-2026-114938: Fine, I Guess We’ll Do This Again'
+      publisher: 'VulnCheck'
+      url: 'https://www.vulncheck.com/blog/java4shell'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      citation_caveat: 'partial-use'
+      citation_caveat_note: >-
+        Vendor self-statement; the exploit is used for existence only and never described.
+      evidence_use: >-
+        Full exploit available to its Initial Access Intelligence customers as of 6 PM EST on 2026-11-17; in its test a burst
+        of requests took a service down and a single request usually did not.
+    - id: 'REF-ELASTIC-DR-7200'
+      type: 'detection-modeling-reference'
+      title: '[New Rule] Java HotSpot Fatal Error Log Created (PR #7200)'
+      publisher: 'Elastic'
+      url: 'https://github.com/elastic/detection-rules/pull/7200'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Open proposal for a fatal-error-log creation rule; not shipped.
+    - id: 'REF-KSM-POD-METRICS'
+      type: 'telemetry-documentation'
+      title: 'Pod Metrics'
+      publisher: 'Kubernetes (kube-state-metrics)'
+      url: 'https://github.com/kubernetes/kube-state-metrics/blob/main/docs/metrics/workload/pod-metrics.md'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Field names only: kube_pod_container_status_waiting_reason, STABLE, with a reason label.
+        The kube-prometheus-stack KubePodCrashLooping alert reads it with reason="CrashLoopBackOff".
+    - id: 'REF-MDE-DEVICEFILEEVENTS'
+      type: 'telemetry-documentation'
+      title: 'DeviceFileEvents table in the advanced hunting schema'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-devicefileevents-table'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Field names FileName, FolderPath and InitiatingProcessFileName; file creation records
+        populated by Defender for Endpoint once deployed, which rates on-by-default.
+    - id: 'REF-ELASTIC-DEFEND-POLICY'
+      type: 'telemetry-documentation'
+      title: 'Configure an integration policy for Elastic Defend'
+      publisher: 'Elastic'
+      url: 'https://www.elastic.co/guide/en/security/current/configure-endpoint-integration-policy.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        States it "collects most categories by default" and lists process, file and network events
+        for Windows, macOS and Linux without naming which categories are off.
+    - id: 'REF-K8S-LOGGING'
+      type: 'telemetry-documentation'
+      title: 'Logging Architecture'
+      publisher: 'Kubernetes'
+      url: 'https://kubernetes.io/docs/concepts/cluster-administration/logging/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        The runtime redirects container stdout and stderr; one terminated container is kept;
+        rotation 10Mi and 5 files; no native log storage, so cluster-level logging needs a backend.
+    - id: 'REF-DOCKER-LOGGING'
+      type: 'telemetry-documentation'
+      title: 'Configure logging drivers'
+      publisher: 'Docker'
+      url: 'https://docs.docker.com/engine/logging/configure/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Docker uses the json-file logging driver by default and performs no rotation by default.'
+    - id: 'REF-DOCKER-EVENTS'
+      type: 'telemetry-documentation'
+      title: 'docker system events'
+      publisher: 'Docker'
+      url: 'https://docs.docker.com/reference/cli/docker/system/events/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Containers report die and oom events; die examples carry exitCode, one does not; only
+        the last 256 events are returned.
+    - id: 'REF-SYSTEMD-JOURNALD'
+      type: 'telemetry-documentation'
+      title: 'systemd-journald.service'
+      publisher: 'systemd project'
+      url: 'https://www.freedesktop.org/software/systemd/man/latest/systemd-journald.service.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        journald collects standard output and error of service units; storage is volatile
+        and lost at reboot when /var/log/journal is absent.

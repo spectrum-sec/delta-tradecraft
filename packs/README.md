@@ -15,6 +15,7 @@ and nothing in the format assumes a particular pack exists.
 | `ai` | AI/agent adversary procedures, catalog Group 1 (prompt injection, MCP/agent supply chain, agent exfiltration, autonomous-agent activity, model-artifact execution, browser/multimodal/A2A boundaries) | 36 | 61 | none | [README](ai/README.md) |
 | `php2shell-2026-10` | PHP2Shell (CVE-2026-109618, CVE-2026-109619): unauthenticated RCE in the PHP engine, October 2026 | 11 | 24 | none | [README](php2shell-2026-10/README.md) |
 | `sshole-2026-11` | sshole (CVE-2026-123158): OpenSSH password authentication bypass on musl hosts without PAM, November 2026 | 6 | 15 | none (15 lab-telemetry-verified) | [README](sshole-2026-11/README.md) |
+| `java4shell-2026-11` | Java4Shell (CVE-2026-114938): OpenJDK HotSpot memory-corruption flaw on x86-64 with AVX-512, November 2026 | 3 | 16 | none (7 lab-telemetry-verified) | [README](java4shell-2026-11/README.md) |
 
 **Tested** counts strategies exercised in a lab: fired on a faithful reproduction of the behavior,
 and stayed quiet on a benign twin built to differ in exactly the property they key on. Partial means
