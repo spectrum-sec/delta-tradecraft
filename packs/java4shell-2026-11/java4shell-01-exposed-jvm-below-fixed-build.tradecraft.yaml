@@ -1,0 +1,1525 @@
+identity:
+  uuid: '5d244843-447e-48db-8a7e-2e4685ae963c'
+  id: 'DT-J4SH-ESTATE-001'
+  name: >-
+    JVM on an affected HotSpot x86-64 build below its vendor's fixed build runs with the AVX-512
+    Base64 decode path enabled
+  incident: >-
+    Java4Shell (CVE-2026-114938), status as of 2026-11-18 ~06:00 PT and valid until 2026-11-20:
+    published with fixed builds from several vendors while others are pending (status in
+    threat_research.campaign). A control and posture object, not an adversary behavior.
+  first_observed: '2026-11'
+  last_reviewed: '2026-11-18'
+
+classification:
+  primary_attack_surface: 'application-runtime'
+  secondary_attack_surfaces:
+    - 'container-workload'
+    - 'host-os'
+    - 'estate-preventive-control-configuration'
+  behavior_classes:
+    - 'control-state-verification'
+    - 'estate-precondition-removal'
+  tags:
+    - 'java4shell'
+    - 'specific'
+    - 'jvm'
+    - 'openjdk'
+    - 'hotspot'
+    - 'control'
+    - 'affected-state'
+    - 'posture'
+    - 'inventory'
+    - 'unknown-is-not-cleared'
+    - 'mitigated-not-patched'
+    - 'fixed-build-mapped'
+    - 'prevent'
+
+behavior:
+  definition: >-
+    A state, not a step. A Java process that may decode untrusted input runs an affected HotSpot
+    build on x86-64 below its vendor's fixed build, on a CPU and flag state that keep the
+    vulnerable decode path enabled for the JIT to select (REF-CALIF-JAVA4SHELL).
+  detailed_definition: >-
+    The affected test joins runtime, architecture, branch and build, host CPU features and two
+    effective settings read from the running process. Verdicts are affected, mitigated-not-patched,
+    not affected (fixed or not in scope) and unknown, which never clears. Exposed means
+    reachability only and never clears.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers the existence of the state on a live process; not that any process was attacked or
+      that untrusted Base64 reaches its decoder.
+    summary: >-
+      HotSpot on x86-64, branch 17 from 17.0.6 or 21, 25 or 27 below the vendor fix
+      (REF-OPENJDK-ADVISORY-2026-11-17, REF-REDHAT-RHSB-2026-018), a host CPU with avx512f,
+      avx512bw, avx512vbmi and bmi2 (REF-CERT-POLSKA-216-2026), and effective UseAVX 3 or more with
+      UseBASE64Intrinsics on.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Covers JVMs whose build and effective flags are read in-process and whose host CPU features
+      are read; not hosts with no such reads, which stay unknown.
+    blocking_conditions:
+      - condition: 'environment-inventory-required'
+        note: 'No stock stream reports live build, host CPU features and effective flags per process.'
+      - condition: 'cross-source-join-required'
+        note: 'Build, CPU, flag, listener, image and package facts sit in different sources.'
+    summary: >-
+      Observe per JVM its in-process vendor build, os.arch, VM name, effective UseAVX and
+      UseBASE64Intrinsics, its host CPU flags, start time and listeners. Too weak: a package version, a
+      release file or java -version for a running process, a launch script or env var for flags,
+      an image tag.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Covers a per-process verdict where all six conditions are read; not whether untrusted Base64
+      reaches the decoder, and not hosts lacking the reads.
+    blocking_conditions:
+      - condition: 'environment-inventory-required'
+        note: 'The verdict is only as good as per-process jcmd reads and their freshness.'
+      - condition: 'cross-source-join-required'
+        note: 'The live build joins to a maintained vendor fix table and to ingress data.'
+    summary: >-
+      Affected separates from not affected (fixed) by comparing the live 4-part version with the
+      vendor fix on its branch, and from mitigated-not-patched by flags read with jcmd VM.flags -all.
+      Reachability (exposed or not) is joined after and ranks; it never clears a JVM.
+
+attack_surface_context:
+  surface: 'HotSpot Java runtimes on x86-64 (packaged, bundled and containerised) that decode untrusted input'
+  how_the_surface_works: >-
+    A JVM starts from a system package, vendor tarball, bundled runtime or image layer. The running
+    process reports its build (VM.version), the CPU features it uses (VM.info) and effective flags
+    (VM.flags -all) through jcmd (REF-ORACLE-JCMD); the release file and java -version show the
+    disk only.
+  incident_processing_path: >-
+    Calif places the flaw in the x86-64 AVX-512 Base64 decode intrinsic (REF-CALIF-JAVA4SHELL).
+    Red Hat says attacker-controlled Base64 must reach java.util.Base64.Decoder, often before
+    authentication (REF-REDHAT-RHSB-2026-018); Datadog saw the MIME decoder bypass the path in one
+    17.0.6 build (REF-DATADOG-JAVA4SHELL).
+  processing_stages:
+    - 'jvm-runtime-build'
+    - 'runtime-location-and-vendor'
+    - 'host-cpu-features'
+    - 'effective-intrinsic-flags'
+    - 'process-running'
+    - 'untrusted-base64-ingress'
+    - 'vendor-fixed-build-mapping'
+    - 'restart-after-update'
+  stage_evidence: >-
+    Per-process reads prove the build, CPU and flag stages; disk reads prove only an installed
+    runtime. Ingress is inferred from listeners and data flows. An update proves remediation only
+    after the restarted process reports a build at or above the fix.
+  trust_boundaries: >-
+    The boundary is where untrusted Base64 enters the JVM, often before authentication
+    (REF-REDHAT-RHSB-2026-018), and Calif says a Java client that opens TLS to a malicious server can
+    be compromised with no listener (REF-CALIF-JAVA4SHELL). This object sees no crossing.
+  security_control_context: >-
+    Controls are a fixed build and a restart of every JVM (REF-CERT-EU-2026-021). Interim
+    mitigation, x86-64 only, is `-XX:-UseBASE64Intrinsics`, which Red Hat prefers, or
+    `-XX:UseAVX=2` (REF-REDHAT-RHSB-2026-018, REF-CALIF-JAVA4SHELL); CCCS names UseAVX=2 only
+    (REF-CCCS-AL26-029). It leaves the JVM mitigated-not-patched.
+  special_context:
+    topic: 'fixed-build-comparison'
+    context: >-
+      Take feature.interim.update.patch from the number before '+', '-' or '_', pad a missing part
+      with 0, drop later parts and suffixes and compare as integers (pack rule): 17.0.21+9 <
+      17.0.21.1 < 17.0.22. A vendor's own CVE-fixed list wins. Lab output: Temurin "17.0.6+10",
+      Corretto "17.0.21.0.11", Java 8 "1.8.0_512".
+  technology_variants:
+    - variant: 'oracle-jdk'
+      context: >-
+        Fixes 17.0.21.1, 21.0.13.1, 25.0.5.1, 27.0.1.1 (REF-ORACLE-17-0-21-1, REF-ORACLE-21-0-13-1,
+        REF-ORACLE-25-0-5-1, REF-ORACLE-27-0-1-1), mapped by KISA. Java 8 Performance Pack, marked
+        '-perf' in the version, 8u511b33-perf is fixed by 8u513-perf
+        (REF-KISA-JAVA4SHELL); CERT-EU writes 8u513 (REF-CERT-EU-2026-021).
+    - variant: 'oracle-graalvm'
+      context: >-
+        GraalVM for JDK 17.0.21.1 and 21.0.13.1 and GraalVM Enterprise 21.3.20.1 are fixed per KISA
+        (REF-KISA-JAVA4SHELL), an Oracle-derived mapping that no GraalVM page carries.
+    - variant: 'openjdk-upstream-and-eclipse-temurin'
+      context: >-
+        Adoptium gives fixes 17.0.21.1, 21.0.13.1, 25.0.5.1 and 27.0.1.1 (REF-ADOPTIUM-NOV2026).
+        Temurin 27.0.1.1 is published (REF-TEMURIN-27); 17, 21 and 25 were announced and not yet
+        published at 05:40 PT 2026-11-18, so a Temurin JVM on those branches stays below the fix.
+    - variant: 'amazon-corretto-and-amazon-linux'
+      context: >-
+        Corretto 17.0.21.1.2, 21.0.13.1.2, 25.0.5.1.2 and 27.0.1.1.4 name the CVE (REF-CORRETTO-17,
+        REF-CORRETTO-21, REF-CORRETTO-25, REF-CORRETTO-27); AL2, AL2023 and AL2027 Preview ship them
+        (REF-ALAS-CVE). Compare on 17.0.21.1, not the fifth part.
+    - variant: 'azul-zulu'
+      context: >-
+        PSU-stream Zulu 17.70.201/202, 21.54.201/202, 25.38.201/202 and 27.30.201/202 (x.y.z.1) and
+        CPU-stream 17.69.204 (17.0.20.1.201+1), 21.53.202 (21.0.12.1.201+1) and 25.37.202
+        (25.0.4.1.201+1) fix the CVE (REF-AZUL-NOV2026, REF-AZUL-CVE). The 4-part rule fails across
+        the two streams, so match Azul's list.
+    - variant: 'linux-distribution-packages'
+      context: >-
+        Alpine 3.23, 3.24 and edge fix 17, 21 and 25 at x.y.z.1 with no 27 package
+        (REF-ALPINE-SECDB). Debian fixes only sid and stable is pending (REF-DEBIAN-TRACKER).
+        Chainguard packages are at x.y.z.1 while images rebuild (REF-CHAINGUARD-JAVA4SHELL).
+    - variant: 'sapmachine'
+      context: >-
+        SapMachine 17.0.21.1, 21.0.13.1, 25.0.5.1 and 27.0.1.1 are released but their bodies name no
+        CVE (REF-SAPMACHINE-RELEASES). Below x.y.z.1 counts as below the fix; at or above stays
+        unknown until SAP names the CVE.
+    - variant: 'pending-vendors'
+      context: >-
+        No fix at 05:40 PT 2026-11-18: Microsoft (newest 17.0.21.0.2, REF-MSFT-OPENJDK-RELNOTES),
+        Liberica (REF-LIBERICA-RELEASES), Red Hat (REF-REDHAT-CVE), Ubuntu (REF-UBUNTU-CVE), SUSE
+        (REF-SUSE-CVE) and Debian stable. Their builds sit below the 4-part fix.
+    - variant: 'bundled-and-jlink-runtimes'
+      context: >-
+        A product may ship its own runtime that the package manager never sees, and runtimes may
+        not appear as separate inventory entries (REF-CISA-ALERT-2026-11-17). Read the binary the
+        process runs, not the package list.
+    - variant: 'container-images'
+      context: >-
+        The container's JDK is the one that matters, not the host's (REF-SYSDIG-JAVA4SHELL). The
+        build is a property of the running image digest; Keycloak says image tags alone do not
+        establish exploitability (REF-KEYCLOAK-JAVA4SHELL).
+  practitioner_implication: >-
+    Find whether jcmd can attach to each JVM as its user (inside containers and service accounts),
+    where bundled runtimes live, how vendor schemes parse to a 4-part version, how listeners map to
+    ingress, and whether CPU and flag reads are fresh per process.
+
+threat_research:
+  why_it_matters: >-
+    An unauthenticated network-reachable flaw in a widely deployed runtime (REF-CVE-API) that turns
+    on build, CPU and two flags makes a per-process verdict the first control. Scores are recorded
+    and not picked: 8.1, 9.2, preliminary 9.8 and 8.8 (REF-CVE-API, REF-CALIF-JAVA4SHELL,
+    REF-REDHAT-CVE, REF-ALAS-CVE).
+  threat_actor: >-
+    Not applicable. This object describes an estate state, not an actor.
+  campaign: >-
+    CVE-2026-114938 was published 2026-11-17 (REF-CVE-API) and most distributors have fixed builds
+    out. It is not in CISA KEV (REF-CISA-KEV) and no in-the-wild exploitation is reported
+    (REF-CCCS-AL26-029) as of 2026-11-18 ~06:00 PT; status expires 2026-11-20.
+  victim: 'None documented.'
+  capability: >-
+    Calif states code execution on named products, chains withheld (REF-CALIF-JAVA4SHELL);
+    Wiz says it proved it feasible (REF-WIZ-JAVA4SHELL) and Hadrian states it in
+    its own lab (REF-HADRIAN-JAVA4SHELL). Others report crashes, memory corruption and a
+    memory disclosure (REF-THN-JAVA4SHELL, REF-BLACKPOINT-JAVA4SHELL).
+  target: >-
+    HotSpot x86-64 JVMs on 17 from 17.0.6 (REF-CALIF-JAVA4SHELL, REF-REDHAT-RHSB-2026-018; 17u
+    backport REF-JDK17U-BASE64-BACKPORT) and 21, 25 and 27 below the fix, plus Oracle's 8
+    Performance Pack (REF-ORACLE-CSPU). Standard 8 and 11 and ARM64 are not affected
+    (REF-OPENJDK-ADVISORY-2026-11-17, REF-CALIF-JAVA4SHELL).
+  victimology:
+    - 'Internet-facing Java services, authentication services and gateways on HotSpot runtimes.'
+    - 'Products and appliances that ship a bundled runtime, and container workloads.'
+
+  framework_mappings:
+    - framework: 'MITRE ATT&CK'
+      technique_mapping_status: 'mapped'
+      id: 'T1190'
+      name: 'Exploit Public-Facing Application'
+      evidence: >-
+        The state is the precondition of exploiting an exposed Java service. The mapping marks what
+        the state could enable, not any exploitation, and no source reports exploitation in the
+        wild.
+
+visibility:
+  telemetry_sources:
+    - source: 'Per-process JVM diagnostic output (jcmd VM.version, VM.system_properties, VM.info, VM.flags -all)'
+      purpose: 'Give the build, VM name, architecture, JVM CPU line and effective flags of each running JVM.'
+      event_vocabulary: 'none'
+      tier: 'not-applicable'
+      operational_viability: 'first-party-build'
+      fields:
+        - name: 'VM.version'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-ORACLE-JCMD'
+          load_bearing: true
+          note: 'First line is the pid, then the VM version; the Java 8 form differs (lab, 2026-11-17).'
+        - name: 'java.vm.name and os.arch'
+          attestation: 'other'
+          load_bearing: true
+          note: >-
+            Read via VM.system_properties. C1 true for "OpenJDK 64-Bit Server VM" or "Java HotSpot(TM)
+            64-Bit Server VM", false for "Eclipse OpenJ9 VM"; C2 true for os.arch amd64 or x86_64, false
+            for x86 or aarch64; any other value is unknown (pack map).
+        - name: 'java.vendor.version and java.runtime.version'
+          attestation: 'other'
+          load_bearing: true
+          note: 'Lab record (2026-11-17); Java 8 emits java.vendor only and a legacy "1.8.0_512-b09" form; a -perf marker flags the Performance Pack.'
+        - name: 'CPU line in VM.info'
+          attestation: 'other'
+          load_bearing: false
+          note: >-
+            Cross-check only, never C4: HotSpot spells avx512f, avx512bw, avx512_vbmi, bmi2 and drops
+            every AVX-512 token when effective UseAVX is below 3 (REF-JDK-VM-VERSION-X86). Unobserved
+            in our emulated lab.
+        - name: 'UseBASE64Intrinsics'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-JDK-GLOBALS'
+          load_bearing: true
+          note: 'Product flag; final value from VM.flags -all decides C6. Absent on standard Java 8 (lab).'
+        - name: 'UseAVX'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-JDK-VM-VERSION-X86'
+          load_bearing: true
+          note: 'Final value from VM.flags -all decides C5; below 3 clears every AVX-512 feature from the JVM CPU line. Lab values not representative.'
+      details: >-
+        Collected in-process by jcmd or an agent reading the same data. Only VM.flags -all proves C5,
+        C6 and the mitigation state; launch scripts and env vars are leads (REF-SONARSOURCE-JAVA4SHELL,
+        REF-KEYCLOAK-JAVA4SHELL). A release file or java -version describes the disk, not the process.
+      limitations:
+        - "jcmd runs on the same machine as the JVM's effective user and group (REF-ORACLE-JCMD); for a containerised JVM run it inside the container, else unknown."
+        - 'Windows service JVMs need the read in the service account; find them by loaded jvm.dll, not image name.'
+        - 'Standard Java 8 has no usable VM.info CPU output and no UseBASE64Intrinsics (lab, 2026-11-17).'
+        - 'Nothing exists until the estate builds the collector.'
+    - source: 'Host process inventory with executable path, command line and start time'
+      purpose: 'Find every running java process, including bundled runtimes, and when it started.'
+      event_vocabulary: 'host-process-event'
+      tier: 'metadata'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'executable path of the running process'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+          note: 'Sensor field names not checked; the path locates the runtime directory.'
+        - name: 'process start time'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+          note: 'Sensor field names not checked; wall-clock start, not service-manager time.'
+        - name: 'process command line'
+          attestation: 'unattested-inferred'
+          load_bearing: false
+          note: 'A mitigation flag here is a lead only; it never sets a verdict.'
+      details: >-
+        EDR or agent process listings give path, command line and start time; key on the runtime
+        image, since the name java misses wrappers. On Linux /proc/<pid>/maps marks a mapped file
+        deleted once unlinked, whether by upgrade, removal, reinstall or downgrade (REF-PROC-MAPS).
+      limitations:
+        - 'Process inventory on container hosts may not resolve the container or image.'
+        - 'A path does not give the build; it must be joined to a build read.'
+    - source: 'Listening-socket table and ingress mapping'
+      purpose: 'Rank JVMs by whether an untrusted path reaches them.'
+      event_vocabulary: 'none'
+      tier: 'not-applicable'
+      operational_viability: 'first-party-build'
+      details: >-
+        Per host the listening sockets and owning process, joined to firewall, load balancer or
+        external-attack-surface data to classify ingress as internet, partner, internal or none.
+      limitations:
+        - 'A listener is not proof of reachability; the join to ingress is inferred.'
+        - 'A JVM with no listener may still decode untrusted Base64 from queues, files or outbound TLS to an untrusted server (REF-CALIF-JAVA4SHELL).'
+    - source: 'Container image, SBOM and package inventory'
+      purpose: 'Find JDK and JRE runtimes in images and on hosts, including bundled ones.'
+      event_vocabulary: 'none'
+      tier: 'not-applicable'
+      operational_viability: 'first-party-build'
+      fields:
+        - name: 'runtime file contents (release file or java -version output)'
+          attestation: 'other'
+          load_bearing: true
+          note: 'Lab: java -version prints vendor and build on stderr; release file not lab-checked. Both describe disk.'
+        - name: 'package transaction record (dpkg log, rpm or dnf history) or running image digest'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+          note: 'Orders a runtime change against process start. File ctime is a candidate only (REF-INODE7).'
+      details: >-
+        Image scanners and SBOM tools list packages, which misses runtimes outside the package
+        manager; read runtime files directly and join image digest to running workloads.
+      limitations:
+        - 'Package lists miss bundled runtimes and ZIP or tarball installs.'
+        - 'A scan describes the image at scan time, not the container started earlier.'
+    - source: 'Host CPU and hardware inventory'
+      purpose: 'Decide C4 from the CPU features the host or guest OS reports.'
+      event_vocabulary: 'none'
+      tier: 'not-applicable'
+      operational_viability: 'first-party-build'
+      fields:
+        - name: '/proc/cpuinfo flags'
+          attestation: 'other'
+          load_bearing: true
+          note: 'Spelled avx512f, avx512bw, avx512vbmi, bmi2 (REF-CERT-POLSKA-216-2026); a container reads its node.'
+      details: >-
+        /proc/cpuinfo inside the guest, or hypervisor and cloud inventory, lists the features the OS
+        sees; CERT Polska and Sysdig test these (REF-CERT-POLSKA-216-2026, REF-SYSDIG-JAVA4SHELL).
+      limitations:
+        - 'Hypervisors may mask features from a guest, and a rescheduled or migrated workload may land on other hardware.'
+        - 'Not collected by default in many estates.'
+
+detection:
+  scope: >-
+    Five strategies divide the per-process verdict: the live build against the vendor fix (C1 to
+    C3), the host CPU features (C4), the effective flags (C5, C6), live versus installed
+    runtime after an update, and bundled or image runtimes. None detects an attack.
+  outcome_guardrails: >-
+    Affected needs C1 to C6 true on the live process and is not attacked. Mitigated-not-patched is
+    C1 to C4 true with C5 or C6 false per VM.flags -all. Not affected fails C1 to C4 with a reason:
+    fixed (live build at or above a fixed vendor's fix) or not in scope. Unread is unknown. Exposed
+    is reachability only.
+  shared_normalization_context: >-
+    Normalise to feature.interim.update.patch, a missing part 0, later parts and suffixes dropped
+    (17.0.21+9 < 17.0.21.1). Java 8 '-perf' builds are their own stream. Azul CPU-stream builds
+    follow Azul's CVE list. Key on the runtime the process runs, not the package name.
+  shared_enrichment_context: >-
+    Join to listening sockets, ingress class (internet, partner, internal, none, unknown), image
+    digest and owner; reachability ranks and never clears. No behavioral baseline is needed; the
+    freshness of each read bounds every conclusion.
+
+  strategies:
+    - id: 'STRAT-LIVE-JVM-BUILD-EXPOSURE-JOIN'
+      name: 'live-process JVM build against the vendor fixed build, joined to reachability'
+      objective: >-
+        Read each running JVM's VM name, architecture and vendor build, and decide C1 to C3 against
+        its vendor's fix.
+      incident_relevance: >-
+        Addresses the precondition of CVE-2026-114938, not any attack. It decides three of six
+        conditions and feeds the verdict.
+      detection_logic: |
+        For each running JVM, found by runtime image or path and not by the name java, read
+        in-process java.vm.name (C1 HotSpot), os.arch (C2 amd64 or x86_64) and VM.version with
+        java.vendor.version (C3); the release file is the disk build. Normalise per the shared rule.
+        C3 is true on 17 from 17.0.6 or on 21, 25 or 27 below the vendor fix or from a pending
+        vendor, and on a '-perf' Java 8 below 8u513-perf. At or above a fixed vendor's fix, or on
+        Azul's fixed list, is not affected (fixed). Java 8 without '-perf', 11, 17 below 17.0.6,
+        OpenJ9 or ARM64 is not affected (not in scope). 18 to 20, 22 to 24, 26, SapMachine at or
+        above x.y.z.1 and unparsed schemes are unknown. Pass C3 true or unknown on.
+      minimum_evidence: >-
+        C3 true needs an in-process build read parsed in its vendor's scheme and that vendor's fix
+        row or pending state. Not affected (fixed) needs a live read at or above a fixed vendor's
+        fix. A disk-only or absent read is unknown, and C3 true alone does not make a JVM affected.
+      correlation_context: >-
+        Join on host, pid and process start time to avoid pid reuse; join exe path or image digest to
+        the workload. Inventory freshness bounds every conclusion.
+      detectors:
+        - detector_class: 'configuration-and-asset-inventory'
+          technologies:
+            - 'EDR or agent process and socket inventory'
+            - 'Runtime diagnostic collection (jcmd, shell run-command)'
+            - 'Configuration management facts'
+          contribution: 'Reads the running build, VM name, architecture and listener per process.'
+          limitations: >-
+            Needs the JVM's user inside its container or service account; without jcmd only a path
+            remains.
+        - detector_class: 'siem-lookup-enriched-analytic'
+          technologies:
+            - 'SIEM lookup of vendor fixed-build table'
+            - 'Asset and exposure inventory'
+          contribution: 'Evaluates C3 per vendor and joins reachability.'
+          limitations: 'Only as good as the inventory feed and a fix table re-checked at each expiry.'
+      benign_explanations:
+        - explanation: >-
+            The JVM is a short-lived tool, build or batch job with no listener.
+          distinguishing_context: >-
+            No listening socket; it may still decode untrusted Base64 from queues, files or outbound
+            TLS to an untrusted server (REF-CALIF-JAVA4SHELL), so reachability is unknown and the
+            verdict stands.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding JVMs with no listener drops consumers of untrusted input
+            (REF-REDHAT-RHSB-2026-018).
+        - explanation: >-
+            The listener is reachable only from a trusted internal segment.
+          distinguishing_context: >-
+            Ingress mapping shows no untrusted path; the verdict stands and reachability is reported
+            as a separate fact, not a clearance.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding on a firewall rule that can change hides the state; record the control with
+            an expiry.
+        - explanation: >-
+            A pending vendor may ship a fix under a version this table does not list yet.
+          distinguishing_context: >-
+            Only that vendor's advisory naming the CVE shows it; Red Hat and Ubuntu had none at
+            05:40 PT 2026-11-18 (REF-REDHAT-CVE, REF-UBUNTU-CVE).
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding a pending vendor's newest build as fixed removes JVMs still below the fix.
+        - explanation: >-
+            A SapMachine build at or above x.y.z.1 likely carries the fix.
+          distinguishing_context: >-
+            SAP's release bodies name no CVE (REF-SAPMACHINE-RELEASES), so it stays unknown until
+            SAP maps it.
+          overlaps_incident_instance: true
+          tuning_hazard: 'Marking it fixed on the version alone clears an unmapped build.'
+      forbidden_exclusions:
+        - field: 'exclusion of a process on a build suffix (+2, +4, Corretto fifth part, distro release)'
+          reason: "Only the normalised 4-part version or the vendor's own fixed list decides; suffixes differ by vendor."
+        - field: 'exclusion of a host because the package manager shows a newer JDK'
+          reason: 'The process may run a bundled runtime or an older build until restarted.'
+        - field: 'exclusion of an unreadable build as not affected'
+          reason: 'Unknown is never a clearance; it stays unknown.'
+        - field: 'exclusion of a process because its release file or java -version shows a newer build'
+          reason: 'Both describe the runtime on disk, not the build the running process loaded.'
+        - field: 'exclusion of a JVM because it has no listener'
+          reason: 'Untrusted Base64 can arrive by other channels, including outbound TLS (REF-CALIF-JAVA4SHELL).'
+        - field: 'exclusion of non-LTS branches 18 to 20, 22 to 24 and 26 as not affected'
+          reason: 'No vendor lists them either way; they stay unknown.'
+      validation:
+        status: 'lab-telemetry-verified'
+        evidence: >-
+          Checked in a telemetry-only lab we own (ordinary JVM runs, flag dumps and benign crashes;
+          the vulnerability was not triggered): VM.version, VM.system_properties and version formats
+          read by hand in Temurin, Corretto and Java 8 images. Listener and ingress joins were not
+          exercised.
+      blind_spots:
+        - description: >-
+            Missing telemetry: a JVM that jcmd cannot attach to (other user, container or Windows
+            service account) yields no build; only a path remains and the verdict is unknown.
+          routes_to: null
+        - description: >-
+            Attribution limit: an affected process cannot be linked to any crash or attempt by this
+            strategy.
+          routes_to: 'DT-J4SH-HOST-002'
+        - description: >-
+            Missing telemetry: reverse-proxied or NAT-ed listeners hide the real ingress; the
+            process socket table shows only the backend port.
+          routes_to: null
+        - description: >-
+            Discovery limit: name-based process discovery misses a renamed, statically embedded or
+            custom-built runtime, so discovery keys on the runtime image or path.
+          routes_to: null
+        - description: >-
+            Missing context: pending vendors may publish fixes after the review date, so the fix
+            table is stale after 2026-11-20 until re-checked.
+          routes_to: null
+      analyst_response: >-
+        For each C3 true or unknown process confirm vendor, branch, 4-part version, reachability and
+        owner, complete the CPU and flag reads, plan the update per vendor and branch, restart,
+        re-read the live build and restrict ingress meanwhile. Review crashes and child processes
+        via sibling objects.
+      safe_conclusion: >-
+        The process runs a HotSpot x86-64 build below its vendor's fix on an affected branch; it is
+        affected only if the CPU and flag reads also hold, and nothing shows it was attacked.
+
+    - id: 'STRAT-IMAGE-SBOM-RUNTIME-INVENTORY'
+      name: 'bundled, image and unpackaged runtimes routed to per-process reads'
+      objective: >-
+        Find Java runtimes the package view misses (product-bundled JREs, ZIP or tarball installs,
+        jlink and container images) and route each running one to a per-process read.
+      incident_relevance: >-
+        CISA says runtimes may not appear as separate inventory entries (REF-CISA-ALERT-2026-11-17),
+        and Keycloak images 26.8.2-1 and 26.8.2-2 bundle an affected OpenJDK 21.0.13
+        (REF-KEYCLOAK-JAVA4SHELL). Addresses where the state hides, not any attack.
+      detection_logic: |
+        Enumerate runtimes by file evidence (release file, java binary, modules file) on hosts, in
+        application directories and in every image layer, not by package name. Read vendor and
+        build from the release file or java -version; that is the installed build, never live.
+        Join image digest to running containers and owners; a tag alone never decides
+        (REF-KEYCLOAK-JAVA4SHELL). Where a product starts several JVMs, list each process, since
+        SonarQube's Web, CE and Search processes carry their own options
+        (REF-SONARSOURCE-JAVA4SHELL). A running runtime goes to the live-build, CPU and flag
+        strategies. A runtime in no deployed workload is a latent finding with verdict unknown.
+      minimum_evidence: >-
+        A runtime file read with vendor and build, and a join to a running process or its absence
+        stated. Without a per-process read the verdict is unknown; a package name, product version or
+        image tag is a hint.
+      correlation_context: >-
+        Join image digest to container runtime inventory and host to owner. A floating tag needs the
+        digest at deploy time, not scan time (REF-K8S-IMAGES).
+      detectors:
+        - detector_class: 'software-inventory-and-sbom'
+          technologies:
+            - 'Container image scanners'
+            - 'SBOM tooling'
+            - 'Package manager queries'
+            - 'Host file-system census'
+          contribution: 'Lists runtimes and their installed build per image and host.'
+          limitations: >-
+            Package-based scanners miss bundled and unpackaged runtimes; a scan shows the image, not
+            what any container currently runs.
+        - detector_class: 'vulnerability-scanner'
+          technologies:
+            - 'Authenticated host vulnerability scanners'
+            - 'Registry scanning'
+          contribution: 'Can flag a Java build when its content maps this CVE.'
+          limitations: >-
+            Check that the content compares the 4-part version, reads bundled paths and treats
+            pending vendors as unfixed; it sees no CPU or flag state.
+      benign_explanations:
+        - explanation: >-
+            The image is archived or never deployed, so no workload runs the runtime.
+          distinguishing_context: >-
+            No running container or host references the digest; the finding is latent and kept as
+            a future-deploy risk.
+          overlaps_incident_instance: false
+        - explanation: >-
+            A multi-stage build keeps the JDK only in the build stage, not in the final image.
+          distinguishing_context: >-
+            Layer inspection of the shipped image shows no runtime files.
+          overlaps_incident_instance: false
+        - explanation: >-
+            A floating tag shows a newer build at scan time than the container started earlier.
+          distinguishing_context: >-
+            The running container's own image digest and start time, not the tag.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding images by a mutable tag name hides containers still running the old digest.
+        - explanation: >-
+            A product vendor applied the flag inside its image or start scripts.
+          distinguishing_context: >-
+            Only VM.flags -all on each live JVM shows it; Keycloak asks for a live-JVM flag check
+            (REF-KEYCLOAK-JAVA4SHELL).
+          overlaps_incident_instance: true
+          tuning_hazard: 'Clearing a product by release notes hides processes the flag never reached.'
+      forbidden_exclusions:
+        - field: 'exclusion of an image because its base image tag looks recent'
+          reason: 'A tag is mutable and the runtime may be added or bundled above the base layer.'
+        - field: 'exclusion of a runtime because it is not in the package manager'
+          reason: 'Bundled and unpackaged runtimes are the case this strategy exists for.'
+        - field: "exclusion by the product's release number instead of its bundled runtime build"
+          reason: 'Keycloak says image tags alone do not establish exploitability (REF-KEYCLOAK-JAVA4SHELL).'
+      validation:
+        status: 'lab-telemetry-verified'
+        evidence: >-
+          Checked in a telemetry-only lab we own (ordinary JVM runs, flag dumps and benign crashes;
+          the vulnerability was not triggered): java -version and properties read by hand in Temurin
+          17.0.5, 17.0.6, 17.0.21, 21, 11, Corretto 17 and Java 8 images. Release-file contents and
+          scanner or SBOM output were not checked.
+      blind_spots:
+        - description: >-
+            Missing telemetry: runtimes inside archives, installers or compiled bundles are
+            unseen without unpacking.
+          routes_to: null
+        - description: >-
+            Attribution limit: an image runtime does not show the container running it, its CPU,
+            its effective flags or its ingress.
+          routes_to: null
+        - description: >-
+            Missing telemetry: a product that starts JVMs on demand shows no process between runs,
+            so a point-in-time process list misses it.
+          routes_to: null
+      analyst_response: >-
+        Map each runtime to the images, hosts and processes running it, with owners and ingress, run
+        the per-process reads on every running JVM, and rebuild or update per vendor and branch.
+        Track product advisories for fixed images.
+      safe_conclusion: >-
+        The image, product or host holds a Java runtime with the stated installed build; its verdict
+        is unknown until a per-process read decides it.
+
+    - id: 'STRAT-JVM-CPU-FEATURE-AFFECTED-TEST'
+      name: 'host CPU features as affected-test condition C4, cross-checked with the JVM CPU line'
+      objective: >-
+        Decide C4 per JVM: the CPU features of the host or guest it runs on include avx512f,
+        avx512bw, avx512vbmi and bmi2.
+      incident_relevance: >-
+        CERT Polska and Sysdig require all four (REF-CERT-POLSKA-216-2026, REF-SYSDIG-JAVA4SHELL),
+        and HotSpot selects the decode path on VBMI, BW and BMI2 (REF-JDK-STUBGEN-X86). It decides
+        one condition, not an attack.
+      detection_logic: |
+        For each JVM with C1 to C3 true or unknown, read the CPU flags of the host or guest it runs
+        on (/proc/cpuinfo spells avx512f avx512bw avx512vbmi bmi2, or hypervisor or cloud
+        inventory); a container reads its node. All four present is C4 true; any one missing is not
+        affected (not in scope); no read is unknown. Then read the JVM CPU line from jcmd <pid>
+        VM.info, where HotSpot spells avx512_vbmi and drops every AVX-512 token when effective
+        UseAVX is below 3 (REF-JDK-VM-VERSION-X86). Host flags present and JVM line without AVX-512
+        is a mitigated-not-patched lead to confirm with VM.flags -all, never not affected.
+      minimum_evidence: >-
+        A host or guest CPU flag read with all four features for C4 true, or one missing for not
+        affected, stamped with the host it came from. A JVM CPU line never sets C4, and no host read
+        is unknown, never a clearance.
+      correlation_context: >-
+        Join on host, pid and process start time; CPU features belong to the host or instance the
+        process runs on, so a rescheduled or migrated replica needs a fresh read.
+      detectors:
+        - detector_class: 'configuration-and-asset-inventory'
+          technologies:
+            - 'Hardware and CPU inventory'
+            - 'Runtime diagnostic collection (jcmd VM.info)'
+          contribution: 'Reports host CPU flags per host or guest and the JVM CPU line as a cross-check.'
+          limitations: >-
+            Hypervisors may mask features from a guest; standard Java 8 gives no usable VM.info CPU
+            line; the JVM token spelling comes from source, not our lab.
+      benign_explanations:
+        - explanation: >-
+            The processor lacks AVX-512 VBMI, which many server generations do.
+          distinguishing_context: >-
+            The host or guest CPU flags lack a required feature, so the process is not affected
+            (not in scope) on that host.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding the workload rather than the process on that host hides replicas that
+            reschedule onto capable hardware.
+        - explanation: >-
+            A hypervisor or instance type masks AVX-512 features from the guest.
+          distinguishing_context: >-
+            The guest's own /proc/cpuinfo lacks the feature even though the hardware has it; the JVM
+            cannot use what the guest does not see.
+          overlaps_incident_instance: false
+          tuning_hazard: 'Reusing a masked guest result for an unmasked instance type misreports C4.'
+        - explanation: >-
+            Effective UseAVX of 2 or lower removes every AVX-512 token from the JVM CPU line.
+          distinguishing_context: >-
+            Host flags show all four while the JVM line shows none (REF-JDK-VM-VERSION-X86);
+            VM.flags -all confirms UseAVX below 3, so the JVM is mitigated-not-patched.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Reading C4 from the JVM line clears a mitigated JVM as not affected, and the flag is lost
+            on the next redeploy.
+      forbidden_exclusions:
+        - field: 'exclusion of a host by CPU model name or a cloud instance-family list'
+          reason: 'Only the CPU flags read on the host or guest decide; family lists are not an affected test.'
+        - field: 'not affected from a JVM CPU line that lacks AVX-512 tokens'
+          reason: 'HotSpot clears them when effective UseAVX is below 3 (REF-JDK-VM-VERSION-X86); that is mitigated-not-patched.'
+      blind_spots:
+        - description: >-
+            Missing telemetry: the JVM CPU line and real flag defaults on VBMI hardware are
+            unmeasured; our lab CPU was emulated without AVX.
+          routes_to: null
+        - description: >-
+            Missing telemetry: whether the Oracle 8 Performance Pack prints a usable CPU line is
+            unobserved, so the cross-check may be absent for it.
+          routes_to: null
+        - description: >-
+            Missing context: a host read goes stale when a workload reschedules, migrates or resizes
+            onto other hardware.
+          routes_to: null
+      analyst_response: >-
+        Read host CPU flags for each candidate JVM, cross-check the JVM CPU line, route host-capable
+        JVMs whose line lacks AVX-512 to the flag read, re-read after reschedule or resize, and carry
+        C4 into the verdict with the build and flag reads.
+      safe_conclusion: >-
+        The host or guest reports the stated CPU features; with all four present C4 holds, which
+        with the other conditions decides the verdict and says nothing about any attack.
+
+    - id: 'STRAT-EFFECTIVE-INTRINSIC-FLAG-STATE'
+      name: 'effective UseAVX and UseBASE64Intrinsics on the live JVM (C5, C6, mitigated-not-patched)'
+      objective: >-
+        Decide C5 and C6 per JVM from jcmd VM.flags -all and separate affected from
+        mitigated-not-patched.
+      incident_relevance: >-
+        Red Hat, Calif and CERT-EU recommend either flag as interim mitigation and CCCS names
+        UseAVX=2 only (REF-REDHAT-RHSB-2026-018, REF-CALIF-JAVA4SHELL, REF-CERT-EU-2026-021,
+        REF-CCCS-AL26-029); Datadog reports both stopped the out-of-bounds writes in its tests
+        (REF-DATADOG-JAVA4SHELL).
+      detection_logic: |
+        For each JVM with C1 to C4 true or unknown, and every JVM the CPU strategy routes, run jcmd
+        <pid> VM.flags -all as the JVM's user and read final UseAVX and UseBASE64Intrinsics. C5 is
+        UseAVX 3 or more, C6 is UseBASE64Intrinsics true; both with C1 to C4 true is affected.
+        Either false with C1 to C4 true is mitigated-not-patched whoever set it, operator or platform
+        (REF-CLEVER-CLOUD-JAVA4SHELL). Command line, unit files, JAVA_TOOL_OPTIONS,
+        JDK_JAVA_OPTIONS and image env vars are leads only (REF-SONARSOURCE-JAVA4SHELL). Lead
+        matching takes -XX:-UseBASE64Intrinsics or -XX:UseAVX=2 or lower with or without
+        -XX:+UnlockDiagnosticVMOptions (REF-JDK-GLOBALS). No read is unknown.
+      minimum_evidence: >-
+        Affected needs both values read from VM.flags -all on the live process with C1 to C4 true.
+        Mitigated-not-patched needs that read showing either off. A command-line or env lead with no
+        read is unknown, never mitigated.
+      correlation_context: >-
+        Join on host, pid and process start time; a flag added to configuration after start reaches
+        only a restarted process, so compare config change time with start time.
+      detectors:
+        - detector_class: 'configuration-and-asset-inventory'
+          technologies:
+            - 'Runtime diagnostic collection (jcmd VM.flags -all)'
+            - 'Agent or shell run-command'
+          contribution: 'Reads the effective flag values per live process.'
+          limitations: "Needs the JVM's user inside its container or service account."
+        - detector_class: 'edr-process-telemetry'
+          technologies:
+            - 'EDR process command-line inventory'
+          contribution: 'Finds leads where a mitigation flag appears on a launch line.'
+          limitations: 'A lead never sets a verdict; env vars and per-process options may not apply.'
+      benign_explanations:
+        - explanation: >-
+            An operator or platform set a recommended flag as interim mitigation.
+          distinguishing_context: >-
+            VM.flags -all shows the flag in effect; the JVM is mitigated-not-patched and stays on
+            the patch list (REF-CLEVER-CLOUD-JAVA4SHELL).
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding on a launch-line or env flag hides JVMs where it never took effect, as
+            SonarQube ignores JAVA_TOOL_OPTIONS (REF-SONARSOURCE-JAVA4SHELL).
+        - explanation: >-
+            The flag sits in configuration and the restart is scheduled.
+          distinguishing_context: >-
+            Process start precedes the config change and VM.flags -all still shows the path on, so
+            the JVM is affected until restart.
+          overlaps_incident_instance: true
+          tuning_hazard: 'Excluding hosts whose config carries the flag hides processes not yet restarted.'
+      forbidden_exclusions:
+        - field: 'exclusion because a command line, unit file, env var or image env shows a mitigation flag'
+          reason: 'Only VM.flags -all on the live process proves it (REF-SONARSOURCE-JAVA4SHELL).'
+        - field: 'treating mitigated-not-patched as not affected (fixed or not in scope)'
+          reason: 'The flag is interim; Red Hat says remove it after the fix (REF-REDHAT-RHSB-2026-018).'
+        - field: 'lead matching that requires -XX:+UnlockDiagnosticVMOptions'
+          reason: 'UseBASE64Intrinsics is a product flag, so the unlock is not needed (REF-JDK-GLOBALS).'
+        - field: 'exclusion on -Xint, TieredStopAtLevel or DisableIntrinsic settings'
+          reason: 'No vendor names them as a mitigation; the verdict reads only C5 and C6.'
+      blind_spots:
+        - description: >-
+            Missing telemetry: a JVM jcmd cannot attach to leaves only leads, so its verdict is
+            unknown.
+          routes_to: null
+        - description: >-
+            Missing context: a redeploy can drop the flag before the fix lands, so a
+            mitigated-not-patched JVM needs a re-read after every restart.
+          routes_to: null
+        - description: >-
+            Missing telemetry: whether the Oracle 8 Performance Pack has UseBASE64Intrinsics is
+            unobserved; standard Java 8 lacks it (lab).
+          routes_to: null
+      analyst_response: >-
+        Read VM.flags -all on each candidate, list affected JVMs first by reachability, confirm
+        mitigated-not-patched ones stay on the patch list, re-read after every restart, and remove
+        the flag only after a live build at or above the fix.
+      safe_conclusion: >-
+        The live JVM has the stated effective UseAVX and UseBASE64Intrinsics values; with C1 to C4
+        true that makes it affected or mitigated-not-patched, and neither shows an attack.
+
+    - id: 'STRAT-UPDATED-RUNTIME-NOT-RESTARTED'
+      name: 'runtime changed on disk after the process started'
+      objective: >-
+        Find JVM processes whose runtime files changed after start and confirm those that run an
+        older build than the one now installed.
+      incident_relevance: >-
+        Addresses the gap between patching and live remediation, not any attack. CERT-EU and CERT
+        Polska say restart all JVMs after the update (REF-CERT-EU-2026-021,
+        REF-CERT-POLSKA-216-2026).
+      detection_logic: |
+        A (deleted) runtime file in /proc/<pid>/maps or /proc/<pid>/exe shows unlinking only
+        (REF-PROC-MAPS): upgrade, removal, reinstall or downgrade. Report a stale-runtime
+        candidate. Order it against process start by package transaction or image digest, never
+        ctime alone (REF-INODE7). Mark restart-needed only when the live build (jcmd VM.version)
+        is below the installed build, tracked apart from the verdict: a below-fix process with a
+        confirmed effective workaround stays mitigated-not-patched while awaiting restart,
+        otherwise affected or unknown, and not affected needs a restarted read at the fix.
+      minimum_evidence: >-
+        A deleted mapping, exe or timestamp gives a stale-runtime candidate only; build order and
+        restart need stay unverified. Restart-needed needs the live
+        build compared with the installed build; ordering needs a package transaction or image
+        digest, not ctime. Not affected needs a live read at or above the vendor's fix.
+      correlation_context: >-
+        Join process path to the runtime package or image by path; bound clock skew. Join containers
+        by running image digest, not tag or container start; a restart may reuse a cached image
+        under a moved tag (REF-K8S-IMAGES).
+      detectors:
+        - detector_class: 'siem-scheduled-correlation'
+          technologies:
+            - 'SIEM scheduled join of process start and package or image update'
+            - 'EDR process inventory with start time'
+          contribution: 'Orders process start against runtime update.'
+          limitations: >-
+            Needs both clocks and the path join; ordering gives a lead, and only the live build
+            compared with the installed build shows restart-needed.
+        - detector_class: 'configuration-and-asset-inventory'
+          technologies:
+            - 'Package manager history'
+            - 'Host /proc maps read'
+            - 'Container runtime and orchestrator inventory'
+          contribution: 'Gives package transactions, deleted-mapping state and container start or replica times.'
+          limitations: 'Bundled runtimes update outside package history; their file ctime is a candidate only (REF-INODE7).'
+      benign_explanations:
+        - explanation: >-
+            A restart is scheduled in a maintenance window soon after the update.
+          distinguishing_context: >-
+            A change record with a restart time; the process keeps its live-process verdict (affected, mitigated-not-patched or unknown) until then.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding on a ticket with no expiry hides a process that never restarts.
+        - explanation: >-
+            The update touched a different runtime than the one the process runs.
+          distinguishing_context: >-
+            The process exe path points outside the updated package or image; judge that runtime.
+          overlaps_incident_instance: false
+        - explanation: >-
+            A rolling deploy is draining old replicas while new ones run the updated image.
+          distinguishing_context: >-
+            The orchestrator shows the old replica terminating on the same deployment.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding draining replicas hides an old replica that never terminates.
+        - explanation: >-
+            The runtime package was removed, reinstalled at the same build or downgraded.
+          distinguishing_context: >-
+            The package transaction shows remove, reinstall or downgrade, and the live build equals
+            or exceeds the installed build.
+          overlaps_incident_instance: false
+      forbidden_exclusions:
+        - field: 'exclusion of a host because its package manager shows the update installed'
+          reason: 'A running process keeps its earlier runtime; only the restarted live build shows the fix.'
+        - field: 'exclusion of a container because its image tag was updated'
+          reason: 'The running container keeps the old digest until it is replaced.'
+      validation:
+        status: 'lab-telemetry-verified'
+        evidence: >-
+          Checked in a telemetry-only lab we own (apt and dnf JDK 17 upgrades under a running JVM;
+          the vulnerability was not triggered): maps and exe showed libjvm.so, bin/java
+          (deleted), java -version the new build, jcmd VM.version old, and start preceded the
+          dpkg or rpm install record; removal, reinstall, downgrade untested.
+      blind_spots:
+        - description: >-
+            Missing telemetry: bundled runtimes overwritten in place leave no package history and
+            no deleted marker; file ctime is a candidate only and the live build read decides.
+          routes_to: null
+        - description: >-
+            Attribution limit: an update to a pending vendor's newest build is not a fix; the live
+            build stays below the 4-part fix.
+          routes_to: null
+        - description: >-
+            Missing telemetry: Windows has no deleted-mapping marker and installer reboot-pending
+            state is unchecked here; the live build read decides.
+          routes_to: null
+        - description: >-
+            Missing telemetry: a process started after the update may still run an old runtime if
+            the launcher points at a different directory; the live build read decides.
+          routes_to: null
+      analyst_response: >-
+        List restart-needed processes by owner and ingress, restart them in a change window, re-read
+        the live build and flags after restart, and close only when the live build is at or above
+        the vendor's fix.
+      safe_conclusion: >-
+        Stale-runtime candidate: the runtime changed on disk after start; build order and restart
+        need are unverified unless the live build was read. Only a live read below the installed
+        build shows an older build and a needed restart; the live-process verdict stands.
+
+  supporting_technologies_considered: >-
+    External exposure scanners and version banners can point at Java services but cannot see the
+    running build, CPU features, flags or bundled runtimes. Request-level filters are preventive and
+    out of scope here.
+
+detector_requirements:
+  required: >-
+    Per-process reads as the JVM's user of VM.version, java.vm.name, os.arch and VM.flags -all;
+    host CPU flags; normalisation to a 4-part version; a vendor fix table; runtime path,
+    process start and image digest joins; freshness stamps; and alert text naming the verdict and
+    each condition.
+  optional: >-
+    Listener and ingress classification buys ranking. Deleted-mapping and package-history reads buy
+    restart-needed findings. The VM.info CPU line buys a cross-check that flags UseAVX below 3.
+  correlation:
+    capability: >-
+      Per-host join of process, socket, runtime, image and package update records with aligned clocks
+      and stable workload identity across container restarts.
+    window: 'inventory freshness window set by the estate; process start versus update ordering'
+  baselines:
+    - name: 'Vendor fixed-build table per branch (4-part versions)'
+      window: 'rebuilt when a vendor publishes or revises a mapping; re-checked by 2026-11-20'
+      seeded_from: >-
+        Vendor and distributor advisories or release notes and government advisories that map the
+        CVE; never the OpenJDK advisory's header version list, union lists, build suffixes or
+        guessed versions.
+  product_support_caveat: >-
+    A named product is only a candidate implementation technology. Actual
+    support depends on deployed sensors, enabled logging, retained fields,
+    parsing, licensing, and architecture. Verify capability before selecting or
+    generating an implementation. Verify it reads the running build, host CPU flags and effective flags.
+
+missing_context:
+  unverified:
+    - >-
+      Non-LTS branches 18 to 20, 22 to 24 and 26: no vendor lists them as affected or not, and
+      Amazon's "No Fix Planned" for 22 to 24 and 26 does not make them affected (REF-ALAS-CVE).
+    - >-
+      GraalVM fixes rest on KISA's Oracle-derived rows (REF-KISA-JAVA4SHELL); no GraalVM page
+      carries them.
+    - >-
+      The JVM CPU line on real VBMI hardware (spelling taken from source) and real UseAVX and
+      UseBASE64Intrinsics defaults there; our lab CPU was emulated without AVX.
+    - >-
+      Whether the Oracle 8 Performance Pack prints a usable CPU line and has
+      UseBASE64Intrinsics; only standard Java 8 was lab-checked.
+    - >-
+      Windows runtime inventory (service-account reads, jvm.dll file versions, reboot-pending state)
+      and jlink bundling were not lab-tested.
+  assumptions:
+    - id: 'ASSUMPTION-RESTART-REQUIRED'
+      verdict_changing: false
+      statement: >-
+        A running JVM keeps its earlier runtime until restarted. CERT-EU says restart all JVMs after
+        the update (REF-CERT-EU-2026-021), and our lab saw the old build live after an upgrade. If
+        wrong, the not-restarted strategy over-reports. Resolve it per host by comparing the live
+        and installed builds after an update.
+    - id: 'ASSUMPTION-SIX-CONDITIONS-COMPLETE'
+      verdict_changing: true
+      statement: >-
+        Sources state the conditions separately (REF-REDHAT-RHSB-2026-018, REF-CERT-POLSKA-216-2026);
+        that C1 to C6 together are the full affected test is the pack's reading. If wrong,
+        not affected and mitigated-not-patched verdicts move. Resolve it by re-reading vendor
+        advisories at each expiry.
+    - id: 'ASSUMPTION-INGRESS-JOIN'
+      verdict_changing: false
+      statement: >-
+        A listening process joined to an ingress class is reachable by an untrusted party; reachability
+        is inferred, not observed. If wrong, an affected process is mis-ranked. Resolve it by testing the
+        ingress path from the untrusted segment in a sanctioned check.
+    - id: 'ASSUMPTION-HOST-CPU-DECIDES-C4'
+      verdict_changing: true
+      statement: >-
+        C4 is read from host or guest CPU flags as CERT Polska tests it (REF-CERT-POLSKA-216-2026),
+        because the JVM line drops AVX-512 when UseAVX is below 3. If a guest reports flags the JVM
+        cannot use, C4 is over-read. Resolve it by comparing both reads where UseAVX is 3 or more.
+  standing_negatives:
+    - statement: >-
+        A public proof of concept exists in Calif's write-up, and Calif had not published its
+        per-product chains as of 2026-11-18 ~06:00 PT.
+      ref: 'REF-CALIF-JAVA4SHELL'
+      valid_until: '2026-11-20'
+      recheck: 'Re-read the Calif page for published chains; never link or describe the PoC.'
+    - statement: >-
+        CVE-2026-114938 was not in the CISA KEV catalog released 2026-11-17 09:53 PT, checked
+        2026-11-18 05:30 PT.
+      ref: 'REF-CISA-KEV'
+      valid_until: '2026-11-20'
+      recheck: 'Re-read the KEV JSON feed for the CVE id.'
+    - statement: >-
+        No in-the-wild exploitation was reported as of 2026-11-18 ~06:00 PT: CCCS and JPCERT/CC
+        report none and CISA's ADP entry rates Exploitation "none" (REF-JPCERT-2026111801,
+        REF-CVE-API).
+      ref: 'REF-CCCS-AL26-029'
+      valid_until: '2026-11-20'
+      recheck: 'Re-read the CVE record ADP entry, CCCS AL26-029 and JPCERT/CC newsflash.'
+    - statement: >-
+        Microsoft, Liberica, Red Hat, Ubuntu, SUSE and Debian stable had no fixed build and SapMachine
+        named no CVE as of 2026-11-18 05:40 PT.
+      ref: 'REF-REDHAT-CVE'
+      valid_until: '2026-11-20'
+      recheck: 'Re-read each vendor page listed in the pending-vendors and sapmachine variants.'
+    - statement: >-
+        Temurin 17, 21 and 25 fixed builds were announced but not published as of 2026-11-18 05:40
+        PT.
+      ref: 'REF-ADOPTIUM-NOV2026'
+      valid_until: '2026-11-20'
+      recheck: 'Re-read the Adoptium notice and temurin17, 21 and 25 release pages.'
+    - statement: >-
+        NVD showed the CVE as Undergoing Analysis with no NVD score, only Oracle's 8.1, read
+        2026-11-18 06:22 PT.
+      ref: 'REF-NVD'
+      valid_until: '2026-11-20'
+      recheck: 'Query the NVD API for the CVE id.'
+
+missing_states:
+  - id: 'VENDOR_FIX_PENDING_OR_UNMAPPED'
+    meaning: 'Missing context: the vendor has no fixed build yet, or released one without naming the CVE.'
+    coverage_claim: 'coverage-limited'
+    response: 'Pending vendor below the 4-part fix: C3 true. SapMachine at or above x.y.z.1: unknown. Never not affected (fixed).'
+  - id: 'JVM_BUILD_UNREADABLE'
+    meaning: 'Missing telemetry: the running vendor and build cannot be read (no jcmd, only a path).'
+    coverage_claim: 'no-coverage'
+    response: 'Report unknown, never affected or not affected; name the missing read in the alert.'
+  - id: 'HOST_CPU_FLAGS_UNREAD'
+    meaning: 'Missing telemetry: the host or guest CPU flags for the JVM cannot be read.'
+    coverage_claim: 'coverage-limited'
+    response: 'Report unknown with C1 to C3 stated; never affected and never not affected.'
+  - id: 'EFFECTIVE_FLAGS_UNREAD'
+    meaning: 'Missing telemetry: VM.flags -all cannot be read; only command-line or env leads exist.'
+    coverage_claim: 'coverage-limited'
+    response: 'Report unknown and name the lead; never mitigated-not-patched and never affected.'
+  - id: 'BUNDLED_RUNTIME_UNINVENTORIED'
+    meaning: 'Missing telemetry: runtimes outside the package manager or image scan are not enumerated.'
+    coverage_claim: 'no-coverage'
+    response: 'Report the host as partially assessed; do not mark not affected from the package list.'
+  - id: 'INGRESS_UNKNOWN'
+    meaning: 'Missing context: reachability from untrusted networks or input is not known.'
+    coverage_claim: 'coverage-unaffected'
+    response: 'Report the verdict and reachability unknown as separate facts; reachability never clears.'
+  - id: 'PROCESS_START_OR_UPDATE_TIME_UNREAD'
+    meaning: 'Missing telemetry: process start or runtime update time is not available.'
+    coverage_claim: 'coverage-limited'
+    response: 'Report restart state unverified; the verdict still follows the live build read.'
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_affected_state_claim'
+    - 'verdict_affected_mitigated_not_patched_not_affected_or_unknown'
+    - 'conditions_c1_to_c6_each_true_false_or_unread_with_read_source'
+    - 'host_or_image_and_owner'
+    - 'jvm_vendor_branch_and_four_part_version_or_unknown'
+    - 'vendor_fix_row_and_state_fixed_pending_or_unmapped'
+    - 'runtime_path_or_location'
+    - 'reachability_class_or_unknown'
+    - 'timestamps_and_inventory_freshness'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'pid_process_start_time_and_live_build_read_state'
+      condition: 'when the alert concerns a running process'
+    - field: 'not_affected_reason_fixed_or_not_in_scope'
+      condition: 'when the verdict is not affected'
+    - field: 'host_cpu_flags_source_and_jvm_cpu_line_cross_check'
+      condition: 'when C4 is reported true or false'
+    - field: 'vm_flags_all_values_for_useavx_and_usebase64intrinsics'
+      condition: 'when the verdict is affected or mitigated-not-patched'
+    - field: 'command_line_or_env_flag_lead'
+      condition: 'when a mitigation flag appears outside VM.flags -all'
+    - field: 'image_digest_and_deployed_workload_join_or_latent'
+      condition: 'when the runtime sits in a container image or runs in a container'
+    - field: 'installed_build_live_build_and_change_ordering_source'
+      condition: 'when the alert marks restart-needed'
+    - field: 'stale_runtime_lead_source_with_missing_build_or_ordering_states'
+      condition: 'when the alert is a stale-runtime candidate without a live build read'
+    - field: 'compensating_control_and_expiry'
+      condition: 'when a network block, flag or maintenance window is relied on for an unpatched process'
+  recommended_title: >-
+    Java4Shell verdict for Java process (affected, mitigated-not-patched, not affected or unknown)
+  unsupported_title: 'Server was exploited through Java4Shell'
+
+evidence:
+  confirmed_incident_behavior: >-
+    No in-the-wild exploitation is reported (REF-CCCS-AL26-029). Sources state HotSpot x86-64 on
+    17 from 17.0.6 (REF-CALIF-JAVA4SHELL), 21, 25 and 27 (REF-OPENJDK-ADVISORY-2026-11-17), four CPU features
+    (REF-CERT-POLSKA-216-2026) and the flags (REF-REDHAT-RHSB-2026-018); one verdict from all six
+    is the pack's reading.
+  supported_conclusion: >-
+    A report may state a JVM as affected, mitigated-not-patched, not affected (fixed or not in
+    scope) or unknown from in-process build, host CPU flags and effective flags, with reachability
+    (exposed or not) and restart-needed as separate facts.
+  unsupported_conclusions: >-
+    The evidence does not establish that any process was attacked or reached, that a launch-line or
+    env flag took effect, that a package update fixed a running process, that a pending vendor's
+    newest build or SapMachine at x.y.z.1 is fixed, or that a deleted mapping shows an upgrade.
+  procedure_boundary: >-
+    Crashes of a JVM are DT-J4SH-HOST-002 and unexpected child processes are DT-J4SH-HOST-003 (generic,
+    not Java4Shell coverage). This object shows the state, not use of it.
+  references:
+    - id: 'REF-CALIF-JAVA4SHELL'
+      type: 'attack-surface-documentation'
+      title: 'Java4Shell: Write once, RCE everywhere'
+      publisher: 'Calif'
+      url: 'https://calif.io/java4shell'
+      trust_tier: 'researcher'
+      verification: 'confirmed'
+      evidence_use: >-
+        Used: AVX-512 decode intrinsic, 17.0.6 floor, ARM64 not affected, both flags unranked, CVSS
+        4.0 9.2, RCE with chains withheld, client-side TLS case, PoC exists. Cited whole.
+    - id: 'REF-OPENJDK-ADVISORY-2026-11-17'
+      type: 'attack-surface-documentation'
+      title: 'OpenJDK Vulnerability Advisory: 2026/11/17'
+      publisher: 'OpenJDK Vulnerability Group'
+      url: 'https://openjdk.org/groups/vulnerability/advisories/2026-11-17'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Used: hotspot/compiler; matrix marks 17, 21, 25, 27 and not 8 or 11. Not used: the header
+        version list, which covers every CVE on the page.
+    - id: 'REF-REDHAT-RHSB-2026-018'
+      type: 'attack-surface-documentation'
+      title: >-
+        RHSB-2026-018 Remote Code Execution via memory corruption on x86-64 systems - OpenJDK
+        (CVE-2026-114938) - "java4shell"
+      publisher: 'Red Hat'
+      url: 'https://access.redhat.com/security/vulnerabilities/RHSB-2026-018'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Used: 17.0.6+ incl. 21 and 25 on x86-64 with VBMI, not started with UseAVX=2 or lower,
+        Base64 reaching java.util.Base64.Decoder often pre-auth, UseBASE64Intrinsics preferred.
+    - id: 'REF-REDHAT-CVE'
+      type: 'attack-surface-documentation'
+      title: 'CVE-2026-114938'
+      publisher: 'Red Hat'
+      url: 'https://access.redhat.com/security/cve/CVE-2026-114938'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: preliminary CVSS 9.8; fix pending as of 2026-11-18 05:40 PT.'
+    - id: 'REF-ORACLE-CSPU'
+      type: 'attack-surface-documentation'
+      title: 'Oracle Critical Security Patch Update Advisory - November 2026'
+      publisher: 'Oracle'
+      url: 'https://www.oracle.com/security-alerts/cspunov2026.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: the CVE row lists Java SE 8u511b33-perf with 17, 21, 25 and 27 and no 11. Not used: any fixed version (none given).'
+    - id: 'REF-ORACLE-17-0-21-1'
+      type: 'attack-surface-documentation'
+      title: 'JDK 17.0.21.1 Release Notes'
+      publisher: 'Oracle'
+      url: 'https://www.oracle.com/java/technologies/javase/17-0-21-1-relnotes.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: 17.0.21.1 exists as the Oracle fix; notes do not name the CVE (mapping via KISA and CERT-EU).'
+    - id: 'REF-ORACLE-21-0-13-1'
+      type: 'attack-surface-documentation'
+      title: 'JDK 21.0.13.1 Release Notes'
+      publisher: 'Oracle'
+      url: 'https://www.oracle.com/java/technologies/javase/21-0-13-1-relnotes.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: 21.0.13.1 exists as the Oracle fix; notes do not name the CVE.'
+    - id: 'REF-ORACLE-25-0-5-1'
+      type: 'attack-surface-documentation'
+      title: 'JDK 25.0.5.1 Release Notes'
+      publisher: 'Oracle'
+      url: 'https://www.oracle.com/java/technologies/javase/25-0-5-1-relnotes.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: 25.0.5.1 exists as the Oracle fix; notes do not name the CVE.'
+    - id: 'REF-ORACLE-27-0-1-1'
+      type: 'attack-surface-documentation'
+      title: 'JDK 27.0.1.1 Release Notes'
+      publisher: 'Oracle'
+      url: 'https://www.oracle.com/java/technologies/javase/27-0-1-1-relnotes.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: 27.0.1.1 exists as the Oracle fix; notes do not name the CVE.'
+    - id: 'REF-KISA-JAVA4SHELL'
+      type: 'attack-surface-documentation'
+      title: 'KISA/KrCERT Oracle November 2026 security update notice'
+      publisher: 'KISA'
+      url: 'https://www.boho.or.kr/kr/bbs/view.do?bbsId=B0000133&pageIndex=1&nttId=72313&menuNo=205020'
+      trust_tier: 'government'
+      verification: 'confirmed'
+      evidence_use: 'Used: CVE-to-build mapping for Oracle 17.0.21.1, 21.0.13.1, 25.0.5.1, 27.0.1.1, GraalVM rows and 8u513-perf.'
+    - id: 'REF-CERT-EU-2026-021'
+      type: 'attack-surface-documentation'
+      title: 'Security Advisory 2026-021'
+      publisher: 'CERT-EU'
+      url: 'https://cert.europa.eu/publications/security-advisories/2026-021/'
+      trust_tier: 'government'
+      verification: 'confirmed'
+      evidence_use: 'Used: fixed x.y.z.1 builds and 8u513 for the perf pack; both flags; restart all JVMs after updating.'
+    - id: 'REF-CERT-POLSKA-216-2026'
+      type: 'attack-surface-documentation'
+      title: >-
+        Krytyczna podatność w środowisku Java umożliwiająca zdalne wykonanie kodu (Java4Shell)
+      publisher: 'CERT Polska'
+      url: 'https://moje.cert.pl/komunikaty/2026/216/krytyczna-podatnosc-w-srodowisku-java-umozliwiajaca-zdalne-wykonanie-kodu-java4shell/'
+      trust_tier: 'government'
+      verification: 'confirmed'
+      evidence_use: 'Used: avx512f, avx512bw, avx512vbmi and bmi2 all required; restart JVMs after updating.'
+    - id: 'REF-CORRETTO-17'
+      type: 'attack-surface-documentation'
+      title: 'Corretto 17 CHANGELOG'
+      publisher: 'Amazon'
+      url: 'https://raw.githubusercontent.com/corretto/corretto-17/develop/CHANGELOG.md'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: 17.0.21.1.2 names the CVE.'
+    - id: 'REF-CORRETTO-21'
+      type: 'attack-surface-documentation'
+      title: 'Corretto 21 CHANGELOG'
+      publisher: 'Amazon'
+      url: 'https://raw.githubusercontent.com/corretto/corretto-21/develop/CHANGELOG.md'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: 21.0.13.1.2 names the CVE.'
+    - id: 'REF-CORRETTO-25'
+      type: 'attack-surface-documentation'
+      title: 'Corretto 25 CHANGELOG'
+      publisher: 'Amazon'
+      url: 'https://raw.githubusercontent.com/corretto/corretto-25/develop/CHANGELOG.md'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: 25.0.5.1.2 names the CVE.'
+    - id: 'REF-CORRETTO-27'
+      type: 'attack-surface-documentation'
+      title: 'Corretto 27 CHANGELOG'
+      publisher: 'Amazon'
+      url: 'https://raw.githubusercontent.com/corretto/corretto-27/develop/CHANGELOG.md'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: 27.0.1.1.4 names the CVE.'
+    - id: 'REF-ALAS-CVE'
+      type: 'attack-surface-documentation'
+      title: 'CVE-2026-114938'
+      publisher: 'Amazon Linux Security Center'
+      url: 'https://explore.alas.aws.amazon.com/CVE-2026-114938.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Used: AL2, AL2023 and AL2027 Preview fixed packages; Amazon CVSS 3.1 8.8; Corretto 22 to 24 and 26
+        "No Fix Planned".
+    - id: 'REF-AZUL-NOV2026'
+      type: 'attack-surface-documentation'
+      title: 'November 2026 Monthly Update Release Notes'
+      publisher: 'Azul'
+      url: 'https://docs.azul.com/core/release-notes'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: 'Used: CVE fixed in this release for 27, 25, 21 and 17, shipped as CSPU-for-PSU and CSPU-for-CPU builds. Caveat: a moving latest-notes URL.'
+    - id: 'REF-AZUL-CVE'
+      type: 'attack-surface-documentation'
+      title: 'Common Vulnerabilities and Exposures'
+      publisher: 'Azul'
+      url: 'https://docs.azul.com/core/cve'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used (read 2026-11-18 05:55 PT): CVE fixed in 17.69.204, 17.70.201, 21.53.202, 21.54.201, 25.37.202, 25.38.201 and 27.30.201.'
+    - id: 'REF-ADOPTIUM-NOV2026'
+      type: 'attack-surface-documentation'
+      title: 'Temurin November 2026 CSPU and Java4Shell'
+      publisher: 'Eclipse Adoptium'
+      url: 'https://adoptium.net/news/2026/11/temurin-november-2026-cspu-java4shell'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: fix versions 17.0.21.1, 21.0.13.1, 25.0.5.1, 27.0.1.1; binaries published as testing completes.'
+    - id: 'REF-TEMURIN-27'
+      type: 'attack-surface-documentation'
+      title: 'temurin27-binaries releases'
+      publisher: 'Eclipse Adoptium'
+      url: 'https://github.com/adoptium/temurin27-binaries/releases'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: 27.0.1.1+4 published 2026-11-18 02:08 PT.'
+    - id: 'REF-ALPINE-SECDB'
+      type: 'attack-surface-documentation'
+      title: 'Alpine secdb community'
+      publisher: 'Alpine Linux'
+      url: 'https://secdb.alpinelinux.org/v3.23/community.json'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: 3.23, 3.24 and edge fix openjdk17, 21 and 25 at x.y.z.1_p2-r0; no 27 package found.'
+    - id: 'REF-DEBIAN-TRACKER'
+      type: 'attack-surface-documentation'
+      title: 'CVE-2026-114938'
+      publisher: 'Debian'
+      url: 'https://security-tracker.debian.org/tracker/CVE-2026-114938'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: sid fixed for 17, 21, 25 and 27; stable still vulnerable.'
+    - id: 'REF-CHAINGUARD-JAVA4SHELL'
+      type: 'attack-surface-documentation'
+      title: 'Java4Shell: how a malformed Base64 string breaks the JVM on AVX-512'
+      publisher: 'Chainguard'
+      url: 'https://www.chainguard.dev/unchained/java4shell-how-a-malformed-base64-string-breaks-the-jvm-on-avx-512'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      citation_caveat: 'partial-use'
+      citation_caveat_note: >-
+        Only the fixed package versions and image rebuild state are used; no mechanism detail is
+        used, and the claim stands on Chainguard alone.
+      evidence_use: 'Used: openjdk-17, 21, 25 and 27 packages fixed at x.y.z.1; images rebuilding.'
+    - id: 'REF-SAPMACHINE-RELEASES'
+      type: 'attack-surface-documentation'
+      title: 'SapMachine releases'
+      publisher: 'SAP'
+      url: 'https://github.com/SAP/SapMachine/releases'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: 17.0.21.1, 21.0.13.1, 25.0.5.1 and 27.0.1.1 released; bodies name no CVE.'
+    - id: 'REF-MSFT-OPENJDK-RELNOTES'
+      type: 'attack-surface-documentation'
+      title: 'Release Notes for the Microsoft Build of OpenJDK'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/java/openjdk/release-notes'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: newest builds 17.0.21.0.2, 21.0.13.0.2 and 25.0.5.0.2; no CVE entry (pending).'
+    - id: 'REF-LIBERICA-RELEASES'
+      type: 'attack-surface-documentation'
+      title: 'Liberica releases'
+      publisher: 'BellSoft'
+      url: 'https://github.com/bell-sw/Liberica/releases'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: newest build 27.0.1.0.3+5, no x.y.z.1 build (pending).'
+    - id: 'REF-UBUNTU-CVE'
+      type: 'attack-surface-documentation'
+      title: 'CVE-2026-114938'
+      publisher: 'Canonical'
+      url: 'https://ubuntu.com/security/CVE-2026-114938'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: openjdk-17, 21 and 25 Vulnerable on 22.04 to 26.10 with no fixed version (pending).'
+    - id: 'REF-SUSE-CVE'
+      type: 'attack-surface-documentation'
+      title: 'CVE-2026-114938'
+      publisher: 'SUSE'
+      url: 'https://www.suse.com/security/cve/CVE-2026-114938/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: 17, 21 and 25 affected with no fix (pending); 8 and 11 not affected.'
+    - id: 'REF-KEYCLOAK-JAVA4SHELL'
+      type: 'attack-surface-documentation'
+      title: 'Java4Shell vulnerability (CVE-2026-114938)'
+      publisher: 'Keycloak'
+      url: 'https://www.keycloak.org/2026/11/java4shell-vulnerability-cve-2026-114938'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Used: x86-64 images 26.8.2-1 and 26.8.2-2 bundle affected OpenJDK 21.0.13; tags alone do not
+        establish exploitability; live-JVM flag check.
+    - id: 'REF-SONARSOURCE-JAVA4SHELL'
+      type: 'attack-surface-documentation'
+      title: 'Security advisory: Java4Shell workaround for SonarQube'
+      publisher: 'SonarSource'
+      url: 'https://community.sonarsource.com/t/security-advisory-java4shell-workaround-for-sonarqube/191330'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: SonarQube Server ignores JAVA_TOOL_OPTIONS; Web, CE and Search processes take their own options.'
+    - id: 'REF-CLEVER-CLOUD-JAVA4SHELL'
+      type: 'attack-surface-documentation'
+      title: 'Java4Shell mitigation (changelog 2026-11-17)'
+      publisher: 'Clever Cloud'
+      url: 'https://www.clever.cloud/developers/changelog/2026/11-17-java4shell-mitigation/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: a platform adds -XX:-UseBASE64Intrinsics to managed Java apps, so the flag may be platform-set.'
+    - id: 'REF-DATADOG-JAVA4SHELL'
+      type: 'incident-campaign-secondary-source'
+      title: 'Java4Shell: Remote Code Execution in OpenJDK (CVE-2026-114938)'
+      publisher: 'Datadog Security Labs'
+      url: 'https://securitylabs.datadoghq.com/articles/java4shell-remote-code-execution-in-openjdk-cve-2026-114938/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      citation_caveat: 'partial-use'
+      citation_caveat_note: >-
+        Only the flag test and its single-build decoder scope are used; its first-fixed suffixes are
+        not, as Adoptium corrects them. The mitigation stands on Red Hat and Calif without it.
+      evidence_use: 'Used: both flags stopped the writes in its tests; on 17.0.6 basic and URL decoders use the path, MIME bypasses it. Not used: fixed-build suffixes.'
+    - id: 'REF-CCCS-AL26-029'
+      type: 'attack-surface-documentation'
+      title: 'AL26-029 Critical vulnerability impacting Oracle Java (CVE-2026-114938)'
+      publisher: 'Canadian Centre for Cyber Security'
+      url: 'https://www.cyber.gc.ca/en/alerts-advisories/al26-029-critical-vulnerability-impacting-oracle-java-cve-2026-114938'
+      trust_tier: 'government'
+      verification: 'confirmed'
+      evidence_use: 'Used: not aware of active exploitation; recommends the UseAVX=2 flag.'
+    - id: 'REF-JPCERT-2026111801'
+      type: 'incident-campaign-secondary-source'
+      title: 'JPCERT/CC newsflash 2026111801'
+      publisher: 'JPCERT/CC'
+      url: 'https://www.jpcert.or.jp/newsflash/2026111801.html'
+      trust_tier: 'government'
+      verification: 'confirmed'
+      evidence_use: 'Used: no confirmed exploitation as of 2026-11-18.'
+    - id: 'REF-CISA-ALERT-2026-11-17'
+      type: 'incident-campaign-secondary-source'
+      title: 'Critical Java Vulnerability Requires Immediate Patching'
+      publisher: 'CISA'
+      url: 'https://www.cisa.gov/news-events/alerts/2026/11/17/critical-java-vulnerability-requires-immediate-patching'
+      trust_tier: 'government'
+      verification: 'confirmed'
+      evidence_use: 'Used: calls it critical; JDKs and runtimes may not appear as separate inventory entries. Not a KEV entry.'
+    - id: 'REF-SYSDIG-JAVA4SHELL'
+      type: 'incident-campaign-secondary-source'
+      title: 'Java4Shell CVE-2026-114938: pre-auth RCE in OpenJDK'
+      publisher: 'Sysdig'
+      url: 'https://www.sysdig.com/blog/java4shell-cve-2026-114938-pre-auth-rce-in-openjdk'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: "Used: all four CPU flags required; the container's JDK is the one that matters."
+    - id: 'REF-WIZ-JAVA4SHELL'
+      type: 'incident-campaign-secondary-source'
+      title: 'CVE-2026-114938: RCE in OpenJDK (Java4Shell)'
+      publisher: 'Wiz'
+      url: 'https://wiz.io/blog/cve-2026-114938-rce-java4shell-openjdk'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      citation_caveat: 'partial-use'
+      citation_caveat_note: >-
+        Used only for Wiz's own statement that it proved remote exploitation feasible against
+        named applications; nothing else from the page. The impact sentence stands on Calif.
+      evidence_use: 'Used: Wiz says it proved remote exploitation feasible against named Java applications.'
+    - id: 'REF-THN-JAVA4SHELL'
+      type: 'incident-campaign-secondary-source'
+      title: 'Java4Shell (CVE-2026-114938) article'
+      publisher: 'The Hacker News'
+      url: 'https://thehackernews.com/2026/11/java4shell-cve-2026-114938-enables-pre.html'
+      trust_tier: 'news'
+      verification: 'confirmed'
+      citation_caveat: 'partial-use'
+      citation_caveat_note: >-
+        Used only for the other-labs clause; its words are "crashes and a memory leak but not the
+        code execution". Blackpoint supports the clause independently.
+      evidence_use: 'Used: other labs reproduced crashes and a memory leak but not the code execution.'
+    - id: 'REF-HADRIAN-JAVA4SHELL'
+      type: 'incident-campaign-secondary-source'
+      title: 'Java4Shell (CVE-2026-114938): pre-auth memory corruption in OpenJDK'
+      publisher: 'Hadrian'
+      url: 'https://hadrian.io/vulnerability-alerts/oracle-critical-security-patch-update-java-17-rce-claims'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      citation_caveat: 'partial-use'
+      citation_caveat_note: >-
+        Only its statement that it reached code execution in its own lab is used, as one lab's
+        claim; no method detail.
+      evidence_use: 'Used: states code execution before login against its own lab service on Temurin 17.0.21+9.'
+    - id: 'REF-BLACKPOINT-JAVA4SHELL'
+      type: 'incident-campaign-secondary-source'
+      title: 'Java4Shell CVE-2026-114938: Java Base64 decoder flaw'
+      publisher: 'Blackpoint Cyber'
+      url: 'https://blackpointcyber.com/blog/java4shell-cve-2026-114938-java-base64-decoder-flaw/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: reproduced crashes, object corruption and a memory disclosure; did not independently reproduce remote code execution.'
+    - id: 'REF-JDK17U-BASE64-BACKPORT'
+      type: 'attack-surface-documentation'
+      title: '8268276: Base64 Decoding optimization for x86 using AVX-512 (17u backport)'
+      publisher: 'OpenJDK'
+      url: 'https://github.com/openjdk/jdk17u-dev/commit/07050b000c'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: a 17u backport of the AVX-512 decode intrinsic exists. Not used: its release tag (the 17.0.6 floor stands on Calif and Red Hat).'
+    - id: 'REF-JDK-STUBGEN-X86'
+      type: 'attack-surface-documentation'
+      title: 'stubGenerator_x86_64.cpp (jdk master)'
+      publisher: 'OpenJDK'
+      url: 'https://github.com/openjdk/jdk/blob/master/src/hotspot/cpu/x86/stubGenerator_x86_64.cpp'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: the AVX-512 decode path is selected only with avx512_vbmi, avx512bw and bmi2.'
+    - id: 'REF-JDK-VM-VERSION-X86'
+      type: 'attack-surface-documentation'
+      title: 'vm_version_x86.cpp (jdk master)'
+      publisher: 'OpenJDK'
+      url: 'https://github.com/openjdk/jdk/blob/master/src/hotspot/cpu/x86/vm_version_x86.cpp'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: UseAVX below 3 clears every AVX-512 feature (avx512_vbmi spelling) from the JVM feature list; UseBASE64Intrinsics defaults on by CPU.'
+    - id: 'REF-JDK-GLOBALS'
+      type: 'attack-surface-documentation'
+      title: 'globals.hpp (jdk master)'
+      publisher: 'OpenJDK'
+      url: 'https://github.com/openjdk/jdk/blob/master/src/hotspot/share/runtime/globals.hpp'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: UseBASE64Intrinsics is a product flag, so -XX:+UnlockDiagnosticVMOptions is not needed.'
+    - id: 'REF-ORACLE-JCMD'
+      type: 'telemetry-documentation'
+      title: 'The jcmd Command (Java SE 17)'
+      publisher: 'Oracle'
+      url: 'https://docs.oracle.com/en/java/javase/17/docs/specs/man/jcmd.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: VM.version, VM.info, VM.flags -all, VM.command_line; same machine, effective user and group.'
+    - id: 'REF-CVE-API'
+      type: 'framework'
+      title: 'CVE Program record API for CVE-2026-114938'
+      publisher: 'CVE Program (MITRE)'
+      url: 'https://cveawg.mitre.org/api/cve/CVE-2026-114938'
+      trust_tier: 'registry'
+      verification: 'confirmed'
+      evidence_use: >-
+        Used: published 2026-11-17 by Oracle as CNA; CVSS 3.1 8.1; unauthenticated network attacker;
+        CISA ADP Exploitation "none".
+    - id: 'REF-NVD'
+      type: 'framework'
+      title: 'NVD CVE API query for CVE-2026-114938'
+      publisher: 'NIST NVD'
+      url: 'https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=CVE-2026-114938'
+      trust_tier: 'registry'
+      verification: 'confirmed'
+      evidence_use: 'Used: vulnStatus Undergoing Analysis, last modified 2026-11-18 05:45 PT, no NVD score (only Oracle 8.1), read 2026-11-18 06:22 PT.'
+    - id: 'REF-CISA-KEV'
+      type: 'framework'
+      title: 'Known Exploited Vulnerabilities Catalog (JSON feed)'
+      publisher: 'CISA'
+      url: 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json'
+      trust_tier: 'government'
+      verification: 'confirmed'
+      evidence_use: 'Used: CVE absent from catalog 2026.11.17 (released 09:53 PT), checked 2026-11-18 05:30 PT.'
+    - id: 'REF-PROC-MAPS'
+      type: 'telemetry-documentation'
+      title: 'proc_pid_maps(5)'
+      publisher: 'Linux man-pages project'
+      url: 'https://man7.org/linux/man-pages/man5/proc_pid_maps.5.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: a deleted file-backed mapping has " (deleted)" appended; this shows unlinking, not an upgrade or version order.'
+    - id: 'REF-INODE7'
+      type: 'telemetry-documentation'
+      title: 'inode(7)'
+      publisher: 'Linux man-pages project'
+      url: 'https://man7.org/linux/man-pages/man7/inode.7.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: ctime changes on writes and on owner, group, link count or mode changes, so it is not an install time.'
+    - id: 'REF-K8S-IMAGES'
+      type: 'attack-surface-documentation'
+      title: 'Images'
+      publisher: 'Kubernetes'
+      url: 'https://kubernetes.io/docs/concepts/containers/images/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used: IfNotPresent skips pulling a cached image; tags move, digests are fixed.'

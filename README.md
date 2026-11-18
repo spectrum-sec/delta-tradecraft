@@ -59,6 +59,15 @@ Find threats that matter to you in [`packs/`](packs/).
 - [**sshole-2026-11**](packs/sshole-2026-11/README.md) — OpenSSH password authentication bypass on
   musl hosts without PAM (CVE-2026-123158), November 2026. 6 objects, 15 detection strategies.
 
+- [**ai**](packs/ai/README.md) — AI and agent adversary procedures, group 1. 36 objects, 61 detection
+  strategies.
+
+- [**php2shell-2026-10**](packs/php2shell-2026-10/README.md) — two unauthenticated RCE flaws in the PHP
+  engine (CVE-2026-109618, CVE-2026-109619), October 2026. 11 objects, 24 detection strategies.
+
+- [**java4shell-2026-11**](packs/java4shell-2026-11/README.md) — OpenJDK HotSpot memory-corruption
+  flaw on x86-64 with AVX-512 (CVE-2026-114938), November 2026. 3 objects, 16 detection strategies.
+
 ## Start here
 
 **If you want to see what an effective use of Tradecraft is,** go to [`packs/`](packs/), pick a pack, choose an object by behavior or attack surface, and open it. 
