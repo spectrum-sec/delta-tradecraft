@@ -1,0 +1,1605 @@
+identity:
+  uuid: 'ab39b6a4-30db-4892-970a-8bce31de9d61'
+  id: 'DT-J4SH-HOST-003'
+  name: 'A Java server process starts a child process it does not normally start'
+  incident: 'Java4Shell (CVE-2026-114938)'
+  first_observed: '2026-11'
+  last_reviewed: '2026-11-18'
+
+classification:
+  primary_attack_surface: 'application-runtime'
+  secondary_attack_surfaces:
+    - 'host-os'
+  behavior_classes:
+    - 'other'
+  behavior_classes_note: >-
+    No member names a server process starting a child it has never started: in-process-interpreter-execution is code run inside the runtime and containment-boundary-crossing is a sandbox or container escape, which a host child of a JVM is not.
+  tags:
+    - 'java4shell'
+    - 'cve-2026-114938'
+    - 'java'
+    - 'jvm'
+    - 'child-process'
+    - 'jspawnhelper'
+    - 'generic-follow-on'
+    - 'generic'
+    - 'not-java4shell-coverage'
+    - 'inferred'
+
+behavior:
+  definition: >-
+    A process running a Java server starts a child executable it has no history of starting, such as a shell, script host, download tool or any first-seen binary, a behavior generic to any Java service flaw. CISA names no child and Sysdig lists a shell only as aftermath (REF-CISA-ALERT-2026-11-17, REF-SYSDIG-JAVA4SHELL).
+  detailed_definition: >-
+    Code in a server JVM asks the operating system to start another program, so a process that
+    serves requests becomes the parent of something it never started before and crosses from the runtime into the host whatever the cause. The attempt ends at the process creation record.
+
+manifestation:
+  possible:
+    answer: 'yes'
+    answer_scope: >-
+      Covers any server JVM able to start a child process; whether this CVE leads to one rests on
+      code-execution claims whose chains are unpublished (REF-CALIF-JAVA4SHELL, REF-WIZ-JAVA4SHELL).
+    summary: >-
+      Needs code running in the JVM with permission to start a process (the code-execution claims are in threat_research.capability). This object is generic, not Java4Shell coverage.
+  observable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Observable where an endpoint sensor or auditd execve records carry the parent chain; not
+      from network, crash or application logs, and not from activity that stays inside the JVM.
+    blocking_conditions:
+      - condition: 'audit-tier-or-enablement-required'
+        note: >-
+          Process creation with command line and parent is inferred on by default for the two EDR sensors
+          read (REF-MDE-DEVICEPROCESSEVENTS, REF-ELASTIC-DEFEND-POLICY) and needs checking per event, field and OS; without one, Sysmon or auditd execve rules must be enabled,
+          and Sysmon network events are off by default (REF-SYSMON).
+      - condition: 'environment-inventory-required'
+        note: 'Which parent is a server JVM, and its normal children, must be learned per service.'
+    summary: >-
+      Observable as a process creation whose parent is the server JVM, or the JVM's own pid execing
+      a new image, with image, command line and identity (Linux real and effective uid, Windows SID or account). Weak evidence: a java parent by name alone, one outbound
+      connection, or one file write, which JVMs produce constantly.
+  detectable:
+    answer: 'yes-conditional'
+    answer_scope: >-
+      Separable from build, ops and health-check children by a per-service baseline of first-seen
+      children; without one it is a name list that is noisy or blind, and it says a child started, not that the CVE was used.
+    blocking_conditions:
+      - condition: 'environment-inventory-required'
+        note: >-
+          Needs the service identity of each JVM and a built baseline of its legitimate children;
+          app servers that run scripts have large baselines.
+      - condition: 'cross-source-join-required'
+        note: 'Strategies three and four join process events to network or file events.'
+    summary: >-
+      A child the service has no history of starting is unexpected against a stable per-service
+      baseline; no rate is measured or sourced (see expected_volume). Rank by child type, command line, uid and outbound or write follow-ons.
+
+attack_surface_context:
+  surface: >-
+    A server JVM (application server, embedded servlet container or standalone Java service) and
+    its process-spawn path on Linux and Windows.
+  how_the_surface_works: >-
+    On Linux JDK 17 the default POSIX_SPAWN launch makes a new pid that execs jspawnhelper, then
+    the target in that pid; jdk.lang.Process.launchMechanism can pick FORK or VFORK, no helper
+    (REF-JDK17U-PROCESSIMPL). Build and ops tools start scripts through the same path, and Java 8 and 11 were not checked.
+  incident_processing_path: >-
+    No source documents a post-exploitation step for this CVE. Sysdig lists a JVM spawning a shell
+    as what to watch (REF-SYSDIG-JAVA4SHELL) and CISA says to monitor suspicious Java processes
+    (REF-CISA-ALERT-2026-11-17); that an exploit would start a child is this pack's inference, and a crash or 5xx is at most an attempt.
+  processing_stages:
+    - 'code-runs-in-server-jvm'
+    - 'jvm-requests-child-process'
+    - 'spawn-helper-or-direct-exec'
+    - 'shell-or-final-command-starts'
+    - 'child-network-or-file-activity'
+    - 'process-creation-recorded'
+  stage_evidence: >-
+    A process creation record proves a child started and its lineage, not why. A sensor logging
+    only successful creation records nothing for a failed spawn; auditd syscall rules can log failed calls (REF-AUDIT-RULES).
+  trust_boundaries: >-
+    The JVM-to-host boundary: reached only if code runs. Code execution is claimed by labs
+    that withheld or did not detail their chains (REF-CALIF-JAVA4SHELL, REF-HADRIAN-JAVA4SHELL)
+    and Blackpoint states it did not reproduce it (REF-BLACKPOINT-JAVA4SHELL); no source read reports
+    a successful compromise.
+  security_control_context: >-
+    Sandboxing, seccomp or container policy can stop a spawn and EDR may block or only log; this object reads the record, not the block. Published rules are name lists (see strategy one).
+  special_context:
+    topic: 'jspawnhelper-exec-in-child-pid-and-exec-replacement'
+    context: >-
+      By parent pid, java parents the final image: its child pid execs jspawnhelper, then the
+      target (lab execve trace). Exec-event sensors log two records in that pid, both with parent
+      java. Bash exec-replacement hides the shell only from snapshot views; exec events keep it.
+  technology_variants:
+    - variant: 'linux-jdk17'
+      context: >-
+        Lab: a native arm64 execve trace showed java's child pid exec jspawnhelper then sh; an
+        emulated Corretto 17 bash /proc view showed java parenting the final command. Java 8 and 11,
+        FORK or VFORK launch, and sensor records were not checked.
+    - variant: 'windows-java-service'
+      context: >-
+        Not lab-tested. java.exe or javaw.exe parents the child. Procrun --StartMode=jvm runs Java
+        in-process in the service exe (REF-PROCRUN), as in Tomcat's install example
+        (REF-TOMCAT-SERVICE), so the parent is that exe, not java.exe.
+  practitioner_implication: >-
+    Discover, per service, which processes host a server JVM (java, or a service exe running it
+    in-process), their normal children, whether the sensor keeps the exec after jspawnhelper in a
+    pid, and which build or ops tools legitimately spawn from java.
+
+threat_research:
+  why_it_matters: >-
+    If a code-execution path exists, a child process is one possible follow-on observable against the service baseline, which CISA's generic Java-process monitoring advice and Sysdig's conditional aftermath description point to (REF-CISA-ALERT-2026-11-17, REF-SYSDIG-JAVA4SHELL).
+  threat_actor: 'Unknown. No source attributes any activity to an actor.'
+  actor_class: 'generic-server-process-spawn'
+  campaign: >-
+    CVE published 2026-11-17 (REF-CVE-API); vendor fixes out for most distributors. Absent from CISA
+    KEV catalog 2026.11.18, checked 2026-11-18 12:05 PT (REF-CISA-KEV), and GreyNoise's 11:18 PT snapshot shows attempts observed
+    with no successful compromise reported (REF-GREYNOISE-JAVA4SHELL).
+  victim: 'No victim documented.'
+  capability: >-
+    Calif and Wiz state code execution on named applications, chains unpublished, and
+    Hadrian in its own lab (REF-CALIF-JAVA4SHELL, REF-WIZ-JAVA4SHELL, REF-HADRIAN-JAVA4SHELL).
+    Others report crashes, corruption and a disclosure (REF-THN-JAVA4SHELL,
+    REF-UPWIND-JAVA4SHELL). No source documents a child process for this CVE.
+  target: >-
+    Server JVMs; nothing is publicly documented as reached and a child process is not proof of exploitation.
+  victimology:
+    - 'Network-facing Java services on any build, since the behavior is generic.'
+  framework_mappings:
+    - framework: 'MITRE ATT&CK'
+      technique_mapping_status: 'mapped'
+      id: 'T1059.004'
+      name: 'Command and Scripting Interpreter: Unix Shell'
+      evidence: >-
+        Closest label for a shell child of a Linux server process; download, script and other non-shell children fall outside it. Mapped by behavior, with no source reporting it for this CVE.
+    - framework: 'MITRE ATT&CK'
+      technique_mapping_status: 'mapped'
+      id: 'T1059.003'
+      name: 'Command and Scripting Interpreter: Windows Command Shell'
+      evidence: >-
+        Closest label for cmd.exe as a child of a Windows Java process; mapped by behavior and not
+        lab-tested.
+
+visibility:
+  telemetry_sources:
+    - source: 'EDR process creation events with parent lineage and command line (Linux and Windows)'
+      purpose: >-
+        Show the child, its parent after any jspawnhelper exec in its pid, security identity and
+        command line, or each exec within one pid.
+      event_vocabulary: 'host-process-event'
+      tier: 'no-tier-model'
+      operational_viability: 'on-by-default'
+      operational_viability_note: >-
+        An inference: Microsoft says Defender for Endpoint populates the table and Elastic says Defend collects most categories by default (REF-MDE-DEVICEPROCESSEVENTS,
+        REF-ELASTIC-DEFEND-POLICY), and neither states each event and field per OS, so verify them per sensor, OS and policy first.
+      fields:
+        - name: 'FileName, ProcessCommandLine and InitiatingProcessFileName (DeviceProcessEvents)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-MDE-DEVICEPROCESSEVENTS'
+          load_bearing: true
+          note: 'Microsoft Defender for Endpoint; the initiating process is the parent, with InitiatingProcessParentFileName one level up.'
+        - name: 'process.parent.executable and process.name (Elastic Defend logs-endpoint.events.process*)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-ELASTIC-REVERSE-SHELL-JAVA'
+          load_bearing: true
+          note: 'Linux; Elastic shipped rule reads them on event.action "exec" with parent java and a shell child, joined by process.parent.entity_id.'
+        - name: 'parent image and command line, and each exec within one pid'
+          attestation: 'other'
+          note: >-
+            Lab execve trace on Linux JDK 17: the target's parent is java and its pid first execs
+            jspawnhelper. EDR field names vary and were not checked.
+          load_bearing: true
+        - name: 'security identity of the new process (Linux real and effective uid; Windows user SID or account)'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+          note: 'Attribute by that identity and lineage. No source read attests an EDR field carrying both Linux uids, so verify per sensor; the Linux Audit field dictionary names uid and euid (REF-LINUX-AUDIT-FIELDS).'
+      details: >-
+        One record per child with image, command line and parent from an EDR sensor.
+      advantages:
+        - 'Sees a spawn that no application log records.'
+      limitations:
+        - 'Each default spawn adds a jspawnhelper exec in the child pid; a sensor keeping one image per pid may name the helper.'
+        - 'Snapshot views lose an exec-replaced shell; exec events keep it.'
+        - 'Hosts without a sensor emit nothing; Windows lineage was not lab-tested.'
+        - 'Sensor failure to attribute containers to a service needs enrichment.'
+    - source: 'Sysmon Event ID 1 (Windows and Linux) or Windows Security 4688 with command line'
+      purpose: 'Give the same child, parent and command line on hosts with native logging instead of an EDR.'
+      event_vocabulary: 'host-process-event'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'Image, CommandLine, ParentImage and ParentProcessGuid (Sysmon Event ID 1)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-SYSMON-MANIFEST'
+          load_bearing: true
+          note: 'Named in the Sysmon manifest, schema 4.90, with User and ParentUser; Sysmon for Linux output was not captured in the lab.'
+        - name: 'New Process Name, Creator Process Name, Process Command Line and Creator Subject Security ID (Security Event 4688)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-MS-EVENT-4688'
+          load_bearing: true
+          note: 'Windows alternative: Creator Process Name exists only from event version 2 (Windows 10) and Process Command Line stays empty until the Include command line policy is enabled.'
+        - name: 'ImageLoaded (Sysmon Event ID 7)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-SYSMON-MANIFEST'
+          load_bearing: false
+          note: 'EID 7 is off by default (REF-SYSMON), so this is a condition: a jvm.dll load marks a Windows service exe that hosts the JVM only where image loads are collected.'
+        - name: 'Processes.parent_process_name and Processes.process_guid (Splunk CIM Endpoint.Processes)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-SPLUNK-JAVA-WRITING-JSP'
+          load_bearing: true
+          note: 'Splunk CIM data model fields filled by the endpoint add-on, not sensor field names; the ESCU search lists Sysmon for Linux EID 1 as its data source.'
+      details: >-
+        One record per child with image, command line and parent, with Sysmon fields taken from its
+        manifest and 4688 fields from Microsoft's event page.
+      limitations:
+        - 'Sysmon must be installed with a configuration; 4688 needs process-creation auditing and the command-line policy enabled.'
+        - 'Sysmon EID 1 carries User and ParentUser and no Linux real and effective uid pair (REF-SYSMON-MANIFEST), so the uid ranking clause needs auditd or a sensor that exports both.'
+    - source: 'Linux auditd execve rules'
+      purpose: 'Give each exec on a Linux host with its parent pid and identity where no EDR runs.'
+      event_vocabulary: 'kernel-audit'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'pid, ppid, uid, euid, auid, exe and comm (SYSCALL record of an execve)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-LINUX-AUDIT-FIELDS'
+          load_bearing: true
+          note: 'The dictionary defines each field; that the SYSCALL record carries them was not captured in the lab. The auid is not the actor, so attribute by uid and euid with lineage.'
+        - name: 'argc and the a0, a1 and later arguments (EXECVE record)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-LINUX-AUDIT-FIELDS'
+          load_bearing: true
+          note: 'Defined as the arguments to the execve syscall, of encoded type; they are the command line for this source.'
+      details: >-
+        An execve rule yields a SYSCALL and an EXECVE record per exec (types 1300 and 1309,
+        REF-AUDIT-MESSAGE-DICTIONARY); the parent image comes from a join on ppid.
+      limitations:
+        - 'No execve rule is loaded by default; a broad rule is costly on busy hosts.'
+        - 'Parent by pid only, so the parent image needs a join that pid reuse can break.'
+    - source: 'EDR network connection events with process attribution'
+      purpose: 'Show a first-seen outbound connection from the JVM or the child tree.'
+      event_vocabulary: 'flow-record'
+      tier: 'no-tier-model'
+      operational_viability: 'on-by-default'
+      operational_viability_note: >-
+        An inference: Microsoft says Defender for Endpoint populates the table and Elastic says Defend collects most categories by default (REF-MDE-DEVICENETWORKEVENTS,
+        REF-ELASTIC-DEFEND-POLICY), and neither states each event and field per OS, so verify them per sensor, OS and policy first.
+      fields:
+        - name: 'RemoteIP, RemotePort and InitiatingProcessId (DeviceNetworkEvents)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-MDE-DEVICENETWORKEVENTS'
+          load_bearing: true
+          note: 'Microsoft Defender for Endpoint; the connection is tied to the initiating process.'
+        - name: 'process.entity_id (Elastic Defend logs-endpoint.events.network*)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-ELASTIC-REVERSE-SHELL-JAVA'
+          load_bearing: true
+          note: 'Linux; the shipped rule keys a java connection_accepted or connection_attempted event by process.entity_id to the child exec by process.parent.entity_id.'
+      details: >-
+        A connection tied to the child or its JVM parent by process identity.
+      limitations:
+        - 'JVMs make outbound calls all the time.'
+        - 'Whether a sensor keeps every connection or aggregates repeats was not checked per product.'
+    - source: 'Sysmon Event ID 3 network connections'
+      purpose: 'Give the same process-attributed connection on Windows hosts that run Sysmon.'
+      event_vocabulary: 'flow-record'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'ProcessGuid (Sysmon Event ID 3)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-SYSMON'
+          load_bearing: true
+          note: 'Microsoft documents EID 3 network connections as disabled by default and linked to the process by ProcessId and ProcessGuid.'
+      details: >-
+        A connection linked to the process by ProcessGuid.
+      limitations:
+        - 'Off by default in Sysmon (REF-SYSMON) and needed on the JVM too.'
+    - source: 'Network flow logs without process attribution'
+      purpose: 'Give host and time context for an outbound connection near the child start; never the process join strategy three needs.'
+      event_vocabulary: 'flow-record'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      operational_viability_note: >-
+        Cloud and network flow logging defaults differ by provider and device and none was
+        sourced, so the cautious rating stands.
+      details: >-
+        Source and destination by host and time only.
+      limitations:
+        - 'Flow logs without process attribution support only a host-level coincidence, reported as context and rejected for the exact join.'
+    - source: 'EDR file-create events'
+      purpose: 'Show a file written by the JVM that is later executed as a child.'
+      event_vocabulary: 'host-process-event'
+      tier: 'no-tier-model'
+      operational_viability: 'on-by-default'
+      operational_viability_note: >-
+        An inference: Microsoft says Defender for Endpoint populates the table and Elastic says Defend collects most categories by default
+        (REF-MDE-DEVICEFILEEVENTS, REF-ELASTIC-DEFEND-POLICY), and neither states each event and field per OS, so verify them per sensor, OS and policy first.
+      fields:
+        - name: 'FolderPath, FileName and InitiatingProcessFileName (DeviceFileEvents)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-MDE-DEVICEFILEEVENTS'
+          load_bearing: true
+          note: 'Microsoft Defender for Endpoint; ActionType values such as FileCreated are deferred to the portal schema reference and not attested here.'
+      details: >-
+        Gives the writer process and path; joined to a later process creation of that path.
+      limitations:
+        - 'JVMs write temp and cache files constantly; the join, not the write, carries the signal.'
+        - 'A path is not a file identity (REF-INODE-7); whether a sensor exports a hash or inode on both events was not checked.'
+        - 'Some EDR products record file creates selectively by file type or path, so a script or binary in a temp path may be dropped; not checked per product.'
+    - source: 'Sysmon Event ID 11 file create'
+      purpose: 'Give the same writer and path on hosts that run Sysmon instead of an EDR.'
+      event_vocabulary: 'host-process-event'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'TargetFilename, Image and ProcessGuid (Sysmon Event ID 11)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-SYSMON-MANIFEST'
+          load_bearing: true
+          note: 'Named in the Sysmon manifest, schema 4.90, which sets the FileCreate rule default to exclude, so creates on the paths that matter are a configuration condition.'
+        - name: 'Filesystem.file_path and Filesystem.process_guid (Splunk CIM Endpoint.Filesystem)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-SPLUNK-JAVA-WRITING-JSP'
+          load_bearing: true
+          note: 'Splunk CIM data model fields, not sensor field names; the ESCU search joins the java writer to Endpoint.Processes on process_guid.'
+      details: >-
+        Gives the writer process and path; joined to a later process creation of that path.
+      limitations:
+        - 'Sysmon must be installed and its configuration must keep creates on the paths that matter.'
+    - source: 'Container runtime process events'
+      purpose: 'Show a shell or tool started inside a Java workload container.'
+      event_vocabulary: 'host-process-event'
+      tier: 'no-tier-model'
+      operational_viability: 'opt-in'
+      fields:
+        - name: 'container and workload identity on the process event'
+          attestation: 'unattested-inferred'
+          load_bearing: true
+          note: 'Runtime-sensor field names for container identity were not checked.'
+        - name: 'pathname (Tracee security_bprm_check)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-TRACEE-ILLEGITIMATE-SHELL'
+          load_bearing: true
+          note: 'Path of the shell being executed; Tracee builds its illegitimate-shell signature on it.'
+        - name: 'command line, user identity and creation ancestry of the new process'
+          attestation: 'unattested-inferred'
+          load_bearing: false
+          note: 'Absent from the Tracee page, which names pathname, comm, interpreter and stdin_type; take each from a sensor field verified per product or from auditd, else the alert carries it as unavailable or inferred.'
+        - name: 'comm (Tracee security_bprm_check)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-TRACEE-ILLEGITIMATE-SHELL'
+          load_bearing: false
+          note: 'Aqua calls it the web server process name. The lab saw the child pid exec jspawnhelper before the target, so comm may read jspawnhelper, not java; not lab-checked with Tracee.'
+        - name: 'commandLine and metadata_product (Sumo Logic Cloud SIEM normalized schema)'
+          attestation: 'vendor-attested'
+          attestation_ref: 'REF-SUMO-MATCH-S00659'
+          load_bearing: false
+          note: 'Sumo normalized record fields for Docker, used by its package-manager-in-container rule; they carry no parent or Java service identity.'
+      details: >-
+        Where the image runs no scripts a shell is unexpected under a Java-only service, though no rate is measured; the event names the
+        container and image so no service baseline need be built from scratch.
+      limitations:
+        - 'Exec sessions and kubelet exec probes start outside the JVM tree, but java as PID 1 adopts their orphans (REF-PID-NAMESPACES); only creation ancestry, not a later parent, separates them.'
+        - 'Not lab-tested; runtime-sensor coverage was not checked.'
+
+detection:
+  scope: >-
+    Six strategies: first-seen children per service on Linux, a Windows JVM host starting a shell,
+    a child plus a first-seen outbound connection, a file written then run, a shell in a Java
+    container, and a JVM pid that execs a non-Java image. All are generic and in-JVM activity is out of scope.
+  outcome_guardrails: >-
+    A child process is a possible follow-on, not proof of exploitation, and a crash, a 5xx or a name-list match is not a child. An outbound connection or a written file alone is weak, and a sensor that logs only successful creation leaves nothing for a failed spawn.
+  shared_normalization_context: >-
+    Drop the jspawnhelper exec record and judge the next exec in that pid, whose parent is java.
+    Java as PID 1 adopts orphans (REF-PID-NAMESPACES): prefer creation lineage, else mark the
+    parent inferred. Identify the service by command line or JVM host process, not the name java.
+  shared_enrichment_context: >-
+    A per-service baseline of children over a 30-day window, build and ops tool allow lists keyed
+    on user and path, and container workload labels where present.
+  strategies:
+    - id: 'STRAT-SERVICE-BASELINE-FIRST-SEEN-CHILD'
+      name: 'First-seen child executable of a server JVM (Linux, jspawnhelper-aware)'
+      objective: >-
+        Detect a child executable, by image and argv, that a given Java service has not started in
+        its baseline, with the jspawnhelper exec record dropped.
+      incident_relevance: >-
+        Generic: detects a possible later consequence of code execution in a Java server, the
+        activity CISA's generic Java-process monitoring advice and Sysdig's conditional aftermath
+        description point to (REF-CISA-ALERT-2026-11-17, REF-SYSDIG-JAVA4SHELL); not this CVE and not proof of exploitation.
+      detection_logic: |
+        Per service (command-line identity), keep the set of child images seen over 30 days.
+        Take every exec whose parent is the service JVM, whatever the launch path (helper, FORK,
+        VFORK or native code). Drop an exec of the JDK's jspawnhelper and judge the next exec in
+        that pid. Alert on an image not in the set, ranked up for a shell, interpreter, download or
+        recon tool, a writable-path image, a real or effective uid other than the service's (not auid) or a suid image, or a small
+        baseline. Rank first-seen args of a known child low. Seed from history before the review
+        window, never from sessions under investigation.
+      minimum_evidence: >-
+        A process creation with child image and command line whose parent is a server JVM, after
+        any jspawnhelper exec in that pid is dropped, plus the service identity and its baseline.
+        Without a baseline, report a Java-parented shell, not a first-seen child.
+      correlation_context: >-
+        Keys are host, service identity and pid. Join the live JVM process's build verdict from DT-J4SH-ESTATE-001 as a ranking aid: rank up on affected or mitigated-not-patched; unknown and not affected never lower rank or clear the alert, as a fixed JVM can still spawn, so the join never gates and is not Java4Shell coverage.
+      detectors:
+        - detector_class: 'endpoint-process-lineage-detection'
+          technologies:
+            - 'EDR with process creation and parent chain'
+            - 'Linux auditd with execve rules'
+            - 'Sysmon for Linux'
+          contribution: 'Gives the child and the parent chain so the baseline test is exact, with uids where the sensor exports them.'
+          limitations: >-
+            Must keep each exec in a pid, not only the first, so the target after jspawnhelper
+            shows; Sysmon gives one User and not the real and effective uid pair; auditd and Sysmon for Linux were not exercised in the lab, only an execve trace.
+        - detector_class: 'siem-lookup-enriched-analytic'
+          technologies:
+            - 'Splunk'
+            - 'Elastic'
+            - 'Microsoft Sentinel'
+            - 'Google SecOps'
+          contribution: 'Holds the per-service baseline as a lookup and applies the first-seen test.'
+          limitations: 'Only as good as service identity in the process events and baseline freshness.'
+        - detector_class: 'name-list-complement'
+          technologies:
+            - 'Splunk ES Web or Application Server Spawning a Shell (8fdb41ad-091c-4d7a-af1d-9123fe94b539)'
+            - 'SigmaHQ proc_creation_lnx_susp_java_children'
+            - 'Elastic detection-rules issue 7199 (community open proposal, not shipped)'
+          contribution: >-
+            Published name-list rules: Splunk adds server command-line patterns
+            (REF-SPLUNK-8FDB41AD); Sigma matches a /java parent and a child command line containing shell names, curl,
+            wget or python as substrings (REF-SIGMA-LNX-JAVA-CHILDREN). Elastic's is an open proposal, not shipped
+            (REF-ELASTIC-DR-7199). Complements only.
+          limitations: >-
+            This pack's reading: misses any child not on the list, including a tool run directly
+            with no shell; Splunk's also needs a recognised server command line. None of the
+            Splunk and Sigma rules mentions this CVE.
+      benign_explanations:
+        - explanation: >-
+            A build tool, CI step or deploy script running under a Java process starts shells and
+            compilers.
+          distinguishing_context: >-
+            A build or CI service identity, a managed path, a deploy window and a known user.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding java parents broadly removes the signal; exclude a named build service and
+            its user instead.
+        - explanation: >-
+            An application server that legitimately runs scripts, such as shell hooks or
+            report generators, starts shells on a schedule.
+          distinguishing_context: >-
+            The same child and arguments in the 30-day baseline for that service.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Allow-listing the shell for that service also hides a shell started by an intruder;
+            key on the exact command and path, and keep first-seen args low rank, not excluded.
+        - explanation: >-
+            A health-check or monitoring probe launched by the JVM runs a short script.
+          distinguishing_context: 'A fixed command, interval and path, present in the baseline.'
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding by command-line substring such as health lets an adversary name a command to
+            match; match the exact path and parent.
+        - explanation: >-
+            A default spawn on Linux JDK 17 logs a jspawnhelper exec in the child pid before the
+            real target.
+          distinguishing_context: >-
+            Its image is the JDK's lib/jspawnhelper and the next exec in that pid is the real child;
+            judge that one.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Dropping the helper exec record is fine; excluding its pid, or any child of java, hides
+            the real child that follows.
+        - explanation: >-
+            A JVM -XX:OnError or -XX:OnOutOfMemoryError hook runs its configured command at a fatal
+            error or the first OutOfMemoryError (REF-ORACLE-JAVA-MAN).
+          distinguishing_context: >-
+            Read the effective hook from the live process (jcmd VM.flags), since an options
+            variable can set it off the command line. HotSpot splits it on ';', expands %p and
+            runs each part as /bin/sh -c (REF-JDK17U-VMERROR, REF-JDK17U-OS-POSIX); expect those
+            shells and their descendants at the error time DT-J4SH-HOST-002 reports.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            A real crash also runs the hook, so allow only those expected shells and their
+            descendants from that JVM at error time and keep every other child visible. Never
+            suppress children near a crash, and label the hook check unknown, never non-hook, where
+            the effective hook or lineage is unresolved.
+        - explanation: >-
+            Java runs as PID 1 in a container and adopts an orphan left by an exec session, probe or
+            entrypoint script, which then execs; java did not spawn it (REF-PID-NAMESPACES).
+          distinguishing_context: >-
+            Creation lineage or a reparent record shows it began under the session or probe; its
+            first exec postdates a pods/exec audit record or probe run.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Do not drop every child of a PID-1 JVM; without creation lineage report the parent as
+            inferred, not as adoption.
+      forbidden_exclusions:
+        - field: 'the pid of a jspawnhelper exec, or the java parent name'
+          reason: 'The real child runs in the helper pid with java as parent; excluding it suppresses the incident record.'
+        - field: 'login uid or auditd auid'
+          reason: 'Not the actor; attribute by real uid and lineage.'
+        - field: 'child command-line text'
+          reason: 'Adversary-chosen and not a discriminator.'
+      validation:
+        status: 'lab-telemetry-verified'
+        evidence: >-
+          Checked in a telemetry-only lab (ordinary JVM runs, flag dumps and benign crashes;
+          the vulnerability was not triggered): kernel lineage from an execve trace and process
+          snapshots, by hand. No sensor record was captured.
+        method: >-
+          Lab, 2026-11-17: a benign program starting a child on Temurin 17 and 21 (Debian, Ubuntu)
+          and Corretto 17 (Amazon Linux, bash), process snapshots under emulation; an execve trace
+          on native arm64 Temurin 17 only. auditd, Falco and EDR were not captured.
+        measured: >-
+          Execve trace: java's child pid exec'd jspawnhelper, then sh, whose parent is java.
+          Snapshots: java, sh, sleep. Corretto bash: java parented the final command, no shell
+          left.
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: >-
+          No source gives a rate; it depends on how many services run scripts and on baseline completeness and is high without a baseline.
+      blind_spots:
+        - description: >-
+            Coverage limit: activity that stays inside the JVM starts no child, and native code that
+            execs in the JVM's own pid has no java parent; strategy six covers the latter.
+          routes_to: null
+        - description: >-
+            Missing telemetry: hosts with no process sensor, or a sensor that keeps only the
+            jspawnhelper image for the child pid, emit nothing usable.
+          routes_to: null
+        - description: >-
+            Baseline: an intruder who persists past the baseline window can become part of it
+            unless seeding excludes the investigation period.
+          routes_to: null
+        - description: >-
+            Scope: an attempt that only crashes the JVM starts no child; the crash object covers
+            the fatal error.
+          routes_to: 'DT-J4SH-HOST-002'
+      analyst_response: >-
+        Read the parent (skip a jspawnhelper exec in the pid), the child image and command line,
+        the real uid (not auid) and the service. Check what the service normally starts, its effective error hooks,
+        deploy and build records, then the child's outbound connections and written files.
+      safe_conclusion: >-
+        A server JVM started a child it has not started in its baseline; it does not establish
+        exploitation or that this CVE was involved.
+    - id: 'STRAT-WINDOWS-JAVA-PARENT-SHELL-OR-LOLBIN'
+      name: 'Windows JVM host (java.exe, javaw.exe or in-process service exe) parent of a shell, script host or LOLBin'
+      objective: >-
+        Detect cmd, PowerShell, script hosts or living-off-the-land binaries whose parent hosts a
+        JVM: java.exe, javaw.exe, or a service exe running Java in-process.
+      incident_relevance: >-
+        Generic and not lab-tested on Windows: detects a possible later consequence of code execution in a Windows Java service, not this CVE.
+      detection_logic: |
+        On Windows process creation with full command line (Sysmon EID 1 or Security 4688 with
+        command-line capture), alert when the parent hosts a JVM: java.exe, javaw.exe, or a
+        service exe known to load jvm.dll (Sysmon EID 7, off by default, or its procrun config),
+        and the child is cmd, powershell, pwsh, wscript, cscript, mshta, rundll32, certutil,
+        bitsadmin or another LOLBin. Rank up for encoded or download arguments, a writable-path
+        image, or a child new to the service's baseline. Do not exclude by the service account alone; an allow list needs account plus exact path and parent, as in strategy one.
+      minimum_evidence: >-
+        A process creation with child image and command line, and a parent shown to host a JVM by
+        name or a jvm.dll load. Without that, report a java.exe or javaw.exe parented child only.
+      correlation_context: >-
+        Keys are host, parent ProcessGuid or pid, and service identity. Raw fields are Sysmon ParentImage, Image and CommandLine or 4688 Creator Process Name, New Process Name and Process Command Line. An in-process host shows no jar or main class, so identify it from the service config or a jvm.dll load.
+      detectors:
+        - detector_class: 'endpoint-process-lineage-detection'
+          technologies:
+            - 'EDR with process creation and command line'
+            - 'Sysmon'
+          contribution: 'Gives parent, child and full command line, so the shape test is direct.'
+          limitations: 'Conditions: Sysmon EID 7 is off by default (REF-SYSMON), and 4688 names the parent only from event version 2 and leaves Process Command Line empty until its policy is enabled (REF-MS-EVENT-4688).'
+        - detector_class: 'name-list-complement'
+          technologies:
+            - 'SigmaHQ proc_creation_win_java_susp_child_process'
+          contribution: >-
+            Matches a parent ending java.exe and 23 child names such as certutil, mshta, rundll32,
+            wscript and sh.exe; no cmd or PowerShell; status test; no CVE mention
+            (REF-SIGMA-WIN-JAVA-CHILD).
+          limitations: >-
+            Misses javaw.exe and in-process service exe parents (procrun jvm mode), cmd and
+            PowerShell children, and any child off the list.
+      benign_explanations:
+        - explanation: >-
+            An installer, updater or build step run from a Java launcher starts cmd or PowerShell.
+          distinguishing_context: 'A known install window, signed script path and managed account.'
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding all cmd children of java hides the main case; match the exact script path.
+        - explanation: >-
+            An application server's own management scripts run through cmd.
+          distinguishing_context: 'The same script path and arguments in the 30-day baseline.'
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Allow-listing cmd for that service also hides an intruder's cmd; key on exact path and
+            arguments.
+        - explanation: >-
+            A service wrapper restarting or probing the JVM runs a helper script.
+          distinguishing_context: 'A fixed command and interval from the wrapper configuration.'
+          overlaps_incident_instance: false
+        - explanation: >-
+            A JVM -XX:OnError or -XX:OnOutOfMemoryError hook runs its configured command, such as a
+            dump utility, at a fatal error or the first OutOfMemoryError (REF-ORACLE-JAVA-MAN).
+          distinguishing_context: >-
+            As in strategy one, read the effective hook from the live process (jcmd VM.flags); on Windows HotSpot starts each part as cmd /C (REF-JDK17U-VMERROR, REF-JDK17U-OS-WINDOWS), so expect that cmd.exe and its descendants at the crash or OOM.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            As in strategy one: allow only those expected cmd /C executions and their descendants from that JVM at error time, never suppress children near a crash, and label the hook check unknown, never non-hook, where the effective hook or lineage is unresolved.
+      forbidden_exclusions:
+        - field: 'the service account or logon user'
+          reason: 'The service account is the actor under the JVM; excluding it hides the incident record.'
+        - field: 'child command-line substrings'
+          reason: 'Adversary-chosen and not a discriminator.'
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: 'No source gives a rate; depends on installers and management scripts on the estate.'
+      blind_spots:
+        - description: >-
+            Not lab-tested: Windows lineage, wrapper parent chains and javaw.exe behavior were not
+            checked.
+          routes_to: null
+        - description: >-
+            Coverage limit: a child binary outside the name list is missed here; the baseline test in
+            strategy one does not depend on a list.
+          routes_to: null
+        - description: >-
+            Scope: a service exe hosting Java in-process is missed unless EID 7 or its config
+            identifies it as a JVM host.
+          routes_to: null
+        - description: >-
+            Missing telemetry: Security 4688 without command-line capture, or no Sysmon, gives no
+            arguments to rank.
+          routes_to: null
+      analyst_response: >-
+        Read the parent chain, the full command line and the service account. Check for the
+        service's management scripts, then outbound connections and files written by the child.
+      safe_conclusion: >-
+        A process hosting a JVM (java.exe, javaw.exe or a service exe) started a shell, script host
+        or LOLBin; it does not establish exploitation or this CVE.
+    - id: 'STRAT-UNEXPECTED-CHILD-PLUS-FIRST-SEEN-OUTBOUND'
+      name: 'Unexpected child plus a first-seen outbound connection from the same process tree'
+      objective: >-
+        Detect an unexpected child of a server JVM followed by a first-seen outbound connection
+        from the JVM or the child tree, raising confidence above either signal.
+      incident_relevance: >-
+        Generic corroboration that is weak alone and only raises a child alert as a correlated behavior candidate, with the crash-loop link this pack's reading of generic advice (REF-CISA-ALERT-2026-11-17, REF-SYSDIG-JAVA4SHELL); not this CVE and not proof of exploitation.
+      detection_logic: |
+        When strategy one or two fires, set the hook check (expected, non-hook or unknown, per
+        the hook twin) and read the deploy record, then join any outbound connection by the
+        JVM process or the child tree (ProcessGuid, or pid with start time), opened within 10
+        minutes of the child start (pack choice), to a destination outside the service's
+        30-day baseline. Record a destination a deploy change names as deploy-named, unraised. Label a JVM-held connection context; only a child-held one shows the child connected. Never alert on a connection alone. Raise for a host-first-seen
+        destination or a shell or download child, and for a prior crash loop (DT-J4SH-HOST-002)
+        only when the hook check is non-hook.
+      minimum_evidence: >-
+        An unexpected-child alert with its hook check stated, a connection tied by process identity to the JVM or the child
+        tree with the holder named, and the destination's state as first-seen or deploy-named. Without process
+        attribution, report a host-level coincidence at lower rank as context only.
+      correlation_context: >-
+        Keys are host and ProcessGuid, process.entity_id or pid chain including the JVM; exact with EDR network events or Sysmon EID 3,
+        off by default and needed on the JVM too. Flow logs give host and time context only, never the exact join. Clock
+        skew and ingestion delay reorder events.
+      detectors:
+        - detector_class: 'siem-sequential-correlation'
+          technologies:
+            - 'Splunk'
+            - 'Elastic'
+            - 'Microsoft Sentinel'
+            - 'Google SecOps'
+          contribution: 'Joins child alerts to network events on the process tree within a window.'
+          limitations: 'Needs process-attributed network events: EDR network events where the sensor and policy collect them, or Sysmon EID 3, which is off by default; flow logs do not qualify.'
+        - detector_class: 'endpoint-process-and-network-analytics'
+          technologies:
+            - 'EDR with network events'
+            - 'Sysmon EID 1 and EID 3'
+          contribution: 'Gives the child and its connection under one process identity.'
+          limitations: 'Coverage and field names vary by sensor; not lab-tested.'
+      benign_explanations:
+        - explanation: >-
+            A build or deploy child downloads dependencies or artifacts from a repository.
+          distinguishing_context: 'A managed repository destination and a build service identity.'
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding by destination domain hides an adversary using the same host; match the
+            managed repository set and the service.
+        - explanation: >-
+            A health-check or monitoring child contacts an internal endpoint.
+          distinguishing_context: 'A fixed internal destination already in the baseline.'
+          overlaps_incident_instance: false
+        - explanation: >-
+            A freshly deployed service legitimately calls a new upstream.
+          distinguishing_context: 'A deploy record whose change names the destination, which the logic records as deploy-named and does not raise.'
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Suppressing every new destination after a deploy also hides an intruder's first
+            connection; require the deploy to name the destination.
+        - explanation: >-
+            A crash-looping service runs its -XX:OnError hook shell at each fatal error, so a crash
+            loop and a shell child coincide (REF-ORACLE-JAVA-MAN).
+          distinguishing_context: >-
+            The shell matches the effective hook read from the live process and starts at the crash time, so the
+            hook check is expected and the crash-loop raise does not apply.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            A real crash also runs the hook, so set aside only the expected hook shells and their descendants; every other child of that JVM and its attributed connections keep full rank, and an unknown hook check is labelled and never treated as expected.
+      forbidden_exclusions:
+        - field: 'destination address or domain alone'
+          reason: 'Adversary-chosen; also no atomic indicator belongs in a rule exclusion list.'
+        - field: 'the JVM parent as a trusted outbound source'
+          reason: 'JVM outbound is normal; the child tree is the signal and excluding it hides the incident.'
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: 'No source gives a rate; reduces strategy-one volume by requiring a follow-on.'
+      blind_spots:
+        - description: >-
+            Missing telemetry: no process-attributed network events; host-level flow logs cannot
+            tie a connection to the tree.
+          routes_to: null
+        - description: >-
+            Coverage limit: a child with no network activity, or one that connects only to a
+            baseline destination, gives no first-seen connection to join.
+          routes_to: null
+        - description: >-
+            Timing: a connection after the join window is missed; widen only with a process tree
+            key.
+          routes_to: null
+      analyst_response: >-
+        Read the child, its hook check, the connection and its state, the destination's history for the host, and
+        the service's deploy record. Check what the child wrote and ran, and whether the service
+        crash-looped before it under DT-J4SH-HOST-002.
+      safe_conclusion: >-
+        An unexpected child and a first-seen outbound connection share a process tree on a Java
+        server, held by the JVM or the child as stated, with the hook check and destination state recorded; it does not establish exploitation or this CVE.
+    - id: 'STRAT-JVM-WRITES-FILE-THEN-EXECUTES-IT'
+      name: 'Server JVM writes a file and that path is then executed as a child'
+      objective: >-
+        Detect a file created or overwritten by the JVM, or by its child tree, whose path is then
+        started as a process.
+      incident_relevance: >-
+        Generic: a possible follow-on that is weak alone and corroborates a child alert; not this CVE and not proof of exploitation.
+      detection_logic: |
+        Join file-create or overwrite events (Sysmon EID 11, EDR file events or Splunk
+        Endpoint.Filesystem on process_guid) by a server JVM or its descendants to a process
+        creation whose image or script is the same path in the same container or mount namespace,
+        within 10 minutes (this pack's choice, tune per estate). Prefer a file identity on both
+        events (hash, or inode with device) and label a path-only match a candidate correlation,
+        since a path can be reused or replaced. Alert only on the join, never the write. Rank up
+        for temp, web-served or writable paths, an executable or script type, a file the service
+        never executed in baseline and a later outbound connection.
+      minimum_evidence: >-
+        A file event naming the writer by process identity, a process creation with the same path
+        in the same container or mount namespace, and their order and interval. Without a file
+        identity report a candidate path correlation; without the writer identity, an executed
+        file of unknown origin.
+      correlation_context: >-
+        Keys are host, container or mount namespace and normalized path, plus hash or inode with
+        device where the sensor records one (REF-INODE-7); writer by ProcessGuid or pid. Path
+        canonicalization, container mount paths and ingestion delay decide the join.
+      detectors:
+        - detector_class: 'endpoint-file-and-network-analytics'
+          technologies:
+            - 'EDR with file and process events'
+            - 'Sysmon EID 11 and EID 1'
+          contribution: 'Gives the writer, path and later execution under one identity.'
+          limitations: 'File telemetry volume is high; coverage, file identity and field names vary by sensor; not lab-tested.'
+      benign_explanations:
+        - explanation: >-
+            An app server unpacks or compiles generated classes and scripts, then runs them.
+          distinguishing_context: 'A known work directory and the same pattern in the baseline.'
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding the work directory also hides writes there by an intruder; allow only the
+            exact file pattern the service produces.
+        - explanation: >-
+            A deployer or updater writes a script and runs it during a release.
+          distinguishing_context: 'A deploy window and managed account.'
+          overlaps_incident_instance: false
+        - explanation: >-
+            A JVM extracts a native helper to a temp path and launches it.
+          distinguishing_context: >-
+            The helper's hash or signer matches the one the product ships and the service's
+            baseline holds; a fixed name or path alone is not identity.
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            This routine unpack then launch meets the join, so rank a helper of trusted observed
+            identity low and never exclude temp paths or a helper name, which an intruder can copy.
+        - explanation: >-
+            The same path is written in one container and run in another, or the file is replaced
+            between the write and the exec, so a path match joins unrelated events.
+          distinguishing_context: >-
+            Container or mount namespace differs between the two events, or the hash or inode
+            differs where the sensor records one.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Do not drop path-only matches where no file identity exists; keep them labelled
+            candidate correlations.
+      forbidden_exclusions:
+        - field: 'temp or work directories as a class'
+          reason: 'A common drop location and writable by the service; excluding it hides the incident record.'
+        - field: 'file name or extension'
+          reason: 'Adversary-chosen and not a discriminator.'
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: 'No source gives a rate; high for app servers that compile or unpack at runtime.'
+      blind_spots:
+        - description: >-
+            Missing telemetry: no file events, or file events without the writer's process
+            identity.
+          routes_to: null
+        - description: >-
+            Coverage limit: code run from memory, or a file read as data by an interpreter, never
+            appears as a process start of the written path.
+          routes_to: null
+        - description: >-
+            Scope: a file written and run by a different host or after the join window is missed.
+          routes_to: null
+      analyst_response: >-
+        Read the writer and the executing process, the path, its type and age, and whether the
+        service has run it before. Check what the executed file then did and where it connected.
+      safe_conclusion: >-
+        A server JVM wrote a file and that path was then executed in the same container or mount
+        namespace, the same file only where a file identity matched; it does not establish
+        exploitation or this CVE.
+    - id: 'STRAT-CONTAINER-SHELL-IN-JAVA-WORKLOAD'
+      name: 'Shell or tool started inside a Java workload container'
+      objective: >-
+        Detect a shell, interpreter or download tool starting inside a container whose workload is a
+        Java service, with an ancestry to the JVM rather than an exec session or probe.
+      incident_relevance: >-
+        Generic and not lab-tested: detects a possible follow-on in containerized Java; not this CVE and not proof of exploitation.
+      detection_logic: |
+        Alert on a shell, interpreter, download or recon tool starting in a container whose image
+        or workload label names a Java service, by ancestry state. Creation ancestry (fork records
+        or stable process ids reaching the JVM) alerts. An exec-time parent or snapshot is inferred
+        ancestry, since java as PID 1 adopts orphans (REF-PID-NAMESPACES), and alerts lower,
+        labelled inferred. Take command line and identity from a named sensor field or auditd, else
+        carry each as unavailable, lower. Join pods/exec audit and probe spec, recording
+        matched operator, matched probe, no match or unavailable; a match ranks down. No ancestry
+        is a hunt lead only. Rank up for a first-seen child or an outbound connection.
+      minimum_evidence: >-
+        A runtime process event naming the container, workload and child image, with ancestry stated as creation or inferred and the exec audit result as matched, no match or unavailable. Command line and identity come from a named source or are carried as unavailable, and with no ancestry only a hunt lead is raised.
+      correlation_context: >-
+        Keys are container id, workload label and pid. Orchestrator audit names namespace, pod and
+        subresource, not container id, and logs pods/exec only if its policy says so
+        (REF-K8S-AUDIT). Short-lived containers may be gone before enrichment.
+      detectors:
+        - detector_class: 'container-runtime-security-detection'
+          technologies:
+            - 'Falco-style runtime rules'
+            - 'Tetragon'
+            - 'EDR with container awareness'
+          contribution: 'Sees process creation inside the container with workload identity.'
+          limitations: >-
+            The Tracee page attests pathname and comm and no command line, user or parent (REF-TRACEE-ILLEGITIMATE-SHELL), so those need another verified field or auditd. Coverage was not checked or lab-tested, and a rule keyed on a shell name misses
+            an exec-replaced chain.
+      benign_explanations:
+        - explanation: >-
+            An operator opens a debug shell in a Java pod with an exec session.
+          distinguishing_context: >-
+            A matching pods/exec audit record by a known operator; the shell does not descend from
+            the JVM by creation lineage.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Excluding all shells in a debug-labeled namespace hides an intruder there; join the
+            exec audit by namespace, pod and time, and where the policy does not log pods/exec record unavailable, never no match.
+        - explanation: >-
+            A kubelet exec liveness, readiness or startup probe runs its command in the Java
+            container on a fixed period (REF-K8S-PROBES).
+          distinguishing_context: >-
+            The command matches the probe in the pod spec and does not descend from the JVM by creation lineage.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Match the exact probe command from the pod spec, never all shells in the pod.
+        - explanation: >-
+            A process left by an exec session or probe is orphaned and adopted by java as PID 1, so
+            a later exec shows java as parent (REF-PID-NAMESPACES).
+          distinguishing_context: >-
+            Creation lineage or a reparent record shows it began under the session or probe; it
+            follows a matching pods/exec audit record or probe run.
+          overlaps_incident_instance: false
+          tuning_hazard: >-
+            Do not suppress every shell under a PID-1 JVM; keep the alert labelled inferred when
+            creation lineage is missing.
+        - explanation: >-
+            An entrypoint or health script in the image starts a shell.
+          distinguishing_context: 'The script is part of the image, runs at start and in baseline.'
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Excluding the shell for that image also hides a later shell; scope to the entrypoint
+            and its start time.
+      forbidden_exclusions:
+        - field: 'container or namespace name'
+          reason: 'Adversary-reachable workloads keep their names; excluding one hides the incident record.'
+        - field: 'login uid or auid'
+          reason: 'Not the actor; attribute by lineage.'
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: 'No source gives a rate; low on read-only, minimal images, higher where entrypoints run scripts.'
+      blind_spots:
+        - description: >-
+            Missing telemetry: no runtime sensor on the node, or short-lived containers gone
+            before enrichment.
+          routes_to: null
+        - description: >-
+            Coverage limit: a shell-only rule misses a child that is not a shell, such as a tool run
+            directly; the first-seen child test covers it.
+          routes_to: null
+      analyst_response: >-
+        Read the container, image and workload, the ancestry state, the child and whether command line and identity were available. Check the exec audit result, the probe spec,
+        the entrypoint and what the container then connected to or wrote; preserve the container
+        before it is replaced.
+      safe_conclusion: >-
+        A shell or tool started in a Java workload container with Java ancestry stated as creation or
+        inferred and the exec audit result as matched, no match or unavailable. Inferred ancestry, unavailable audit or a missing command line or identity leaves a lower-confidence candidate, never proof of exploitation or this CVE.
+    - id: 'STRAT-JVM-PID-EXECS-NON-JAVA-IMAGE'
+      name: 'A server JVM process execs a non-Java image in its own pid (Linux)'
+      objective: >-
+        Detect an exec in a pid that was running a server JVM where the new image is not java, so
+        the service process is replaced by another program.
+      incident_relevance: >-
+        Generic and not lab-tested. Native code run through any memory-corruption flaw need not use
+        the Java process API; an exec in place leaves no java parent, which strategies one, two and
+        five need. Not this CVE and not proof of exploitation.
+      detection_logic: |
+        From exec-event telemetry (auditd execve, EDR exec events), keep the latest image per pid
+        and process start, set by an exec record and never inherited at fork or spawn; the first
+        exec of a new child pid never counts. Alert when a pid whose latest image was a server JVM (service identity
+        by command line) execs an image that is not java, with no exit record between the two.
+        The new image's parent is the JVM's own parent (init, systemd or a container shim), so do
+        not require a java parent. Rank up for a shell, interpreter, download or recon tool, a
+        writable-path image, or the service going unhealthy at the same time.
+      minimum_evidence: >-
+        Two exec records in one pid with no exit between: first a server JVM with its service
+        identity, then a non-Java image. Without the earlier record, report an unexpected process
+        under the service supervisor.
+      correlation_context: >-
+        Keys are host, pid and process start time. A pid reused after an exit is not an exec in
+        place; require the absence of an exit record or a sensor id that survives exec.
+      detectors:
+        - detector_class: 'endpoint-process-lineage-detection'
+          technologies:
+            - 'Linux auditd with execve rules'
+            - 'EDR with exec events per pid'
+          contribution: 'Records each exec in a pid, so a JVM image followed by a new image shows.'
+          limitations: >-
+            Not lab-tested; sensors that keep one image per pid, or report only process creation at
+            fork, will not show it.
+      benign_explanations:
+        - explanation: >-
+            A Process API child (fork, vfork or posix_spawn) inherits the java image before its
+            first exec.
+          distinguishing_context: 'The pid has no earlier exec record as java; its image comes from the parent at fork.'
+          overlaps_incident_instance: false
+        - explanation: >-
+            A Java-based launcher or bootstrapper execs another program in place by design.
+          distinguishing_context: 'The same image and arguments in that service''s baseline, at start or stop.'
+          overlaps_incident_instance: true
+          tuning_hazard: >-
+            Allow the exact image and arguments for that service, never every exec from its pid.
+        - explanation: 'A restart reuses the pid number for a new process.'
+          distinguishing_context: 'An exit record for the old process and a new process start time.'
+          overlaps_incident_instance: false
+      forbidden_exclusions:
+        - field: 'the service supervisor as parent'
+          reason: 'After an exec in place the supervisor parents the new image; excluding it hides the incident record.'
+        - field: 'child command-line text'
+          reason: 'Adversary-chosen and not a discriminator.'
+      expected_volume:
+        band: null
+        basis: 'unavailable'
+        note: 'No rate is sourced or measured.'
+      blind_spots:
+        - description: >-
+            Missing telemetry: snapshot or fork-only sensors miss it, and Windows has no exec in
+            place, so this is Linux and Unix only.
+          routes_to: null
+        - description: >-
+            Coverage limit: native code that forks without exec, or stays in memory, has no exec
+            record for this strategy to see.
+          routes_to: null
+      analyst_response: >-
+        Read both exec records, the service identity, the new image and command line, and whether
+        the service stopped serving then. Check the new process's connections and written files.
+      safe_conclusion: >-
+        A server JVM's process was replaced by a non-Java program; it does not establish
+        exploitation or this CVE.
+  supporting_technologies_considered: >-
+    A software and process inventory or SBOM shows which services are Java and their normal
+    children, which seeds the baseline, but it carries no spawn event and so corroborates rather
+    than detects.
+
+detector_requirements:
+  required: >-
+    Exec records with parent, kept per exec not per pid, with command line and identity (Linux uid and euid, Windows SID or account) or each stated unavailable; a service identity per JVM host; a per-service child baseline; the jspawnhelper exec dropped, never its
+    pid; alert text calling the child a follow-on candidate.
+  optional: >-
+    Process-attributed network and file events raise confidence; Sysmon EID 7 finds in-process
+    JVM hosts on Windows; workload labels and exec audit label operator sessions; a deploy feed
+    names releases and their destinations.
+  correlation:
+    capability: >-
+      Aligned clocks, stable host and process identity (ProcessGuid or pid with start time), path
+      canonicalization with file identity where recorded, and service and container identity on
+      process and file events.
+    window: 'Ten minutes between child and follow-on, this pack''s choice; estates tune it.'
+  baselines:
+    - name: 'child executables and arguments per Java service, per host or workload'
+      window: '30-day, a pack suggestion rather than a sourced figure'
+      seeded_from: >-
+        Process history before the review window; never seed it from the period under
+        investigation or from sessions that already alerted.
+  product_support_caveat: >-
+    Named technologies are candidates and EDR defaults inferred: verify per sensor, OS and policy the exec after
+    jspawnhelper, command lines, both uids and container identity. Splunk and Sigma rules are
+    complements and none names this CVE. Windows, container, Falco, auditd and Sysmon for Linux
+    were not lab-tested.
+
+missing_context:
+  unverified:
+    - >-
+      Whether code execution on this CVE leads to a child process: Calif and Wiz state code execution with unpublished chains while other labs report crashes, memory corruption and a memory disclosure (REF-CALIF-JAVA4SHELL, REF-WIZ-JAVA4SHELL, REF-THN-JAVA4SHELL).
+    - >-
+      Windows parent chains for java.exe, javaw.exe and service wrappers; not lab-tested.
+    - >-
+      Whether Sysmon for Linux, auditd, Falco or EDR record both execs in the child pid and an
+      exec-replaced shell; the lab captured an execve trace and process snapshots only.
+    - >-
+      Lineage on Java 8 and 11 and under FORK or VFORK launch; procrun jvm-mode parentage on
+      Windows; an exec in place of a JVM pid. None was lab-tested.
+    - >-
+      Whether any source reports a child-process step for this CVE: none read does and the CISA and Sysdig wording is generic (REF-CISA-ALERT-2026-11-17, REF-SYSDIG-JAVA4SHELL).
+    - 'Container runtime coverage and field names for the strategy five sensors.'
+  assumptions:
+    - id: 'ASSUMPTION-GENERIC-BEHAVIOR-APPLIES'
+      verdict_changing: true
+      statement: >-
+        A successful exploit of this CVE would start a child process, which no source documents (see evidence.confirmed_incident_behavior). If wrong, this object is generic Java-server monitoring; resolve it by reading any published chain or exploitation report for a spawn step.
+    - id: 'ASSUMPTION-LAB-LINEAGE-GENERALISES'
+      verdict_changing: false
+      statement: >-
+        Lab lineage (java's child pid execs jspawnhelper then the target; bash exec-replacement)
+        holds on other JDK lines, distros and sensors. The exec trace covered Temurin 17 only. If
+        wrong, parent handling misses some spawns. Resolve it by comparing sensor records per JDK.
+  standing_negatives:
+    - statement: >-
+        CVE-2026-114938 is absent from CISA KEV catalog 2026.11.18, checked 2026-11-18 12:05 PT
+        (REF-CISA-KEV).
+      ref: 'REF-CISA-KEV'
+      valid_until: '2026-11-25'
+      recheck: 'Re-fetch the KEV JSON feed; a listing changes the status the same day.'
+    - statement: >-
+        GreyNoise's 2026-11-18 11:18 PT snapshot: attempts observed, no successful compromise reported (69 Java4Shell-shaped requests, 4 sources, 0 successful intrusions). CCCS and JPCERT/CC reported none at publication and CISA's ADP entry rates
+        Exploitation "none" (REF-CCCS-AL26-029, REF-JPCERT-2026111801, REF-CVE-API).
+      ref: 'REF-GREYNOISE-JAVA4SHELL'
+      valid_until: '2026-11-25'
+      recheck: >-
+        Re-read the GreyNoise page (counts only), the CVE ADP entry, CCCS, JPCERT/CC and Elastic
+        issue 7199, and read any newly published chain for a post-exploitation step.
+    - statement: >-
+        Calif had not published its per-product chains as of 2026-11-18 ~06:00 PT
+        (REF-CALIF-JAVA4SHELL); VulnCheck states a full exploit is available to its Initial Access Intelligence customers,
+        existence only, so no public chain shows a child-process step.
+      ref: 'REF-VULNCHECK-JAVA4SHELL'
+      valid_until: '2026-11-25'
+      recheck: 'Re-read the Calif and VulnCheck pages for published chains; never link or describe any exploit.'
+
+missing_states:
+  - id: 'MISSING_PARENT_CHAIN'
+    meaning: >-
+      Missing telemetry: the sensor shows no parent, or keeps only the jspawnhelper image for the
+      child pid.
+    coverage_claim: 'no-coverage'
+    response: >-
+      State that lineage is not covered on this host; report a shell or tool seen and say the
+      parent could not be resolved.
+  - id: 'MISSING_SERVICE_BASELINE'
+    meaning: 'Missing context: no per-service child baseline exists or it is stale.'
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report a Java-parented child by type, not a first-seen child; rank by child type and
+      follow-ons, and say the baseline is absent.
+  - id: 'MISSING_PROCESS_ATTRIBUTED_NETWORK_OR_FILE'
+    meaning: >-
+      Missing telemetry: network or file events carry no process identity, so strategies three
+      and four cannot tie to the tree.
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Report a host-level coincidence only, at lower rank, and do not state the child made the
+      connection or wrote the file.
+  - id: 'MISSING_COMMAND_LINE_IDENTITY_OR_CREATION_ANCESTRY'
+    meaning: >-
+      Missing telemetry: the event gives the executed image but no command line, no user
+      identity or only an exec-time parent, or the exec audit is not logged.
+    coverage_claim: 'coverage-limited'
+    response: >-
+      Alert at lower rank with each gap carried as unavailable or inferred, and do not name a
+      user or state that no operator session matched.
+
+alert_evidence_contract:
+  required_fields:
+    - 'tradecraft_id'
+    - 'detection_strategy_id'
+    - 'plain_language_behavior_claim'
+    - 'generic_not_java4shell_coverage_label'
+    - 'host_and_service_identity'
+    - 'new_process_image'
+    - 'command_line_or_explicit_unavailable_state_naming_the_source'
+    - 'security_identity_linux_real_and_effective_uid_not_auid_or_windows_sid_or_account_or_explicit_unavailable_state'
+    - 'baseline_state_first_seen_unknown_or_not_used'
+    - 'timestamps_and_correlation_context'
+    - 'source_types_and_durable_evidence_references'
+    - 'confirmed_facts_inferences_assumptions_and_missing_capabilities'
+  conditional_fields:
+    - field: 'parent_jvm_host_with_jspawnhelper_exec_dropped'
+      condition: 'when strategy one, two, three or five fired on a child spawned by the JVM host'
+    - field: 'ancestry_confidence_creation_or_inferred'
+      condition: 'when strategy one, two, three or five names a JVM parent; inferred when only an exec-time parent or snapshot shows it, which lowers rank and is said in the alert text'
+    - field: 'file_writer_identity_path_and_executing_process_parent'
+      condition: 'when strategy four fired on a written file that was then executed; state whether a file identity or only the path matched'
+    - field: 'follow_on_connection_or_file_by_process_identity'
+      condition: 'when strategy three or four joined a network or file event to the child tree'
+    - field: 'container_workload_and_exec_audit_result_matched_operator_matched_probe_no_match_or_unavailable'
+      condition: 'when the child ran in a container; unavailable when pods/exec is not logged, never reported as no match, and a match lowers rank'
+    - field: 'destination_state_first_seen_or_deploy_named'
+      condition: 'when strategy three joined a connection; a deploy-named destination gives no raise'
+    - field: 'before_and_after_exec_images_with_pid_start_time_or_sensor_id_and_no_exit_record'
+      condition: 'when strategy six fired on an exec in place'
+    - field: 'effective_jvm_error_hooks_expected_shell_executions_and_hook_check_expected_non_hook_or_unknown'
+      condition: 'when a fatal error or OutOfMemoryError is near the child start; unknown when the effective hook or lineage is unresolved'
+    - field: 'crash_loop_service_identity_from_DT-J4SH-HOST-002'
+      condition: 'when a crash loop of the same service, joined on host and service, preceded the child; raises rank only when the hook check is non-hook, and its absence never lowers rank or clears the alert'
+    - field: 'build_status_from_DT-J4SH-ESTATE-001'
+      condition: 'when the live build of this JVM process is known from the estate object (a per-process verdict); ranking aid only, unknown and not affected never lower rank or clear the alert'
+  recommended_title: >-
+    Java server started an unexpected child process, or its process was replaced by a non-Java
+    image (generic; not Java4Shell coverage, exploitation not established)
+  unsupported_title: 'Java4Shell exploitation: remote code execution on a Java server'
+
+evidence:
+  confirmed_incident_behavior: >-
+    No source documents a child process or post-exploitation for this CVE. CISA says to monitor suspicious Java
+    processes and Sysdig lists a JVM spawning a shell as aftermath if the chain lands
+    (REF-CISA-ALERT-2026-11-17, REF-SYSDIG-JAVA4SHELL). Lab lineage came from ordinary JVM runs.
+  supported_conclusion: >-
+    A server JVM starting a child outside its baseline, or a JVM pid exec'ing a non-Java image, is
+    observable with exec telemetry; the first is detectable with a per-service baseline. A detector
+    may emit either as generic behavior, never as Java4Shell coverage.
+  unsupported_conclusions: >-
+    The evidence does not establish that any host was compromised or that a child process means
+    exploitation. A clean result does not show a host is safe or unaffected: CERT Polska says
+    successful exploitation may leave no traces in logs (REF-CERT-POLSKA-216-2026).
+  procedure_boundary: >-
+    A child process started by a server JVM, or the JVM's own process replaced by another image.
+    The crash object covers fatal errors and the estate object the build verdict; a crash, a 5xx or a name-list hit is not this behavior.
+  references:
+    - id: 'REF-SPLUNK-8FDB41AD'
+      type: 'detection-modeling-reference'
+      title: 'Web or Application Server Spawning a Shell'
+      publisher: 'Splunk (Splunk Threat Research Team)'
+      url: 'https://research.splunk.com/endpoint/8fdb41ad-091c-4d7a-af1d-9123fe94b539/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Endpoint.Processes analytic; java, java.exe, javaw.exe parents need server command-line
+        patterns. Last updated 2026-10-28; no CVE mention. Complement only.
+    - id: 'REF-SIGMA-LNX-JAVA-CHILDREN'
+      type: 'detection-modeling-reference'
+      title: 'Suspicious Java Children Processes (proc_creation_lnx_susp_java_children)'
+      publisher: 'SigmaHQ'
+      url: 'https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/linux/process_creation/proc_creation_lnx_susp_java_children.yml'
+      trust_tier: 'researcher'
+      verification: 'confirmed'
+      evidence_use: >-
+        Parent image ends /java; command line contains shell names, curl, wget, python; level high,
+        status test. Name-list complement; no CVE mention.
+    - id: 'REF-SIGMA-WIN-JAVA-CHILD'
+      type: 'detection-modeling-reference'
+      title: 'Suspicious Processes Spawned by Java.EXE (proc_creation_win_java_susp_child_process)'
+      publisher: 'SigmaHQ'
+      url: 'https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_java_susp_child_process.yml'
+      trust_tier: 'researcher'
+      verification: 'confirmed'
+      evidence_use: >-
+        Parent image ends \java.exe; 23 child names, no cmd.exe or PowerShell; status test; no CVE
+        mention. Name-list complement.
+    - id: 'REF-SYSMON'
+      type: 'telemetry-documentation'
+      title: 'Sysmon'
+      publisher: 'Microsoft Sysinternals'
+      url: 'https://learn.microsoft.com/en-us/sysinternals/downloads/sysmon'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        EID 1 process creation with command line; EID 3 network, off by default, linked by
+        ProcessGuid; EID 7 image load, off by default; EID 11 file create.
+    - id: 'REF-SYSMON-MANIFEST'
+      type: 'telemetry-documentation'
+      title: 'SysmonCommon manifest.xml'
+      publisher: 'Microsoft'
+      url: 'https://github.com/microsoft/SysmonCommon/blob/main/manifest.xml'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Schema 4.90 read 2026-11-18: EID 1 Image, CommandLine, User, ParentProcessGuid, ParentImage
+        and ParentUser; EID 7 ImageLoaded; EID 11 Image and TargetFilename with rule default exclude.
+    - id: 'REF-MS-EVENT-4688'
+      type: 'telemetry-documentation'
+      title: '4688(S): A new process has been created'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/auditing/event-4688'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        New Process Name, Creator Process Name (version 2), Creator Subject Security ID and
+        Process Command Line, which is empty by default until the Include command line policy is enabled.
+    - id: 'REF-LINUX-AUDIT-FIELDS'
+      type: 'telemetry-documentation'
+      title: 'Linux Audit field dictionary'
+      publisher: 'Linux Audit project'
+      url: 'https://github.com/linux-audit/audit-documentation/blob/main/specs/fields/field-dictionary.csv'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Defines pid, ppid, uid, euid, auid, exe, comm, argc and the execve argument fields; it does
+        not say which record type carries each.
+    - id: 'REF-AUDIT-MESSAGE-DICTIONARY'
+      type: 'telemetry-documentation'
+      title: 'Linux Audit message dictionary (message-dictionary.csv)'
+      publisher: 'Linux Audit project'
+      url: 'https://github.com/linux-audit/audit-documentation/blob/main/specs/messages/message-dictionary.csv'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        AUDIT_SYSCALL (1300) is system call event information and AUDIT_EXECVE (1309) is the
+        arguments supplied to the execve system call.
+    - id: 'REF-CISA-ALERT-2026-11-17'
+      type: 'incident-campaign-secondary-source'
+      title: 'Critical Java Vulnerability Requires Immediate Patching'
+      publisher: 'CISA'
+      url: 'https://www.cisa.gov/news-events/alerts/2026/11/17/critical-java-vulnerability-requires-immediate-patching'
+      trust_tier: 'government'
+      verification: 'confirmed'
+      evidence_use: >-
+        Calls the flaw critical and says to monitor for suspicious Java processes among other
+        indicators; generic guidance, not a KEV entry.
+    - id: 'REF-SYSDIG-JAVA4SHELL'
+      type: 'incident-campaign-secondary-source'
+      title: 'Java4Shell (CVE-2026-114938): Pre-auth RCE in OpenJDK, and the challenge of image and feature bloat'
+      publisher: 'Sysdig'
+      url: 'https://www.sysdig.com/blog/java4shell-cve-2026-114938-pre-auth-rce-in-openjdk'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Post-exploitation to watch: the JVM spawning a shell, dropping and executing a binary, or
+        opening connections it never opened before. Generic wording.
+    - id: 'REF-CALIF-JAVA4SHELL'
+      type: 'attack-surface-documentation'
+      title: 'Java4Shell: Write once, RCE everywhere'
+      publisher: 'Calif'
+      url: 'https://calif.io/java4shell'
+      trust_tier: 'researcher'
+      verification: 'confirmed'
+      evidence_use: >-
+        Discoverer's page: code execution stated against named Java products with chains withheld,
+        CVSS 4.0 9.2, and a public proof of concept exists in the write-up (existence only).
+    - id: 'REF-WIZ-JAVA4SHELL'
+      type: 'incident-campaign-secondary-source'
+      title: 'CVE-2026-114938 OpenJDK RCE (Java4Shell): Everything You Need to Know'
+      publisher: 'Wiz'
+      url: 'https://wiz.io/blog/cve-2026-114938-rce-java4shell-openjdk'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        States code execution against named Java applications with no artifacts shown; cited for
+        that sentence only.
+    - id: 'REF-THN-JAVA4SHELL'
+      type: 'incident-campaign-secondary-source'
+      title: 'Java4Shell Flaw (CVE-2026-114938) Enables Pre-Auth RCE in Jira, Jenkins, Keycloak and More'
+      publisher: 'The Hacker News'
+      url: 'https://thehackernews.com/2026/11/java4shell-cve-2026-114938-enables-pre.html'
+      trust_tier: 'news'
+      verification: 'confirmed'
+      evidence_use: >-
+        Says other labs reproduced crashes and a memory leak, not code execution; cited for that
+        clause only.
+    - id: 'REF-HADRIAN-JAVA4SHELL'
+      type: 'incident-campaign-secondary-source'
+      title: 'Java4Shell (CVE-2026-114938): pre-auth memory corruption in OpenJDK'
+      publisher: 'Hadrian'
+      url: 'https://hadrian.io/vulnerability-alerts/oracle-critical-security-patch-update-java-17-rce-claims'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      citation_caveat: 'partial-use'
+      citation_caveat_note: >-
+        Only its statement that it reached code execution in its own lab is used, as one lab's
+        claim; no method detail.
+      evidence_use: 'States code execution in its own lab, no method shown; supporting only.'
+    - id: 'REF-BLACKPOINT-JAVA4SHELL'
+      type: 'incident-campaign-secondary-source'
+      title: 'Java4Shell (CVE-2026-114938): Inside a Critical Flaw in Java’s Base64 Decoder'
+      publisher: 'Blackpoint Cyber'
+      url: 'https://blackpointcyber.com/blog/java4shell-cve-2026-114938-java-base64-decoder-flaw/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'States it did not independently reproduce remote code execution.'
+    - id: 'REF-UPWIND-JAVA4SHELL'
+      type: 'incident-campaign-secondary-source'
+      title: 'Java4Shell: What We Know Now and What Comes Next'
+      publisher: 'Upwind'
+      url: 'https://www.upwind.io/blog/java4shell-what-we-know-now-and-what-comes-next'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Reproduced heap corruption and a JVM crash in its lab; credits code
+        execution to Calif.
+    - id: 'REF-VULNCHECK-JAVA4SHELL'
+      type: 'incident-campaign-secondary-source'
+      title: 'Java4Shell CVE-2026-114938: Fine, I Guess We’ll Do This Again'
+      publisher: 'VulnCheck'
+      url: 'https://www.vulncheck.com/blog/java4shell'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      citation_caveat: 'partial-use'
+      citation_caveat_note: >-
+        Vendor self-statement; the exploit is used for existence only and never described.
+      evidence_use: >-
+        States a full exploit is available to its Initial Access Intelligence customers as of 6 PM EST on 2026-11-17.
+    - id: 'REF-CCCS-AL26-029'
+      type: 'attack-surface-documentation'
+      title: 'AL26-029 - Critical vulnerability impacting Oracle Java - CVE-2026-114938'
+      publisher: 'Canadian Centre for Cyber Security'
+      url: 'https://www.cyber.gc.ca/en/alerts-advisories/al26-029-critical-vulnerability-impacting-oracle-java-cve-2026-114938'
+      trust_tier: 'government'
+      verification: 'confirmed'
+      evidence_use: 'Reported no exploitation at publication; historical, before the GreyNoise attempt counts.'
+    - id: 'REF-JPCERT-2026111801'
+      type: 'incident-campaign-secondary-source'
+      title: 'OpenJDKにおけるリモートコード実行につながる脆弱性（CVE-2026-114938）について'
+      publisher: 'JPCERT/CC'
+      url: 'https://www.jpcert.or.jp/newsflash/2026111801.html'
+      trust_tier: 'government'
+      verification: 'confirmed'
+      evidence_use: 'Reported no exploitation at publication; historical, before the GreyNoise attempt counts.'
+    - id: 'REF-CERT-POLSKA-216-2026'
+      type: 'attack-surface-documentation'
+      title: 'Krytyczna podatność w środowisku Java umożliwiająca zdalne wykonanie kodu (Java4Shell)'
+      publisher: 'CERT Polska'
+      url: 'https://moje.cert.pl/komunikaty/2026/216/krytyczna-podatnosc-w-srodowisku-java-umozliwiajaca-zdalne-wykonanie-kodu-java4shell/'
+      trust_tier: 'government'
+      verification: 'confirmed'
+      evidence_use: 'Says successful exploitation may leave no traces in logs.'
+    - id: 'REF-ELASTIC-DR-7199'
+      type: 'detection-modeling-reference'
+      title: 'detection-rules issue #7199'
+      publisher: 'Elastic'
+      url: 'https://github.com/elastic/detection-rules/issues/7199'
+      trust_tier: 'researcher'
+      verification: 'confirmed'
+      evidence_use: >-
+        Open community proposal with an EQL process-child analytic; proposal, never shipped.
+    - id: 'REF-CVE-API'
+      type: 'framework'
+      title: 'CVE Program record API for CVE-2026-114938'
+      publisher: 'CVE Program (MITRE)'
+      url: 'https://cveawg.mitre.org/api/cve/CVE-2026-114938'
+      trust_tier: 'registry'
+      verification: 'confirmed'
+      evidence_use: >-
+        Record published 2026-11-17; Oracle CNA score; CISA's ADP entry rates Exploitation none.
+    - id: 'REF-CISA-KEV'
+      type: 'framework'
+      title: 'Known Exploited Vulnerabilities Catalog (JSON feed)'
+      publisher: 'CISA'
+      url: 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json'
+      trust_tier: 'government'
+      verification: 'confirmed'
+      evidence_use: >-
+        CVE-2026-114938 absent from catalog 2026.11.18, checked 2026-11-18 12:05 PT; the snapshot
+        may predate later additions.
+    - id: 'REF-GREYNOISE-JAVA4SHELL'
+      type: 'incident-campaign-secondary-source'
+      title: 'Java4Shell (CVE-2026-114938) Activity 2026'
+      publisher: 'GreyNoise'
+      url: 'https://java4shell.events.greynoise.io/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'Used (counts only, snapshot 2026-11-18 11:18 PT): 69 Java4Shell-shaped requests, 4 sources, 0 successful intrusions. Attempts observed, never evidence of successful exploitation.'
+    - id: 'REF-INODE-7'
+      type: 'telemetry-documentation'
+      title: 'inode(7) — Linux manual page'
+      publisher: 'Linux man-pages project'
+      url: 'https://man7.org/linux/man-pages/man7/inode.7.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: 'Used: a file is identified by its inode number together with its device ID, not by its path. Linux only; says nothing about sensors.'
+    - id: 'REF-JDK17U-PROCESSIMPL'
+      type: 'attack-surface-documentation'
+      title: 'jdk17u ProcessImpl.java'
+      publisher: 'OpenJDK project'
+      url: 'https://raw.githubusercontent.com/openjdk/jdk17u/master/src/java.base/unix/classes/java/lang/ProcessImpl.java'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Linux default launch mechanism POSIX_SPAWN; jdk.lang.Process.launchMechanism allows FORK or
+        VFORK; helper path is lib/jspawnhelper.
+    - id: 'REF-ORACLE-JAVA-MAN'
+      type: 'attack-surface-documentation'
+      title: 'The java Command (Java SE 17)'
+      publisher: 'Oracle'
+      url: 'https://docs.oracle.com/en/java/javase/17/docs/specs/man/java.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        -XX:OnError runs a command when an irrecoverable error occurs; -XX:OnOutOfMemoryError when
+        an OutOfMemoryError is first thrown.
+    - id: 'REF-JDK17U-OS-POSIX'
+      type: 'attack-surface-documentation'
+      title: 'jdk17u os_posix.cpp'
+      publisher: 'OpenJDK project'
+      url: 'https://raw.githubusercontent.com/openjdk/jdk17u/master/src/hotspot/os/posix/os_posix.cpp'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        os::fork_and_exec runs each hook command as /bin/sh -c in a child of the JVM.
+    - id: 'REF-JDK17U-OS-WINDOWS'
+      type: 'attack-surface-documentation'
+      title: 'jdk17u os_windows.cpp'
+      publisher: 'OpenJDK project'
+      url: 'https://raw.githubusercontent.com/openjdk/jdk17u/master/src/hotspot/os/windows/os_windows.cpp'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        On Windows os::fork_and_exec prefixes each hook command with "cmd /C " and starts it with
+        CreateProcess as a child of the JVM.
+    - id: 'REF-JDK17U-VMERROR'
+      type: 'attack-surface-documentation'
+      title: 'jdk17u vmError.cpp'
+      publisher: 'OpenJDK project'
+      url: 'https://raw.githubusercontent.com/openjdk/jdk17u/master/src/hotspot/share/utilities/vmError.cpp'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        A fatal error runs the OnError commands and the first OutOfMemoryError runs the
+        OnOutOfMemoryError commands, each split on ';' with %p expanded and passed to
+        os::fork_and_exec.
+    - id: 'REF-PROCRUN'
+      type: 'attack-surface-documentation'
+      title: 'Procrun (Apache Commons Daemon)'
+      publisher: 'Apache Software Foundation'
+      url: 'https://commons.apache.org/proper/commons-daemon/procrun.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        --StartMode jvm starts Java in-process via jvm.dll; Java and exe modes run a separate
+        process.
+    - id: 'REF-TOMCAT-SERVICE'
+      type: 'attack-surface-documentation'
+      title: 'Windows Service How-To (Tomcat 10.1)'
+      publisher: 'Apache Software Foundation'
+      url: 'https://tomcat.apache.org/tomcat-10.1-doc/windows-service-howto.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Service exe tomcat10.exe; the install example uses --StartMode=jvm. The page lists no
+        default StartMode.
+    - id: 'REF-K8S-PROBES'
+      type: 'attack-surface-documentation'
+      title: 'Configure Liveness, Readiness and Startup Probes'
+      publisher: 'Kubernetes'
+      url: 'https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: 'The kubelet executes an exec probe command in the target container on periodSeconds.'
+    - id: 'REF-K8S-AUDIT'
+      type: 'telemetry-documentation'
+      title: 'Auditing'
+      publisher: 'Kubernetes'
+      url: 'https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        No events are logged without an audit policy file; rules select resources and
+        subresources. pods/exec event fields were not read on this page.
+    - id: 'REF-AUDIT-RULES'
+      type: 'telemetry-documentation'
+      title: 'audit.rules(7)'
+      publisher: 'Linux Audit project (man7.org)'
+      url: 'https://man7.org/linux/man-pages/man7/audit.rules.7.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed-with-scope-caveat'
+      evidence_use: >-
+        Syscall rules can match failed calls by return value (-F exit=); the examples use open,
+        not execve.
+    - id: 'REF-PID-NAMESPACES'
+      type: 'attack-surface-documentation'
+      title: 'pid_namespaces(7)'
+      publisher: 'Linux man-pages project'
+      url: 'https://man7.org/linux/man-pages/man7/pid_namespaces.7.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        The namespace init becomes the parent of orphaned children (a subreaper ancestor may take
+        them instead); basis for the PID-1 adoption twin and inferred-parent labelling.
+    - id: 'REF-ELASTIC-REVERSE-SHELL-JAVA'
+      type: 'telemetry-documentation'
+      title: 'Potential Reverse Shell via Java'
+      publisher: 'Elastic'
+      url: 'https://www.elastic.co/guide/en/security/current/potential-reverse-shell-via-java.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Field names only: the shipped rule reads logs-endpoint.events.network* and process* with
+        process.entity_id, process.parent.entity_id, process.parent.executable and process.name.
+    - id: 'REF-SPLUNK-JAVA-WRITING-JSP'
+      type: 'telemetry-documentation'
+      title: 'Java Writing JSP File'
+      publisher: 'Splunk'
+      url: 'https://github.com/splunk/security_content/blob/develop/detections/endpoint/java_writing_jsp_file.yml'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Field names only: Endpoint.Processes and Endpoint.Filesystem CIM fields, joined on
+        process_guid. Network_Traffic is not in this file. Not used for Java4Shell behavior.
+    - id: 'REF-TRACEE-ILLEGITIMATE-SHELL'
+      type: 'telemetry-documentation'
+      title: 'TRACEE-ILLEGITIMATE-SHELL'
+      publisher: 'Aqua Security'
+      url: 'https://aquasecurity.github.io/tracee/latest/docs/events/builtin/man/security/illegitimate_shell/'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Field names only: the signature uses security_bprm_check fields pathname (shell path) and
+        comm (web server process name). Not used for Java4Shell behavior.
+    - id: 'REF-SUMO-MATCH-S00659'
+      type: 'telemetry-documentation'
+      title: 'Package Management Utility in Container'
+      publisher: 'Sumo Logic'
+      url: 'https://github.com/SumoLogic/cloud-siem-content-catalog/blob/master/rules/MATCH-S00659.md'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Field names only: normalized schema fields commandLine, metadata_product and user_username
+        for Docker. Not used for Java4Shell behavior.
+    - id: 'REF-MDE-DEVICEPROCESSEVENTS'
+      type: 'telemetry-documentation'
+      title: 'DeviceProcessEvents table in the advanced hunting schema'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-deviceprocessevents-table'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Process creation records populated by Defender for Endpoint once deployed, with
+        FileName, ProcessCommandLine and InitiatingProcessFileName; no extra policy is named.
+    - id: 'REF-MDE-DEVICENETWORKEVENTS'
+      type: 'telemetry-documentation'
+      title: 'DeviceNetworkEvents table in the advanced hunting schema'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-devicenetworkevents-table'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Network connection records populated by Defender for Endpoint once deployed, with
+        RemoteIP, RemotePort and InitiatingProcessId; no extra policy is named.
+    - id: 'REF-MDE-DEVICEFILEEVENTS'
+      type: 'telemetry-documentation'
+      title: 'DeviceFileEvents table in the advanced hunting schema'
+      publisher: 'Microsoft'
+      url: 'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-devicefileevents-table'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        File creation and modification records populated by Defender for Endpoint once
+        deployed, with FolderPath, FileName and InitiatingProcessFileName.
+    - id: 'REF-ELASTIC-DEFEND-POLICY'
+      type: 'telemetry-documentation'
+      title: 'Configure an integration policy for Elastic Defend'
+      publisher: 'Elastic'
+      url: 'https://www.elastic.co/guide/en/security/current/configure-endpoint-integration-policy.html'
+      trust_tier: 'vendor'
+      verification: 'confirmed'
+      evidence_use: >-
+        Says it "collects most categories by default" and lists process, file and network events
+        for Windows, macOS and Linux; it does not state each category's default or its fields per OS.
